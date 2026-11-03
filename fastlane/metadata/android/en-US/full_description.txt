@@ -1,0 +1,26 @@
+Wren is a private web browser that blocks trackers and ads out of the box. It is free and open source, has no account and no telemetry, and runs no servers of its own. The only traffic it makes is the pages you open, your search engine's suggestions, filter-list updates, speed-dial site icons (can be turned off) and, if you turn it on, Tor.
+
+<b>Blocking</b>
+<ul>
+<li>EasyList, EasyPrivacy and uBlock Origin rules, with cosmetic filtering and scriptlets</li>
+<li>A per-site panel showing what was blocked, grouped by the company that owns it</li>
+<li>Add your own filter lists in EasyList or hosts format</li>
+</ul>
+
+<b>Privacy</b>
+<ul>
+<li>Clear everything: close every tab and delete history, cookies and cache in one tap</li>
+<li>Private tabs that write no history, cookies or cache</li>
+<li>Tor mode</li>
+<li>HTTPS upgrade, tracking parameters stripped from links</li>
+<li>Fingerprinting and WebRTC leak protection</li>
+<li>Cookie banners declined and hidden on common consent platforms</li>
+<li>App lock with your fingerprint or screen lock</li>
+</ul>
+
+<b>Browsing</b>
+<ul>
+<li>DuckDuckGo by default; Brave, Startpage, Mojeek, Wikipedia and Google available</li>
+<li>!bangs in the address bar</li>
+<li>Tabs, history, bookmarks, downloads, reader mode, find in page, desktop site, QR sharing</li>
+</ul>

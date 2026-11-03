@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="500" viewBox="0 0 1024 500">
+  <!-- Copyright 2026 AndroidPoet. SPDX-License-Identifier: GPL-3.0-or-later -->
+  <rect width="1024" height="500" fill="#F4F1EA"/>
+  <circle cx="800" cy="250" r="180" fill="#ECE7DD"/>
+  <g transform="translate(800 254) scale(4.3) translate(-55 -56)">
+    <path d="M21,83.5L89,79" stroke="#5E4A36" stroke-width="3.4" stroke-linecap="round" fill="none"/><path d="M49,77L47.5,82.5M57,76L57,81.5" stroke="#1E1B17" stroke-width="2" stroke-linecap="round"/><path fill="#A8482A" d="M44,65L29.5,48.5C28.1,46.6 29.9,44.2 32.1,45.3L50,57.5Z"/><path fill="#A8482A" d="M41,72C36,64 38,52 46,46C48,40 52,34 59,33C63,32.5 66,34 67.5,36.5L77.5,28.4L69.3,38.7L77,34.4L69.9,41.4C72,47 72,54 69,62C66,71 58,78 50,78C46,78 43,75.5 41,72Z"/><path fill="#7A3118" d="M46,52C53,49 61,55 62.5,64C56,67 48.5,65 44.5,60C44,57 44.5,54 46,52Z"/><path fill="#1E1B17" d="M59.4,39.5a2.1,2.1 0 1,0 4.2,0a2.1,2.1 0 1,0 -4.2,0"/>
+  </g>
+  <text x="84" y="236" font-family="Georgia" font-weight="bold" font-size="104" fill="#1E1B17">Wren</text>
+  <text x="88" y="292" font-family="Georgia" font-size="34" fill="#5A5349">A quiet way to browse.</text>
+  <rect x="88" y="330" width="56" height="4" rx="2" fill="#A8482A"/>
+  <text x="88" y="378" font-family="Helvetica Neue" font-size="21" fill="#5A5349">Blocks trackers and ads. No account, no telemetry.</text>
+</svg>

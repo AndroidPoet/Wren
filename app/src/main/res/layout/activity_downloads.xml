@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Copyright 2026 AndroidPoet
+
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:app="http://schemas.android.com/apk/res-auto"
+  android:layout_width="match_parent" android:layout_height="match_parent"
+  android:background="@color/ground" android:orientation="vertical">
+
+  <com.google.android.material.appbar.MaterialToolbar
+    android:id="@+id/toolbar"
+    android:layout_width="match_parent" android:layout_height="?attr/actionBarSize"
+    android:background="@color/layer"
+    app:navigationIcon="@drawable/ic_arrow_back"
+    app:title="@string/downloads" app:titleTextColor="@color/ink" />
+
+  <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+    <androidx.recyclerview.widget.RecyclerView
+      android:id="@+id/downloadList"
+      android:layout_width="match_parent" android:layout_height="match_parent"
+      android:clipToPadding="false" android:paddingBottom="8dp" />
+    <TextView
+      android:id="@+id/emptyLabel"
+      android:layout_width="wrap_content" android:layout_height="wrap_content"
+      android:layout_gravity="center" android:text="@string/downloads_empty"
+      android:textAppearance="@style/TextAppearance.Wren.Caption" android:visibility="gone" />
+  </FrameLayout>
+
+  <com.google.android.material.button.MaterialButton
+    android:id="@+id/clearAllButton"
+    style="@style/Widget.MaterialComponents.Button.TextButton"
+    android:layout_width="match_parent" android:layout_height="wrap_content"
+    android:text="@string/clear_finished" android:textColor="@color/russet_strong"
+    android:visibility="gone" />
+</LinearLayout>

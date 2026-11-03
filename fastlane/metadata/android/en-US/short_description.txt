@@ -1,0 +1,1 @@
+Private browser that blocks trackers and ads. No account, no telemetry.

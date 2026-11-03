@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Copyright 2026 AndroidPoet
+
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<resources>
+
+  <!-- Day: warm paper and ink, a russet accent like the bird. -->
+  <color name="ground">#FFF4F1EA</color>
+  <color name="layer">#FFFBF9F4</color>
+  <color name="sheet">#FFFFFDF8</color>
+  <color name="sheet_raised">#FFECE7DD</color>
+  <color name="rule">#FFE2DCD0</color>
+
+  <color name="russet">#FFA8482A</color>
+  <color name="russet_strong">#FF8A3A20</color>
+  <color name="russet_tint">#33A8482A</color>
+  <color name="on_accent">#FFFFFFFF</color>
+  <color name="moss">#FF3F7A4F</color>
+  <color name="amber">#FF9A6510</color>
+  <color name="amber_tint">#229A6510</color>
+  <color name="moss_tint">#223F7A4F</color>
+
+  <color name="ink">#FF1E1B17</color>
+  <color name="ink_soft">#FF5A5349</color>
+  <color name="ink_faint">#FF8F877B</color>
+
+  <!-- Fixed in both themes: a speed-dial tile is always a mid-tone colour, so text and
+       logo grounds over it have only one legible answer. -->
+  <color name="always_white">#FFFFFFFF</color>
+  <color name="tile_letter">#FF1E1B17</color>
+</resources>

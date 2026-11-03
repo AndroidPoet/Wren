@@ -1,0 +1,247 @@
+/*
+ * Copyright 2026 AndroidPoet
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+package dev.androidpoet.wren
+
+import com.google.common.truth.Truth.assertThat
+import dev.androidpoet.wren.browser.blocking.rules.FilterRule
+import dev.androidpoet.wren.browser.blocking.rules.RequestContext
+import dev.androidpoet.wren.browser.blocking.rules.RequestType
+import dev.androidpoet.wren.browser.blocking.rules.RuleEngine
+import dev.androidpoet.wren.browser.blocking.rules.UrlPattern
+import org.junit.Test
+
+class UrlPatternTest {
+
+  private fun matches(pattern: String, url: String): Boolean {
+    val request = RequestContext(url)
+    return UrlPattern.parse(pattern).matches(request.url, request.hostStart, request.hostEnd)
+  }
+
+  @Test
+  fun `plain pattern matches anywhere and is case-insensitive`() {
+    assertThat(matches("/ads/banner", "https://cdn.Example.com/x/ADS/banner.png")).isTrue()
+    assertThat(matches("/ads/banner", "https://cdn.example.com/x/ad/banner.png")).isFalse()
+  }
+
+  @Test
+  fun `host anchor needs a label boundary`() {
+    assertThat(matches("||example.com/ad", "https://sub.example.com/ad.js")).isTrue()
+    assertThat(matches("||example.com/ad", "https://example.com/ad.js")).isTrue()
+    assertThat(matches("||example.com/ad", "https://notexample.com/ad.js")).isFalse()
+    assertThat(matches("||example.com^", "https://other.org/?u=example.com/")).isFalse()
+    assertThat(matches("||example.com^", "https://example.com:8443/")).isTrue()
+  }
+
+  @Test
+  fun `separator matches punctuation and the end of the address`() {
+    assertThat(matches("||ads.example.com^", "https://ads.example.com")).isTrue()
+    assertThat(matches("||ads.example.com^", "https://ads.example.com/x")).isTrue()
+    assertThat(matches("||ads.example.com^", "https://ads.example.company/x")).isFalse()
+    assertThat(matches("/ad^", "https://a.com/ad?x=1")).isTrue()
+    assertThat(matches("/ad^", "https://a.com/ad_1")).isFalse()
+  }
+
+  @Test
+  fun `wildcards span any run and backtrack`() {
+    assertThat(matches("/img/*/ad-*.gif", "https://a.com/img/2024/x/ad-300x250.gif")).isTrue()
+    assertThat(matches("/img/*/ad-*.gif", "https://a.com/img/ad-300x250.png")).isFalse()
+    assertThat(matches("||a.com/*/track^*$", "https://a.com/v1/track?q=1$")).isTrue()
+  }
+
+  @Test
+  fun `start and end anchors pin the address`() {
+    assertThat(matches("|https://a.com/ad", "https://a.com/ad.js")).isTrue()
+    assertThat(matches("|https://a.com/ad", "https://b.com/?u=https://a.com/ad")).isFalse()
+    assertThat(matches("/ad.js|", "https://a.com/ad.js")).isTrue()
+    assertThat(matches("/ad.js|", "https://a.com/ad.js?x")).isFalse()
+    assertThat(matches("||a.com/*.js|", "https://a.com/x/y.js")).isTrue()
+    assertThat(matches("||a.com/*.js|", "https://a.com/x/y.jsp")).isFalse()
+  }
+
+  @Test
+  fun `request type comes from the accept header then the extension`() {
+    assertThat(RequestType.infer("https://a.com/x", "image/avif,image/webp,*/*;q=0.8"))
+      .isEqualTo(RequestType.IMAGE)
+    assertThat(RequestType.infer("https://a.com/x.js?v=1", "*/*")).isEqualTo(RequestType.SCRIPT)
+    assertThat(RequestType.infer("https://a.com/frame", "text/html,application/xhtml+xml"))
+      .isEqualTo(RequestType.SUBDOCUMENT)
+    assertThat(RequestType.infer("https://a.com/api/v1", "*/*") and RequestType.XHR).isNotEqualTo(0)
+    assertThat(RequestType.infer("https://a.com/api/v1", "*/*") and RequestType.IMAGE).isEqualTo(0)
+  }
+}
+
+class FilterRuleTest {
+
+  @Test
+  fun `parses options`() {
+    val rule = FilterRule.parse(
+      "||ads.example.com^\$script,third-party,domain=news.com|~safe.news.com",
+    )!!
+    assertThat(rule.types).isEqualTo(RequestType.SCRIPT)
+    assertThat(rule.party).isEqualTo(FilterRule.THIRD_PARTY)
+    assertThat(rule.domains).asList().containsExactly("news.com")
+    assertThat(rule.excludedDomains).asList().containsExactly("safe.news.com")
+    assertThat(rule.appliesTo(RequestType.SCRIPT, true, "m.news.com")).isTrue()
+    assertThat(rule.appliesTo(RequestType.SCRIPT, true, "safe.news.com")).isFalse()
+    assertThat(rule.appliesTo(RequestType.SCRIPT, true, "other.com")).isFalse()
+    assertThat(rule.appliesTo(RequestType.IMAGE, true, "news.com")).isFalse()
+    assertThat(rule.appliesTo(RequestType.SCRIPT, false, "news.com")).isFalse()
+  }
+
+  @Test
+  fun `negated types subtract from everything`() {
+    val rule = FilterRule.parse("ads/\$~stylesheet,~image")!!
+    assertThat(rule.types and RequestType.STYLESHEET).isEqualTo(0)
+    assertThat(rule.types and RequestType.IMAGE).isEqualTo(0)
+    assertThat(rule.types and RequestType.SCRIPT).isNotEqualTo(0)
+  }
+
+  @Test
+  fun `rules the engine cannot honour are dropped`() {
+    assertThat(FilterRule.parse("||a.com^\$popup")).isNull()
+    assertThat(FilterRule.parse("||a.com^\$redirect=noopjs")).isNull()
+    assertThat(FilterRule.parse("/banner\\d+/\$image")).isNull()
+    assertThat(FilterRule.parse("/ads/")).isNull()
+    assertThat(FilterRule.parse("! comment")).isNull()
+    assertThat(FilterRule.parse("a.com##.ad")).isNull()
+    assertThat(FilterRule.parse("a.com#@#.ad")).isNull()
+    assertThat(FilterRule.parse("*\$third-party")).isNotNull()
+    assertThat(FilterRule.parse("*")).isNull()
+    assertThat(FilterRule.parse("\$domain=~a.com")).isNull()
+  }
+
+  @Test
+  fun `document exceptions are recognised by host`() {
+    assertThat(
+      FilterRule.documentExceptionHost("@@||example.com^\$document"),
+    ).isEqualTo("example.com")
+    assertThat(FilterRule.documentExceptionHost("@@||example.com/x\$document")).isNull()
+    assertThat(FilterRule.documentExceptionHost("@@||example.com^\$document,script")).isNull()
+  }
+}
+
+class RuleEngineTest {
+
+  private val engine = RuleEngine.parse(
+    sequenceOf(
+      "||ads.example.com^",
+      "/banner/*/ad.",
+      "||tracker.net^\$third-party",
+      "||cdn.site.com/widget.js\$script,domain=~site.com",
+      "@@||ads.example.com/allowed.js",
+      "@@||tracker.net^\$domain=partner.org",
+      "||evil.org^\$important",
+      "@@||evil.org^",
+      "@@||exempt.com^\$document",
+      "-ad-sidebar.\$image",
+      "*\$ping,third-party",
+    ),
+  )
+
+  private fun blocked(
+    url: String,
+    page: String? = "https://news.com/",
+    accept: String = "*/*",
+    hostHit: Boolean = false,
+  ): Boolean {
+    val pageHost = page?.let { it.substringAfter("://").substringBefore('/') }
+    val requestHost = url.substringAfter("://").substringBefore('/')
+    val thirdParty = pageHost == null || !requestHost.endsWith(pageHost.substringAfter("www."))
+    return engine.shouldBlock(
+      RequestContext(url),
+      RequestType.infer(url, accept),
+      thirdParty,
+      pageHost,
+      hostHit,
+    )
+  }
+
+  @Test
+  fun `blocks by host and by path`() {
+    assertThat(blocked("https://ads.example.com/x.js")).isTrue()
+    assertThat(blocked("https://ads.example.com.evil/x.js")).isFalse()
+    assertThat(blocked("https://news.com/banner/2024/ad.png")).isTrue()
+    assertThat(blocked("https://news.com/banner/ad.png")).isFalse()
+  }
+
+  @Test
+  fun `exceptions win over ordinary blocks and over host list hits`() {
+    assertThat(blocked("https://ads.example.com/allowed.js")).isFalse()
+    assertThat(blocked("https://tracker.net/p.gif", page = "https://partner.org/")).isFalse()
+    assertThat(blocked("https://tracker.net/p.gif", page = "https://other.org/")).isTrue()
+    assertThat(blocked("https://tracker.net/p.gif", page = "https://partner.org/", hostHit = true))
+      .isFalse()
+    assertThat(blocked("https://anything.com/x", hostHit = true)).isTrue()
+  }
+
+  @Test
+  fun `important blocks cannot be excepted`() {
+    assertThat(blocked("https://evil.org/x")).isTrue()
+  }
+
+  @Test
+  fun `party and domain scopes apply`() {
+    assertThat(blocked("https://tracker.net/p", page = "https://tracker.net/")).isFalse()
+    assertThat(blocked("https://cdn.site.com/widget.js", page = "https://site.com/")).isFalse()
+    assertThat(blocked("https://cdn.site.com/widget.js", page = "https://blog.net/")).isTrue()
+  }
+
+  @Test
+  fun `type scopes apply`() {
+    assertThat(blocked("https://news.com/img-ad-sidebar.png", accept = "image/*")).isTrue()
+    assertThat(blocked("https://news.com/img-ad-sidebar.css", accept = "text/css")).isFalse()
+  }
+
+  @Test
+  fun `a ping-only rule never catches an ordinary fetch`() {
+    assertThat(blocked("https://api.vendor.com/v1/items")).isFalse()
+    assertThat(blocked("https://api.vendor.com/v1/items.js")).isFalse()
+  }
+
+  @Test
+  fun `document exceptions exempt the page`() {
+    assertThat(engine.isPageExempt("m.exempt.com")).isTrue()
+    assertThat(engine.isPageExempt("exempt.com.evil")).isFalse()
+  }
+
+  @Test
+  fun `bundled rules load and decide quickly`() {
+    val file = java.io.File("src/main/assets/rules.txt")
+    val bundled = file.bufferedReader().useLines(RuleEngine::parse)
+    assertThat(bundled.size).isGreaterThan(10_000)
+    val urls = listOf(
+      "https://securepubads.g.doubleclick.net/tag/js/gpt.js",
+      "https://platform.theverge.com/wp-content/uploads/sites/2/2026/09/mariokart8a.jpg",
+      "https://cdn.concert.io/lib/concert-ads/v2-latest/concert_ads.js",
+      "https://www.google.com/recaptcha/api.js?render=6LeCFmwfAAAAAA4qBtkgg3WVJWVYGkt05",
+      "https://fonts.gstatic.com/s/roboto/v48/KFO7CnqEu92Fr1ME7kSn66aGLdTylUAMa3yUBHMda",
+      "https://sb.scorecardresearch.com/cs/7976662/beacon.js",
+      "https://example.com/static/app.bundle.js",
+      "https://example.com/api/v2/items?page=3&sort=asc",
+    )
+    var blockedCount = 0
+    repeat(20) {
+      for (url in urls) {
+        val request = RequestContext(url)
+        val mask = RequestType.infer(url, "*/*")
+        if (bundled.shouldBlock(request, mask, true, "www.theverge.com", false)) blockedCount++
+      }
+    }
+    val rounds = 2_000
+    val started = System.nanoTime()
+    repeat(rounds) {
+      for (url in urls) {
+        val request = RequestContext(url)
+        bundled.shouldBlock(request, RequestType.infer(url, "*/*"), true, "www.theverge.com", false)
+      }
+    }
+    val perDecisionNs = (System.nanoTime() - started) / (rounds * urls.size)
+    println("bundled rules: ${bundled.size}; ${perDecisionNs / 1000.0} us per decision on the JVM")
+    assertThat(blockedCount).isGreaterThan(0)
+    assertThat(perDecisionNs).isLessThan(200_000)
+  }
+}

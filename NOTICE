@@ -1,0 +1,33 @@
+Wren
+Copyright 2026 AndroidPoet
+
+Wren is free software, licensed under the GNU General Public License,
+version 3 or (at your option) any later version. See LICENSE.
+
+It includes or is derived from the following third-party work.
+
+Pokedex (https://github.com/skydoves/Pokedex)
+  Copyright 2022 skydoves (Jaewoong Eum). Apache License, Version 2.0.
+  The project scaffolding (Gradle configuration, module layout, dependency
+  injection and networking wiring) is derived from that work; all
+  Pokedex-specific application code, resources and assets have been removed.
+
+Material Icons (https://github.com/google/material-design-icons)
+  Copyright Google LLC. Apache License, Version 2.0.
+  Most in-app icons (app/src/main/res/drawable/ic_*.xml) use Material Icons path
+  data; each such file names the icon it came from. The launcher icon, the home
+  mark and the Tor, caret and video icons are original.
+
+Bundled filter data (app/src/main/assets/rules.txt, cosmetic.txt)
+  Compiled by tools/compile_rules.py from:
+  - EasyList and EasyPrivacy (https://easylist.to), by The EasyList authors.
+    GNU GPL v3 or Creative Commons Attribution-ShareAlike 3.0.
+  - uBlock Origin filter lists (https://github.com/uBlockOrigin/uAssets),
+    by Raymond Hill and contributors. GNU GPL v3.
+
+Bundled host list (app/src/main/assets/hosts.bin)
+  Compiled by tools/compile_hosts.py from StevenBlack/hosts
+  (https://github.com/StevenBlack/hosts), Copyright Steven Black. MIT License.
+
+Tor (info.guardianproject:tor-android, jtorctl)
+  The Tor Project and The Guardian Project. 3-clause BSD License.

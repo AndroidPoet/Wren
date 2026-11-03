@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Copyright 2026 AndroidPoet
+
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:layout_width="match_parent"
+  android:layout_height="wrap_content"
+  android:background="?attr/selectableItemBackground"
+  android:gravity="center_vertical"
+  android:minHeight="58dp"
+  android:orientation="horizontal"
+  android:paddingStart="24dp"
+  android:paddingEnd="24dp">
+
+  <FrameLayout
+    android:layout_width="34dp"
+    android:layout_height="34dp">
+
+    <ImageView
+      android:id="@+id/visitedIcon"
+      android:layout_width="match_parent"
+      android:layout_height="match_parent"
+      android:contentDescription="@null"
+      android:padding="4dp"
+      android:visibility="gone" />
+
+  <TextView
+    android:id="@+id/visitedLetter"
+    android:layout_width="34dp"
+    android:layout_height="34dp"
+    android:gravity="center"
+    android:textColor="@color/tile_letter"
+    android:textSize="15sp"
+    android:textStyle="bold" />
+  </FrameLayout>
+
+  <LinearLayout
+    android:layout_width="0dp"
+    android:layout_height="wrap_content"
+    android:layout_marginStart="16dp"
+    android:layout_weight="1"
+    android:orientation="vertical">
+
+    <TextView
+      android:id="@+id/visitedHost"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:ellipsize="end"
+      android:maxLines="1"
+      android:textColor="@color/ink"
+      android:textSize="15sp" />
+
+    <TextView
+      android:id="@+id/visitedTitle"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:ellipsize="end"
+      android:maxLines="1"
+      android:textAppearance="@style/TextAppearance.Wren.Caption" />
+  </LinearLayout>
+</LinearLayout>

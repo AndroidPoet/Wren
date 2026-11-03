@@ -1,0 +1,53 @@
+# Baseline profile for Wren.
+#
+# ART ahead-of-time compiles the classes and methods listed here at install, so the cold-start
+# and first-navigation paths are native code from the first launch instead of being interpreted
+# and JIT-compiled on the fly. This is a hand-authored starter covering the app's own hot classes;
+# running :app:generateBaselineProfile on a device captures a fuller, method-level profile that
+# supersedes it.
+
+# --- startup ---
+Ldev/androidpoet/wren/WrenApp;
+Ldev/androidpoet/wren/initializer/TimberInitializer;
+Ldev/androidpoet/wren/settings/SettingsStore;
+Ldev/androidpoet/wren/di/AppModule;
+
+# --- the browser screen and its first paint ---
+Ldev/androidpoet/wren/ui/browser/BrowserActivity;
+Ldev/androidpoet/wren/ui/browser/BrowserViewModel;
+Ldev/androidpoet/wren/ui/browser/WrenWebViewClient;
+Ldev/androidpoet/wren/ui/browser/WrenWebChromeClient;
+Ldev/androidpoet/wren/ui/browser/SuggestionAdapter;
+Ldev/androidpoet/wren/browser/WebViewConfigurator;
+Ldev/androidpoet/wren/browser/TabManager;
+Ldev/androidpoet/wren/browser/BrowserTab;
+Ldev/androidpoet/wren/browser/UrlFormatter;
+Ldev/androidpoet/wren/browser/Bangs;
+Ldev/androidpoet/wren/browser/SpeculativeLoader;
+
+# --- the home page, shown before any navigation ---
+Ldev/androidpoet/wren/ui/home/ShortcutAdapter;
+Ldev/androidpoet/wren/ui/home/ShortcutAdapter$ViewHolder;
+Ldev/androidpoet/wren/ui/home/MostVisitedAdapter;
+Ldev/androidpoet/wren/ui/home/MostVisitedAdapter$ViewHolder;
+Ldev/androidpoet/wren/ui/home/Tiles;
+
+# --- request interception, on the hot path of every page load ---
+Ldev/androidpoet/wren/browser/blocking/ContentBlocker;
+Ldev/androidpoet/wren/browser/blocking/HostMatcher;
+Ldev/androidpoet/wren/browser/blocking/Blocklist;
+Ldev/androidpoet/wren/browser/blocking/BlockStats;
+Ldev/androidpoet/wren/browser/blocking/CosmeticFilter;
+Ldev/androidpoet/wren/browser/privacy/LinkCleaner;
+Ldev/androidpoet/wren/browser/privacy/HttpsUpgrader;
+Ldev/androidpoet/wren/browser/privacy/PrivacyScripts;
+Ldev/androidpoet/wren/browser/favicon/FaviconStore;
+
+# --- the hottest methods, marked for start-up (S), post-startup (P) and hot (H) compilation ---
+HSPLdev/androidpoet/wren/browser/WebViewConfigurator;->configure(Landroid/webkit/WebView;Z)V
+HSPLdev/androidpoet/wren/browser/UrlFormatter;->toUrlOrSearch(Ljava/lang/String;Ldev/androidpoet/wren/core/model/SearchEngine;)Ljava/lang/String;
+HSPLdev/androidpoet/wren/browser/UrlFormatter;->prettyHost(Ljava/lang/String;)Ljava/lang/String;
+HSPLdev/androidpoet/wren/browser/blocking/ContentBlocker;->intercept(Landroid/webkit/WebResourceRequest;Ljava/lang/String;)Landroid/webkit/WebResourceResponse;
+HSPLdev/androidpoet/wren/browser/blocking/HostMatcher;->hostOf(Ljava/lang/String;)Ljava/lang/String;
+HSPLdev/androidpoet/wren/browser/blocking/HostMatcher;->candidates(Ljava/lang/String;)Ljava/util/List;
+HSPLdev/androidpoet/wren/browser/blocking/Blocklist;->isBlocked(Ljava/lang/String;)Z

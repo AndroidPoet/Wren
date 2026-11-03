@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Copyright 2026 AndroidPoet
+
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:layout_width="match_parent"
+  android:layout_height="match_parent"
+  android:background="@color/layer"
+  android:orientation="vertical"
+  android:paddingTop="12dp"
+  android:paddingBottom="12dp">
+
+  <TextView
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingStart="20dp"
+    android:paddingEnd="20dp"
+    android:paddingBottom="8dp"
+    android:text="@string/tabs"
+    android:textAppearance="@style/TextAppearance.Wren.Title"
+    android:textStyle="bold" />
+
+  <androidx.recyclerview.widget.RecyclerView
+    android:id="@+id/tabList"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_weight="1"
+    android:clipToPadding="false"
+    android:paddingStart="8dp"
+    android:paddingEnd="8dp" />
+
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:paddingStart="8dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="8dp">
+
+    <com.google.android.material.button.MaterialButton
+      android:id="@+id/sessionButton"
+      style="@style/Widget.MaterialComponents.Button.TextButton"
+      android:layout_width="0dp"
+      android:textAllCaps="false"
+      android:layout_height="wrap_content"
+      android:layout_weight="1"
+      android:textColor="@color/ink_soft" />
+
+    <com.google.android.material.button.MaterialButton
+      android:id="@+id/newTabButton"
+      style="@style/Widget.MaterialComponents.Button.TextButton"
+      android:layout_width="0dp"
+      android:textAllCaps="false"
+      android:layout_height="wrap_content"
+      android:layout_weight="1"
+      android:text="@string/new_tab"
+      android:textColor="@color/russet_strong" />
+
+    <com.google.android.material.button.MaterialButton
+      android:id="@+id/newPrivateTabButton"
+      style="@style/Widget.MaterialComponents.Button.TextButton"
+      android:layout_width="0dp"
+      android:textAllCaps="false"
+      android:layout_height="wrap_content"
+      android:layout_weight="1"
+      android:text="@string/new_private_tab_short"
+      android:textColor="@color/amber" />
+  </LinearLayout>
+</LinearLayout>

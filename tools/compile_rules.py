@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""Compiles EasyList-style filter lists into the bundled pattern rule set.
+
+Writes two assets. rules.txt keeps the network rules the app's RuleEngine understands and that
+the compact host set cannot express (paths, wildcards, resource types, domain scopes,
+exceptions). cosmetic.txt keeps element-hiding rules and the scriptlet calls the bundled
+scriptlet library implements. Plain host rules belong in hosts.bin: run tools/compile_hosts.py
+with the same sources.
+
+Usage: python3 tools/compile_rules.py [source ...]
+Sources are URLs or files; the defaults are EasyList, EasyPrivacy and the uBlock lists.
+"""
+import re
+import sys
+import urllib.request
+from pathlib import Path
+
+DEFAULT_SOURCES = [
+  "https://easylist.to/easylist/easylist.txt",
+  "https://easylist.to/easylist/easyprivacy.txt",
+  "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters.txt",
+  "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/quick-fixes.txt",
+  "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/unbreak.txt",
+  "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/privacy.txt",
+]
+ASSETS = Path(__file__).resolve().parent.parent / "app/src/main/assets"
+OUTPUT = ASSETS / "rules.txt"
+COSMETIC_OUTPUT = ASSETS / "cosmetic.txt"
+
+# Must match the names handled by assets/scriptlets.js and CosmeticRules.kt.
+SCRIPTLETS = {
+  "set-constant", "set", "abort-on-property-read", "aopr", "abort-on-property-write", "aopw",
+  "abort-current-script", "acs", "abort-current-inline-script", "acis", "json-prune",
+  "json-prune-fetch-response", "json-prune-xhr-response", "trusted-replace-fetch-response",
+  "trusted-replace-xhr-response", "no-setTimeout-if", "nostif", "setTimeout-defuser",
+  "no-setInterval-if", "nosiif", "nano-setTimeout-booster", "nano-stb",
+  "nano-setInterval-booster", "nano-sib", "addEventListener-defuser", "aeld",
+  "no-window-open-if", "nowoif", "window.open-defuser", "no-fetch-if", "prevent-fetch",
+  "no-xhr-if", "prevent-xhr", "remove-attr", "ra", "remove-class", "rc", "remove-node-text",
+  "rmnt", "replace-node-text", "rpnt", "noeval", "noeval-if", "nowebrtc", "nobab", "nofab",
+  "popads-dummy", "set-cookie", "set-local-storage-item", "set-session-storage-item",
+  "remove-cookie", "cookie-remover", "href-sanitizer", "no-cookie-if",
+}
+PROCEDURAL = re.compile(
+  r":(has-text|matches-css|matches-css-before|matches-css-after|xpath|upward|remove|"
+  r"min-text-length|matches-path|watch-attr|matches-attr|matches-prop|others|if|if-not|"
+  r"style|remove-attr|remove-class|matches-media|shadow|contains|-abp-\w+)\b",
+)
+
+TYPES = {
+  "script", "image", "stylesheet", "css", "xmlhttprequest", "xhr", "subdocument", "frame",
+  "font", "media", "object", "ping", "beacon", "websocket", "other",
+}
+PLAIN = {"third-party", "3p", "first-party", "1p", "important", "match-case"}
+VALUED = {"domain", "from"}
+HOST_RULE = re.compile(r"^\|\|[a-z0-9.-]+\^?$")
+HOST_ONLY_OPTIONS = {"third-party", "3p"}
+
+
+def is_cosmetic(line: str) -> bool:
+  i = line.find("#")
+  if i < 0:
+    return False
+  nxt = line[i + 1:i + 2]
+  if nxt == "#":
+    return True
+  return nxt in "@?$%" and line[i + 2:i + 3] == "#"
+
+
+def cosmetic_line(raw: str):
+  """Returns the line when it is a hiding rule or scriptlet the app can apply, else None."""
+  line = raw.strip()
+  if not line or line[0] in "![":
+    return None
+  for separator in ("#@#", "##"):
+    i = line.find(separator)
+    if i < 0:
+      continue
+    domains, body = line[:i], line[i + len(separator):]
+    if not body or "*" in domains:
+      return None
+    if body.startswith("+js("):
+      if not body.endswith(")"):
+        return None
+      name = body[4:-1].split(",", 1)[0].strip()
+      return line if (name in SCRIPTLETS or name == "") and domains else None
+    if PROCEDURAL.search(body) or "\n" in body:
+      return None
+    return line
+  return None
+
+
+def classify(raw: str):
+  """Returns 'host', 'rule' or None."""
+  line = raw.strip()
+  if not line or line[0] in "![" or is_cosmetic(line):
+    return None
+  exception = line.startswith("@@")
+  body = line[2:] if exception else line
+  options = ""
+  dollar = body.rfind("$")
+  if dollar >= 0:
+    options, body = body[dollar + 1:], body[:dollar]
+  if len(body) > 1 and body.startswith("/") and body.endswith("/"):
+    return None
+  option_names = []
+  for option in options.split(",") if options else []:
+    name = option.lstrip("~")
+    key, _, value = name.partition("=")
+    if key in TYPES or key in PLAIN:
+      option_names.append(name)
+    elif key in VALUED and value:
+      option_names.append(name)
+    elif exception and key in ("document", "doc"):
+      option_names.append(name)
+    else:
+      return None
+  if not exception and HOST_RULE.match(body.lower()) and set(option_names) <= HOST_ONLY_OPTIONS:
+    return "host"
+  if not body and not option_names:
+    return None
+  return "rule"
+
+
+def read_source(source: str):
+  if source.startswith("https://"):
+    with urllib.request.urlopen(source, timeout=60) as response:
+      return response.read().decode("utf-8", "replace").splitlines()
+  return Path(source).read_text(encoding="utf-8", errors="replace").splitlines()
+
+
+def main() -> int:
+  sources = sys.argv[1:] or DEFAULT_SOURCES
+  kept, cosmetic, hosts, dropped = [], [], 0, 0
+  seen = set()
+  for source in sources:
+    for raw in read_source(source):
+      line = cosmetic_line(raw)
+      if line is not None:
+        if line not in seen:
+          seen.add(line)
+          cosmetic.append(line)
+        continue
+      kind = classify(raw)
+      if kind == "rule":
+        line = raw.strip()
+        if line not in seen:
+          seen.add(line)
+          kept.append(line)
+      elif kind == "host":
+        hosts += 1
+      else:
+        dropped += 1
+  OUTPUT.write_text("\n".join(kept) + "\n", encoding="utf-8")
+  COSMETIC_OUTPUT.write_text("\n".join(cosmetic) + "\n", encoding="utf-8")
+  print(f"{len(kept)} pattern rules -> {OUTPUT} ({OUTPUT.stat().st_size // 1024} KB); "
+        f"{len(cosmetic)} cosmetic rules -> {COSMETIC_OUTPUT} "
+        f"({COSMETIC_OUTPUT.stat().st_size // 1024} KB); "
+        f"{hosts} plain host rules left to hosts.bin; {dropped} lines unsupported or not network")
+  return 0
+
+
+if __name__ == "__main__":
+  sys.exit(main())

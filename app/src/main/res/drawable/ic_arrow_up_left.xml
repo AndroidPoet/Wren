@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Copyright 2026 AndroidPoet
+
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+  android:width="24dp"
+  android:height="24dp"
+  android:viewportWidth="24"
+  android:viewportHeight="24"
+  android:tint="@color/ink_faint">
+  <!-- Path data from Material Icons "call_made", Copyright Google LLC, Apache License 2.0. -->
+  <path
+    android:fillColor="#FFFFFFFF"
+    android:pathData="M9,5v2h6.59L4,18.59 5.41,20 17,8.41V15h2V5z" />
+</vector>

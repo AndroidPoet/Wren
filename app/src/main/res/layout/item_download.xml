@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Copyright 2026 AndroidPoet
+
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:layout_width="match_parent" android:layout_height="wrap_content"
+  android:background="?attr/selectableItemBackground" android:gravity="center_vertical"
+  android:minHeight="66dp" android:orientation="horizontal"
+  android:paddingStart="20dp" android:paddingEnd="4dp"
+  android:paddingTop="8dp" android:paddingBottom="8dp">
+
+  <ImageView android:id="@+id/downloadIcon"
+    android:layout_width="30dp" android:layout_height="30dp"
+    android:contentDescription="@null" android:src="@drawable/ic_file_generic" />
+
+  <LinearLayout
+    android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+    android:layout_marginStart="16dp" android:orientation="vertical">
+    <TextView android:id="@+id/downloadName"
+      android:layout_width="match_parent" android:layout_height="wrap_content"
+      android:ellipsize="middle" android:maxLines="1"
+      android:textColor="@color/ink" android:textSize="15sp" />
+    <com.google.android.material.progressindicator.LinearProgressIndicator
+      android:id="@+id/downloadProgress"
+      android:layout_width="match_parent" android:layout_height="wrap_content"
+      android:layout_marginTop="6dp" android:layout_marginBottom="2dp"
+      app:indicatorColor="@color/russet" app:trackColor="@color/sheet_raised"
+      android:visibility="gone"
+      xmlns:app="http://schemas.android.com/apk/res-auto" />
+    <TextView android:id="@+id/downloadStatus"
+      android:layout_width="match_parent" android:layout_height="wrap_content"
+      android:maxLines="1" android:textAppearance="@style/TextAppearance.Wren.Caption" />
+  </LinearLayout>
+
+  <ImageView android:id="@+id/downloadMenu"
+    android:layout_width="44dp" android:layout_height="44dp"
+    android:background="?attr/selectableItemBackgroundBorderless"
+    android:contentDescription="@string/more" android:padding="12dp"
+    android:src="@drawable/ic_more" android:tint="@color/ink_soft" />
+</LinearLayout>

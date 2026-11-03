@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Copyright 2026 AndroidPoet
+
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<resources>
+
+  <!-- Night: warm charcoal, never blue-black. The accent lifts, so text on it turns dark. -->
+  <color name="ground">#FF0F0E0C</color>
+  <color name="layer">#FF171512</color>
+  <color name="sheet">#FF1F1C18</color>
+  <color name="sheet_raised">#FF29251F</color>
+  <color name="rule">#FF38322A</color>
+
+  <color name="russet">#FFE08460</color>
+  <color name="russet_strong">#FFF0A283</color>
+  <color name="russet_tint">#3DE08460</color>
+  <color name="on_accent">#FF1A110C</color>
+  <color name="moss">#FF85C795</color>
+  <color name="amber">#FFE8B45E</color>
+  <color name="amber_tint">#2EE8B45E</color>
+  <color name="moss_tint">#2E85C795</color>
+
+  <color name="ink">#FFF2EDE4</color>
+  <color name="ink_soft">#FFB3AA9C</color>
+  <color name="ink_faint">#FF7C7468</color>
+</resources>

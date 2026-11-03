@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108">
+  <!-- Copyright 2026 AndroidPoet. SPDX-License-Identifier: GPL-3.0-or-later -->
+  <!-- Same art as the adaptive launcher icon: backdrop plus the foreground, drawn larger because the store applies its own mask. -->
+  <rect width="108" height="108" fill="#F4EEE2"/>
+  <g transform="translate(54 54) scale(0.9) translate(-55 -56)">
+    <path d="M21,83.5L89,79" stroke="#5E4A36" stroke-width="3.4" stroke-linecap="round" fill="none"/><path d="M49,77L47.5,82.5M57,76L57,81.5" stroke="#1E1B17" stroke-width="2" stroke-linecap="round"/><path fill="#A8482A" d="M44,65L29.5,48.5C28.1,46.6 29.9,44.2 32.1,45.3L50,57.5Z"/><path fill="#A8482A" d="M41,72C36,64 38,52 46,46C48,40 52,34 59,33C63,32.5 66,34 67.5,36.5L77.5,28.4L69.3,38.7L77,34.4L69.9,41.4C72,47 72,54 69,62C66,71 58,78 50,78C46,78 43,75.5 41,72Z"/><path fill="#7A3118" d="M46,52C53,49 61,55 62.5,64C56,67 48.5,65 44.5,60C44,57 44.5,54 46,52Z"/><path fill="#1E1B17" d="M59.4,39.5a2.1,2.1 0 1,0 4.2,0a2.1,2.1 0 1,0 -4.2,0"/>
+  </g>
+</svg>

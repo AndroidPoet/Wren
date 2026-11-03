@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Copyright 2026 AndroidPoet
+
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:app="http://schemas.android.com/apk/res-auto"
+  android:id="@+id/homeScroll"
+  android:layout_width="match_parent"
+  android:layout_height="match_parent"
+  android:background="@color/ground"
+  android:clipToPadding="false"
+  android:fillViewport="true">
+
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:clipChildren="false"
+    android:clipToPadding="false"
+    android:orientation="vertical"
+    android:paddingBottom="24dp">
+
+    <!-- A flat masthead: wordmark on the page itself, so the search field is the first thing
+         that looks like something to touch. -->
+    <LinearLayout
+      android:id="@+id/homeHero"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginStart="22dp"
+      android:layout_marginTop="32dp"
+      android:layout_marginEnd="18dp"
+      android:gravity="center_vertical"
+      android:orientation="horizontal">
+
+      <ImageView
+        android:layout_width="34dp"
+        android:layout_height="34dp"
+        android:contentDescription="@null"
+        android:src="@drawable/ic_home_mark" />
+
+      <TextView
+        android:id="@+id/homeBrand"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10dp"
+        android:layout_weight="1"
+        android:fontFamily="serif"
+        android:text="@string/home_brand"
+        android:textColor="@color/ink"
+        android:textSize="28sp"
+        android:textStyle="bold" />
+
+      <TextView
+        android:id="@+id/homeShieldPill"
+        android:layout_width="wrap_content"
+        android:layout_height="32dp"
+        android:background="@drawable/bg_badge_shield"
+        android:drawablePadding="6dp"
+        android:gravity="center"
+        android:paddingStart="10dp"
+        android:paddingEnd="12dp"
+        android:textColor="@color/moss"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        app:drawableStartCompat="@drawable/ic_shield"
+        app:drawableTint="@color/moss" />
+    </LinearLayout>
+
+    <TextView
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginStart="22dp"
+      android:layout_marginTop="4dp"
+      android:layout_marginEnd="22dp"
+      android:text="@string/home_tagline"
+      android:textColor="@color/ink_soft"
+      android:textSize="15sp" />
+
+    <com.google.android.material.card.MaterialCardView
+      android:id="@+id/homeSearchCard"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginStart="16dp"
+      android:layout_marginTop="22dp"
+      android:layout_marginEnd="16dp"
+      app:cardBackgroundColor="@color/sheet"
+      app:cardCornerRadius="14dp"
+      app:cardElevation="0dp"
+      app:strokeColor="@color/rule"
+      app:strokeWidth="1dp">
+
+      <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="18dp"
+        android:paddingEnd="8dp">
+
+        <LinearLayout
+          android:id="@+id/homeEngineChip"
+          android:layout_width="wrap_content"
+          android:layout_height="48dp"
+          android:background="?attr/selectableItemBackgroundBorderless"
+          android:contentDescription="@string/search_engine"
+          android:gravity="center_vertical"
+          android:orientation="horizontal">
+
+          <ImageView
+            android:id="@+id/homeEngineIcon"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:contentDescription="@string/search_engine"
+            android:src="@drawable/ic_search" />
+
+          <ImageView
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:layout_marginStart="2dp"
+            android:contentDescription="@null"
+            android:src="@drawable/ic_caret_down" />
+        </LinearLayout>
+
+        <TextView
+          android:layout_width="0dp"
+          android:layout_height="wrap_content"
+          android:layout_marginStart="10dp"
+          android:layout_weight="1"
+          android:text="@string/search_or_type_url"
+          android:textColor="@color/ink_faint"
+          android:textSize="16sp" />
+
+        <ImageView
+          android:layout_width="48dp"
+          android:layout_height="48dp"
+          android:contentDescription="@null"
+          android:padding="13dp"
+          android:src="@drawable/ic_search" />
+      </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+
+    <androidx.recyclerview.widget.RecyclerView
+      android:id="@+id/shortcutGrid"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="24dp"
+      android:nestedScrollingEnabled="false"
+      android:paddingStart="8dp"
+      android:paddingEnd="8dp" />
+
+    <LinearLayout
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginStart="14dp"
+      android:layout_marginTop="20dp"
+      android:layout_marginEnd="14dp"
+      android:layout_marginBottom="12dp"
+      android:background="@drawable/bg_card"
+      android:orientation="vertical"
+      android:paddingTop="14dp"
+      android:paddingBottom="6dp">
+
+      <TextView
+        android:id="@+id/mostVisitedHeader"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="18dp"
+        android:layout_marginBottom="4dp"
+        android:text="@string/most_visited"
+        android:textColor="@color/ink"
+        android:textSize="16sp"
+        android:textStyle="bold" />
+
+      <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/mostVisitedList"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:nestedScrollingEnabled="false" />
+    </LinearLayout>
+
+    <TextView
+      android:id="@+id/homeEmptyVisited"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginStart="24dp"
+      android:layout_marginEnd="24dp"
+      android:layout_marginBottom="8dp"
+      android:text="@string/most_visited_empty"
+      android:textAppearance="@style/TextAppearance.Wren.Caption"
+      android:visibility="gone" />
+  </LinearLayout>
+</androidx.core.widget.NestedScrollView>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Copyright 2026 AndroidPoet
+
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+  <item android:id="@+id/action_quality" android:title="@string/quality" />
+  <item android:id="@+id/action_resize" android:title="@string/resize_mode" />
+  <item android:id="@+id/action_rotate" android:title="@string/rotate_screen" />
+  <item android:id="@+id/action_lock" android:title="@string/lock_controls" />
+</menu>

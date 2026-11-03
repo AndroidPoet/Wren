@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Copyright 2026 AndroidPoet
+
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:layout_width="0dp"
+  android:layout_height="wrap_content"
+  android:layout_weight="1"
+  android:background="?attr/selectableItemBackgroundBorderless"
+  android:gravity="center_horizontal"
+  android:orientation="vertical"
+  android:paddingTop="8dp"
+  android:paddingBottom="8dp">
+
+  <FrameLayout
+    android:id="@+id/tileBackground"
+    android:layout_width="52dp"
+    android:layout_height="52dp"
+    android:background="@drawable/bg_menu_tile">
+
+    <ImageView
+      android:id="@+id/tileIcon"
+      android:layout_width="24dp"
+      android:layout_height="24dp"
+      android:layout_gravity="center"
+      android:contentDescription="@null" />
+  </FrameLayout>
+
+  <TextView
+    android:id="@+id/tileLabel"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="6dp"
+    android:ellipsize="end"
+    android:gravity="center_horizontal|top"
+    android:lineSpacingExtra="1sp"
+    android:maxLines="2"
+    android:minLines="2"
+    android:paddingStart="2dp"
+    android:paddingEnd="2dp"
+    android:textColor="@color/ink_soft"
+    android:textSize="12sp" />
+</LinearLayout>

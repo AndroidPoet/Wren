@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Copyright 2026 AndroidPoet
+
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+  android:width="108dp"
+  android:height="108dp"
+  android:viewportWidth="108"
+  android:viewportHeight="108">
+
+  <!-- One colour: the eye is knocked out of the body so the mark still has a face. -->
+  <group
+    android:pivotX="54"
+    android:pivotY="56"
+    android:scaleX="0.9"
+    android:scaleY="0.9">
+    <path
+      android:pathData="M21,83.5L89,79"
+      android:strokeColor="#000000"
+      android:strokeLineCap="round"
+      android:strokeWidth="3.4" />
+    <path
+      android:pathData="M49,77L47.5,82.5M57,76L57,81.5"
+      android:strokeColor="#000000"
+      android:strokeLineCap="round"
+      android:strokeWidth="2" />
+    <path
+      android:fillColor="#000000"
+      android:pathData="M44,65L29.5,48.5C28.1,46.6 29.9,44.2 32.1,45.3L50,57.5Z" />
+    <path
+      android:fillColor="#000000"
+      android:fillType="evenOdd"
+      android:pathData="M41,72C36,64 38,52 46,46C48,40 52,34 59,33C63,32.5 66,34 67.5,36.5L77.5,28.4L69.3,38.7L77,34.4L69.9,41.4C72,47 72,54 69,62C66,71 58,78 50,78C46,78 43,75.5 41,72ZM59.4,39.5a2.1,2.1 0 1,0 4.2,0a2.1,2.1 0 1,0 -4.2,0" />
+  </group>
+</vector>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Copyright 2026 AndroidPoet
+
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<resources>
+  <plurals name="trackers_blocked_here">
+    <item quantity="one">%1$d tracker blocked on this page</item>
+    <item quantity="other">%1$d trackers blocked on this page</item>
+  </plurals>
+</resources>

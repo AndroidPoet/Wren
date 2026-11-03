@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Copyright 2026 AndroidPoet
+
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<resources>
+  <dimen name="tile_corner">18dp</dimen>
+  <dimen name="tile_corner_small">10dp</dimen>
+  <dimen name="tile_size">52dp</dimen>
+</resources>
