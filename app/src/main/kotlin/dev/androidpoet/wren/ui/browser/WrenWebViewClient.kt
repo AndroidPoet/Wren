@@ -105,22 +105,29 @@ class WrenWebViewClient(
     return replacement != url
   }
 
+  /** True between a load starting and finishing; history updates inside it belong to the load. */
+  private var isLoading = false
+
   override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
     super.onPageStarted(view, url, favicon)
+    isLoading = true
     onPageStarted(url)
   }
 
   override fun onPageFinished(view: WebView, url: String) {
     super.onPageFinished(view, url)
+    isLoading = false
     onPageFinished(url, view.title.orEmpty())
   }
 
   /**
    * Single-page apps change the address bar without a page load; this is the only callback that
-   * fires for those, so history and the omnibox both hang off it.
+   * fires for those, so history and the omnibox both hang off it. A normal load fires it too, at
+   * commit, long before the page is done - reporting that as finished would end the progress bar,
+   * record the visit and take the tab thumbnail while the page is still arriving.
    */
   override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
     super.doUpdateVisitedHistory(view, url, isReload)
-    if (!isReload) onPageFinished(url, view.title.orEmpty())
+    if (!isReload && !isLoading) onPageFinished(url, view.title.orEmpty())
   }
 }
