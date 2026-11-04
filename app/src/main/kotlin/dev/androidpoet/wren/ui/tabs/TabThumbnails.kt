@@ -9,6 +9,7 @@ package dev.androidpoet.wren.ui.tabs
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Rect
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.LruCache
@@ -48,6 +49,11 @@ class TabThumbnails @Inject constructor() {
       location[0] + webView.width,
       location[1] + webView.height,
     )
+    // PixelCopy from a window arrived in Android 8.0; before that, draw the view by hand.
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+      captureBySoftwareDraw(webView, tabId)
+      return
+    }
     val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
     runCatching {
       PixelCopy.request(

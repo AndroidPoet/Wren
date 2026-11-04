@@ -6,13 +6,16 @@
 
 package dev.androidpoet.wren.ui.browser
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.View
@@ -34,6 +37,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import androidx.core.net.toUri
 import androidx.core.view.isGone
@@ -270,6 +274,34 @@ class BrowserActivity :
     }
     fileChooserCallback?.onReceiveValue(uris)
     fileChooserCallback = null
+  }
+
+  /** What the user asked to save, held while Android 9 and older ask them for storage access. */
+  private var pendingSave: (() -> Unit)? = null
+
+  private val storagePermissionLauncher = registerForActivityResult(
+    ActivityResultContracts.RequestPermission(),
+  ) { granted ->
+    val save = pendingSave
+    pendingSave = null
+    if (granted) save?.invoke() else toast(R.string.storage_permission_needed)
+  }
+
+  /**
+   * Runs [save] once the app may write to the shared Downloads folder. Android 10 and later need
+   * no permission for that; Android 9 and older refuse every write without the storage grant, so
+   * it is asked for here, at the moment the user starts a save, and never up front.
+   */
+  private fun withDownloadsAccess(save: () -> Unit) {
+    val granted = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ||
+      ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
+      PackageManager.PERMISSION_GRANTED
+    if (granted) {
+      save()
+      return
+    }
+    pendingSave = save
+    storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -556,14 +588,22 @@ class BrowserActivity :
   }
 
   private fun downloadUrl(url: String) {
-    val id = downloadController.enqueue(
-      url = url,
-      userAgent = null,
-      contentDisposition = null,
-      mimeType = null,
-      pageUrl = viewModel.tabManager.activeTab()?.url,
-    )
-    toast(if (id != null) R.string.download_started else R.string.download_failed)
+    if (settings.torMode) {
+      // DownloadManager fetches from its own process, outside the proxy.
+      toast(R.string.tor_downloads_off)
+      return
+    }
+    val pageUrl = viewModel.tabManager.activeTab()?.url
+    withDownloadsAccess {
+      val id = downloadController.enqueue(
+        url = url,
+        userAgent = null,
+        contentDisposition = null,
+        mimeType = null,
+        pageUrl = pageUrl,
+      )
+      toast(if (id != null) R.string.download_started else R.string.download_failed)
+    }
   }
 
   private fun applyRenderingMode() {
@@ -592,8 +632,10 @@ class BrowserActivity :
   private fun savePageOffline() {
     val view = webView ?: return
     val name = viewModel.tabManager.activeTab()?.title.orEmpty()
-    PageSaver.saveArchive(this, view, name) { ok ->
-      toast(if (ok) R.string.page_saved else R.string.page_save_failed)
+    withDownloadsAccess {
+      PageSaver.saveArchive(this, view, name) { ok ->
+        toast(if (ok) R.string.page_saved else R.string.page_save_failed)
+      }
     }
   }
 
@@ -1852,8 +1894,10 @@ class BrowserActivity :
   ) {
     if (url.startsWith("blob:")) {
       // A blob lives only in the page's JS heap; it is read out through the page itself.
-      blobDownloader.download(source, url, mimeType)
-      toast(R.string.download_started)
+      withDownloadsAccess {
+        blobDownloader.download(source, url, mimeType)
+        toast(R.string.download_started)
+      }
       return
     }
     if (settings.torMode) {
@@ -1861,14 +1905,17 @@ class BrowserActivity :
       toast(R.string.tor_downloads_off)
       return
     }
-    val id = downloadController.enqueue(
-      url = url,
-      userAgent = userAgent,
-      contentDisposition = contentDisposition,
-      mimeType = mimeType,
-      pageUrl = viewModel.tabManager.tab(tabId)?.url,
-    )
-    toast(if (id != null) R.string.download_started else R.string.download_failed)
+    val pageUrl = viewModel.tabManager.tab(tabId)?.url
+    withDownloadsAccess {
+      val id = downloadController.enqueue(
+        url = url,
+        userAgent = userAgent,
+        contentDisposition = contentDisposition,
+        mimeType = mimeType,
+        pageUrl = pageUrl,
+      )
+      toast(if (id != null) R.string.download_started else R.string.download_failed)
+    }
   }
 
   private fun openExternally(url: String): Boolean {

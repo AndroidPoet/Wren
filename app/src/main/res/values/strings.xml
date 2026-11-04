@@ -66,6 +66,7 @@
   <string name="share_file">Share file</string>
   <string name="no_app_for_file">No app can open this file</string>
   <string name="download_failed">Could not download that file</string>
+  <string name="storage_permission_needed">Saving files on this version of Android needs storage access</string>
   <string name="desktop_site">Desktop site</string>
 
   <string name="quality">Quality</string>

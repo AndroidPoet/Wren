@@ -7,8 +7,6 @@
 package dev.androidpoet.wren.download
 
 import android.app.Application
-import android.content.ContentValues
-import android.provider.MediaStore
 import android.util.Base64
 import android.webkit.MimeTypeMap
 import android.webkit.WebView
@@ -140,24 +138,8 @@ class BlobDownloader @Inject constructor(
     Timber.w("blob transfer aborted: %s", reason)
   }
 
-  private fun publish(source: File, displayName: String, mimeType: String): String? = runCatching {
-    val resolver = application.contentResolver
-    val values = ContentValues().apply {
-      put(MediaStore.Downloads.DISPLAY_NAME, displayName)
-      put(MediaStore.Downloads.MIME_TYPE, mimeType)
-      put(MediaStore.Downloads.IS_PENDING, 1)
-    }
-    val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-    val uri = resolver.insert(collection, values) ?: return null
-    resolver.openOutputStream(uri)?.use { out -> source.inputStream().use { it.copyTo(out) } }
-    resolver.update(
-      uri,
-      ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) },
-      null,
-      null,
-    )
-    uri.toString()
-  }.getOrNull()
+  private fun publish(source: File, displayName: String, mimeType: String): String? =
+    DownloadsFolder.publish(application, source, displayName, mimeType)
 
   private companion object {
     const val BRIDGE_NAME = "WrenBlobSink"

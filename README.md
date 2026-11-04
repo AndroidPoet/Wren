@@ -52,7 +52,7 @@ Wren has no backend. The only network traffic is:
 | --- | --- |
 | The pages you open | Always |
 | Search suggestions from your chosen engine | While typing; can be turned off |
-| Filter-list downloads | Only when you tap Update now, or change the lists, in Settings |
+| Filter-list downloads | Shortly after launch when a list is over a week old (so also on first launch), or when you tap Update now in Settings |
 | Speed-dial site icons | Can be turned off |
 | Tor | Only if you turn it on |
 

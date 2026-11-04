@@ -6,14 +6,11 @@
 
 package dev.androidpoet.wren.browser
 
-import android.content.ContentValues
 import android.content.Context
-import android.os.Build
-import android.os.Environment
 import android.print.PrintManager
-import android.provider.MediaStore
 import android.webkit.WebView
 import androidx.core.content.getSystemService
+import dev.androidpoet.wren.download.DownloadsFolder
 import timber.log.Timber
 import java.io.File
 
@@ -33,44 +30,17 @@ object PageSaver {
 
   /**
    * Saves the page as an MHTML archive in the public Downloads folder. WebView can only write an
-   * archive to a plain file path, so on scoped-storage devices it is written to the cache first
-   * and then published into MediaStore.
+   * archive to a plain file path, and is refused in Downloads itself, so the archive goes to the
+   * cache first and [DownloadsFolder] publishes it.
    */
   fun saveArchive(context: Context, webView: WebView, fileName: String, onDone: (Boolean) -> Unit) {
     val safeName = fileName.ifBlank { "page" }.replace(Regex("[^A-Za-z0-9._-]"), "_") + ".mht"
-
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-      val target = File(
-        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-        safeName,
-      )
-      webView.saveWebArchive(target.absolutePath, false) { onDone(it != null) }
-      return
-    }
-
     val cacheFile = File(context.cacheDir, safeName)
     webView.saveWebArchive(cacheFile.absolutePath, false) { result ->
-      onDone(result != null && publish(context, cacheFile, safeName))
+      val published = result != null &&
+        DownloadsFolder.publish(context, cacheFile, safeName, "multipart/related") != null
       cacheFile.delete()
+      onDone(published)
     }
   }
-
-  private fun publish(context: Context, source: File, displayName: String): Boolean = runCatching {
-    val resolver = context.contentResolver
-    val values = ContentValues().apply {
-      put(MediaStore.Downloads.DISPLAY_NAME, displayName)
-      put(MediaStore.Downloads.MIME_TYPE, "multipart/related")
-      put(MediaStore.Downloads.IS_PENDING, 1)
-    }
-    val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-    val uri = resolver.insert(collection, values) ?: return false
-    resolver.openOutputStream(uri)?.use { out -> source.inputStream().use { it.copyTo(out) } }
-    resolver.update(
-      uri,
-      ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) },
-      null,
-      null,
-    )
-    true
-  }.onFailure { Timber.w(it, "could not publish archive") }.getOrDefault(false)
 }

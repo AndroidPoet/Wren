@@ -167,9 +167,9 @@ class DownloadController @Inject constructor(
 
     manager.query(DownloadManager.Query()).use { cursor ->
       val idCol = cursor.getColumnIndex(DownloadManager.COLUMN_ID)
-      val statusCol = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+      val statusCol = cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)
       val soFarCol = cursor.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
-      val totalCol = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
+      val totalCol = cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
       while (cursor.moveToNext()) {
         val id = cursor.getLong(idCol)
         val systemStatus = cursor.getInt(statusCol)
@@ -203,8 +203,10 @@ class DownloadController @Inject constructor(
         repository.updateStatus(id, DownloadStatus.CANCELLED, null, -1L)
         return
       }
-      val status = cursor.getInt(cursor.getColumnIndex(DownloadManager.COLUMN_STATUS))
-      val total = cursor.getLong(cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+      val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+      val total = cursor.getLong(
+        cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES),
+      )
       when (status) {
         DownloadManager.STATUS_SUCCESSFUL -> {
           val uri = runCatching { manager.getUriForDownloadedFile(id) }.getOrNull()
