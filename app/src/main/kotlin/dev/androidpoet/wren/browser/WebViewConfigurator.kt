@@ -126,6 +126,20 @@ class WebViewConfigurator @Inject constructor(
       WebSettingsCompat.setSafeBrowsingEnabled(webView.settings, !settings.torMode)
     }
 
+    // Passkeys and security keys. Browser mode hands the page's own origin to Credential Manager,
+    // which is what lets any site sign in with a passkey rather than only this app's domains.
+    // Off under Tor: the credential provider reaches its servers outside the proxy.
+    if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)) {
+      WebSettingsCompat.setWebAuthenticationSupport(
+        webView.settings,
+        if (settings.torMode) {
+          WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_NONE
+        } else {
+          WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_BROWSER
+        },
+      )
+    }
+
     // Back/forward cache: the previous page is kept alive in memory and restored whole on Back,
     // instead of being rebuilt and refetched. This is the single largest navigation-speed win a
     // modern WebView offers. In-memory only, and torn down with the tab, so it is safe for

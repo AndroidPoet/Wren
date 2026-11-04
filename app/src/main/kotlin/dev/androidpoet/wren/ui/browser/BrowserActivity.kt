@@ -23,6 +23,7 @@ import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.webkit.CookieManager
+import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -48,6 +49,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.webkit.WebViewCompat
 import dagger.hilt.android.AndroidEntryPoint
 import dev.androidpoet.wren.R
 import dev.androidpoet.wren.browser.AppLock
@@ -62,6 +64,7 @@ import dev.androidpoet.wren.browser.SpeculativeLoader
 import dev.androidpoet.wren.browser.TabManager
 import dev.androidpoet.wren.browser.UrlFormatter
 import dev.androidpoet.wren.browser.WebViewConfigurator
+import dev.androidpoet.wren.browser.WebViewFreshness
 import dev.androidpoet.wren.browser.applyAppLock
 import dev.androidpoet.wren.browser.blocking.BlockStats
 import dev.androidpoet.wren.browser.blocking.ContentBlocker
@@ -326,6 +329,7 @@ class BrowserActivity :
     binding.torPill.setOnClickListener { TorSheet.show(supportFragmentManager) }
     observeState()
     registerBackHandling()
+    if (savedInstanceState == null) warnIfWebViewStale()
 
     if (savedInstanceState == null) privateProfile.destroy()
     whenNetworkReady {
@@ -584,6 +588,32 @@ class BrowserActivity :
       .setItems(actions.map { getString(it.first) }.toTypedArray()) { _, which ->
         actions[which].second()
       }
+      .show()
+  }
+
+  /**
+   * Once per WebView version: an engine a year out of date has public security holes this app
+   * cannot patch, and the user can only fix that from the Play Store.
+   */
+  private fun warnIfWebViewStale() {
+    val engine = WebViewCompat.getCurrentWebViewPackage(this) ?: return
+    if (!WebViewFreshness.isStale(engine.versionName, System.currentTimeMillis())) return
+    val checks = getSharedPreferences(CHECKS_PREFS, MODE_PRIVATE)
+    if (checks.getString(KEY_WARNED_WEBVIEW, null) == engine.versionName) return
+    checks.edit().putString(KEY_WARNED_WEBVIEW, engine.versionName).apply()
+    AlertDialog.Builder(this)
+      .setTitle(R.string.webview_stale_title)
+      .setMessage(getString(R.string.webview_stale_message, engine.versionName))
+      .setPositiveButton(R.string.webview_stale_update) { _, _ ->
+        val market =
+          Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + engine.packageName))
+        val web = Intent(
+          Intent.ACTION_VIEW,
+          Uri.parse("https://play.google.com/store/apps/details?id=" + engine.packageName),
+        )
+        runCatching { startActivity(market) }.recoverCatching { startActivity(web) }
+      }
+      .setNegativeButton(R.string.webview_stale_later, null)
       .show()
   }
 
@@ -1892,6 +1922,33 @@ class BrowserActivity :
     contentDisposition: String,
     mimeType: String,
   ) {
+    if (isAndroidApp(url, contentDisposition, mimeType)) {
+      AlertDialog.Builder(this)
+        .setTitle(R.string.apk_download_title)
+        .setMessage(R.string.apk_download_message)
+        .setPositiveButton(R.string.apk_download_confirm) { _, _ ->
+          startDownload(source, tabId, url, userAgent, contentDisposition, mimeType)
+        }
+        .setNegativeButton(android.R.string.cancel, null)
+        .show()
+      return
+    }
+    startDownload(source, tabId, url, userAgent, contentDisposition, mimeType)
+  }
+
+  /** An app file installs code, not content; a page offering one gets a second look first. */
+  private fun isAndroidApp(url: String, contentDisposition: String, mimeType: String): Boolean =
+    mimeType.substringBefore(';').trim().equals(APK_MIME_TYPE, ignoreCase = true) ||
+      URLUtil.guessFileName(url, contentDisposition, mimeType).endsWith(".apk", ignoreCase = true)
+
+  private fun startDownload(
+    source: WebView,
+    tabId: Long,
+    url: String,
+    userAgent: String,
+    contentDisposition: String,
+    mimeType: String,
+  ) {
     if (url.startsWith("blob:")) {
       // A blob lives only in the page's JS heap; it is read out through the page itself.
       withDownloadsAccess {
@@ -2184,6 +2241,9 @@ class BrowserActivity :
     const val DIM_PILL_ALPHA = 0.55f
     const val TOR_CHECK_URL = "https://check.torproject.org/"
     const val BROWSER_FALLBACK_URL = "browser_fallback_url"
+    const val APK_MIME_TYPE = "application/vnd.android.package-archive"
+    const val CHECKS_PREFS = "browser_checks"
+    const val KEY_WARNED_WEBVIEW = "warned_webview_version"
 
     /** Live pages kept in the pool: enough for tab-to-tab work, few enough to stay light. */
     const val DEFAULT_LIVE_WEB_VIEWS = 4

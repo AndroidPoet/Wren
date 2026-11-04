@@ -54,7 +54,12 @@ Wren has no backend. The only network traffic is:
 | Search suggestions from your chosen engine | While typing; can be turned off |
 | Filter-list downloads | Shortly after launch when a list is over a week old (so also on first launch), or when you tap Update now in Settings |
 | Speed-dial site icons | Can be turned off |
+| Safe Browsing checks (hashed address prefixes, to Google through Android) | Always, except in Tor mode |
+| Passkey sign-ins, through your phone's password manager | Only when a site asks you to sign in with one |
 | Tor | Only if you turn it on |
+
+Addresses are looked up with your phone's own DNS. To encrypt those lookups, turn on Private DNS
+in Android's network settings; in Tor mode, lookups go through Tor instead.
 
 ## Download
 

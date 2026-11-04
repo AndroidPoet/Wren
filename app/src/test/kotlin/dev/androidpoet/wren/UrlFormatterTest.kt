@@ -125,6 +125,14 @@ class UrlFormatterTest {
   }
 
   @Test
+  fun `pretty host names the real host, never the credentials in front of it`() {
+    assertThat(
+      UrlFormatter.prettyHost("https://bank.com@evil.example/login"),
+    ).isEqualTo("evil.example")
+    assertThat(UrlFormatter.prettyHost("https://a:b@www.example.com#x")).isEqualTo("example.com")
+  }
+
+  @Test
   fun `a custom search template with a stray percent still searches`() {
     val url = UrlFormatter.search("kotlin flow", "https://x.example/s?q=%s&ratio=100%")
     assertThat(url).isEqualTo("https://x.example/s?q=kotlin+flow&ratio=100%")

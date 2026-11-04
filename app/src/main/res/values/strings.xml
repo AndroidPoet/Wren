@@ -66,6 +66,13 @@
   <string name="share_file">Share file</string>
   <string name="no_app_for_file">No app can open this file</string>
   <string name="download_failed">Could not download that file</string>
+  <string name="apk_download_title">Download an Android app?</string>
+  <string name="apk_download_message">This file installs an app on your phone. Only install apps from sources you trust.</string>
+  <string name="apk_download_confirm">Download</string>
+  <string name="webview_stale_title">Your web engine is out of date</string>
+  <string name="webview_stale_message">Android System WebView draws every page in this browser. Version %1$s is over a year old and has known security holes. Updating it from the Play Store fixes them.</string>
+  <string name="webview_stale_update">Update</string>
+  <string name="webview_stale_later">Not now</string>
   <string name="storage_permission_needed">Saving files on this version of Android needs storage access</string>
   <string name="desktop_site">Desktop site</string>
 

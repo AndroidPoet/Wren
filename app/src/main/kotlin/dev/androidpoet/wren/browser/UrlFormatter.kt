@@ -79,11 +79,16 @@ object UrlFormatter {
 
   fun isNonWebScheme(url: String): Boolean = schemeOf(url) in NON_WEB_SCHEMES
 
-  /** The host, minus a leading `www.`, for the compact omnibox label. */
+  /**
+   * The host, minus a leading `www.`, for the compact omnibox label. Credentials are dropped:
+   * `https://bank.com@evil.example/` is a page on evil.example, and a label that began with
+   * "bank.com" would be the spoof the address bar exists to prevent.
+   */
   fun prettyHost(url: String): String {
     if (url.isBlank() || url == NEW_TAB_URL) return ""
     val withoutScheme = url.substringAfter("://", url)
-    val host = withoutScheme.substringBefore('/').substringBefore('?')
+    val authority = withoutScheme.substringBefore('/').substringBefore('?').substringBefore('#')
+    val host = authority.substringAfterLast('@')
     return host.removePrefix("www.").ifBlank { url }
   }
 

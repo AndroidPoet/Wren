@@ -17,6 +17,7 @@ import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import dev.androidpoet.wren.browser.UrlFormatter
 
 /**
  * Everything a page can ask the browser to do. Capability requests are denied by default:
@@ -66,14 +67,14 @@ class WrenWebChromeClient(
         transport: WebView,
         request: WebResourceRequest,
       ): Boolean {
-        onNewWindow(request.url.toString())
+        openIfWeb(request.url.toString())
         transport.destroy()
         return true
       }
 
       @Deprecated("Kept for API 23, which does not call the WebResourceRequest overload.")
       override fun shouldOverrideUrlLoading(transport: WebView, url: String): Boolean {
-        onNewWindow(url)
+        openIfWeb(url)
         transport.destroy()
         return true
       }
@@ -81,6 +82,15 @@ class WrenWebChromeClient(
     (resultMsg.obj as? WebView.WebViewTransport)?.webView = transportView
     resultMsg.sendToTarget()
     return true
+  }
+
+  /**
+   * Only web pages become tabs. A tab opened here is loaded by the app, not the page, so a
+   * `data:` or `intent:` target would skip both Chromium's block on page-initiated top-level
+   * data: navigations and the gesture check external apps get in the WebViewClient.
+   */
+  private fun openIfWeb(url: String) {
+    if (UrlFormatter.isWebUrl(url)) onNewWindow(url)
   }
 
   override fun onShowCustomView(view: View, callback: CustomViewCallback) {
