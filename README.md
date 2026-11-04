@@ -64,7 +64,8 @@ in Android's network settings; in Tor mode, lookups go through Tor instead. The 
 
 ## Download
 
-No release has been published yet. Until then, build it from source (below).
+Get the APK for your phone from [Releases](https://github.com/AndroidPoet/Wren/releases/latest):
+`arm64-v8a` for most phones, or `universal` if you are not sure. Or build it from source (below).
 
 ## Build
 
