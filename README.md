@@ -59,7 +59,8 @@ Wren has no backend. The only network traffic is:
 | Tor | Only if you turn it on |
 
 Addresses are looked up with your phone's own DNS. To encrypt those lookups, turn on Private DNS
-in Android's network settings; in Tor mode, lookups go through Tor instead.
+in Android's network settings; in Tor mode, lookups go through Tor instead. The full
+[privacy policy](PRIVACY.md) lists the same.
 
 ## Download
 

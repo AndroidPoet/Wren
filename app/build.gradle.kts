@@ -57,6 +57,18 @@ android {
     }
   }
 
+  splits {
+    abi {
+      // Tor's native library is most of the APK, once per processor. The GitHub and F-Droid APKs
+      // carry one processor's copy each. The Play bundle splits itself, and AGP refuses to build
+      // one with APK splits on (issuetracker.google.com/402800800), so a bundle build skips this.
+      isEnable = gradle.startParameter.taskNames.none { it.contains("bundle", ignoreCase = true) }
+      reset()
+      include("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+      isUniversalApk = true
+    }
+  }
+
   signingConfigs {
     if (hasReleaseSigning) {
       create("release") {

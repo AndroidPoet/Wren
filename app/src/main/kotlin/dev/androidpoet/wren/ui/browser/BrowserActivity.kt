@@ -23,7 +23,6 @@ import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.webkit.CookieManager
-import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -81,6 +80,7 @@ import dev.androidpoet.wren.browser.tor.TorState
 import dev.androidpoet.wren.browser.tor.TorStatus
 import dev.androidpoet.wren.core.model.SearchEngine
 import dev.androidpoet.wren.databinding.ActivityBrowserBinding
+import dev.androidpoet.wren.download.AndroidAppFile
 import dev.androidpoet.wren.download.BlobDownloader
 import dev.androidpoet.wren.download.DownloadController
 import dev.androidpoet.wren.settings.SettingsStore
@@ -211,7 +211,7 @@ class BrowserActivity :
   private val failedMainFrameUrls = mutableSetOf<String>()
 
   /** The last failed document per tab, so the error screen survives a tab switch. */
-  private val mainFrameErrors = mutableMapOf<Long, Pair<String, Int>>()
+  private val mainFrameErrors = mutableMapOf<Long, MainFrameError>()
 
   /** Set while an aborted load unwinds: a cancelled page is not a page the user arrived at. */
   private var stoppedByUser = false
@@ -624,6 +624,12 @@ class BrowserActivity :
       return
     }
     val pageUrl = viewModel.tabManager.activeTab()?.url
+    confirmIfAndroidApp(url, contentDisposition = null, mimeType = null) {
+      startLinkDownload(url, pageUrl)
+    }
+  }
+
+  private fun startLinkDownload(url: String, pageUrl: String?) {
     withDownloadsAccess {
       val id = downloadController.enqueue(
         url = url,
@@ -848,21 +854,24 @@ class BrowserActivity :
   }
 
   /**
-   * A site with no TLS at all fails the upgraded request outright. Rather than show an error for
-   * a page that would have loaded, fall back once and say so.
+   * A site with no TLS fails the upgraded request, and so does one whose https something on the
+   * network is blocking: from here the two look the same. So the user is asked, rather than
+   * quietly dropped onto a connection anyone on that network can read and rewrite.
    */
   private fun onMainFrameError(tabId: Long, url: String, errorCode: Int) {
     failedMainFrameUrls += url
     // Falling back to http is exactly the leak Tor mode exists to prevent.
-    val original = upgradedFrom.remove(url)?.takeUnless { settings.torMode }
-    if (original != null) {
-      HostMatcher.hostOf(original)?.let(httpOnlyHosts::add)
-      if (isActiveTab(tabId)) toast(R.string.https_fell_back)
-      loadUrlInTab(tabId, original)
-      return
-    }
-    mainFrameErrors[tabId] = url to errorCode
+    val insecureUrl = upgradedFrom.remove(url)?.takeUnless { settings.torMode }
+    mainFrameErrors[tabId] = MainFrameError(url, errorCode, insecureUrl)
     renderErrorView()
+  }
+
+  /** The user has seen the warning and chosen the unencrypted page anyway. */
+  private fun continueInsecurely() {
+    val tabId = viewModel.tabManager.activeTabId.value
+    val insecureUrl = mainFrameErrors[tabId]?.insecureUrl ?: return
+    HostMatcher.hostOf(insecureUrl)?.let(httpOnlyHosts::add)
+    loadUrlInTab(tabId, insecureUrl)
   }
 
   /** Wren's own "can't reach this site" screen instead of WebView's stock one. */
@@ -870,9 +879,19 @@ class BrowserActivity :
     val error = mainFrameErrors[viewModel.tabManager.activeTabId.value]
     binding.error.errorRoot.isVisible = error != null && !isHomeVisible
     if (error == null) return
-    val (url, code) = error
-    binding.error.errorHost.text = UrlFormatter.prettyHost(url)
-    binding.error.errorReason.setText(errorReasonFor(url, code))
+    binding.securityIcon.setImageResource(R.drawable.ic_lock_open)
+    binding.error.errorHost.text = UrlFormatter.prettyHost(error.url)
+    binding.error.errorInsecure.isVisible = error.insecureUrl != null
+    binding.error.errorReason.setText(
+      if (error.insecureUrl != null) {
+        R.string.error_no_https
+      } else {
+        errorReasonFor(
+          error.url,
+          error.code,
+        )
+      },
+    )
   }
 
   private fun errorReasonFor(url: String, code: Int): Int = when {
@@ -1140,6 +1159,10 @@ class BrowserActivity :
     securityIcon.setImageResource(
       when {
         url.isBlank() || url == UrlFormatter.NEW_TAB_URL -> R.drawable.ic_search
+        // The error screen is ours, not the site's: no verified page is on screen to vouch for.
+        mainFrameErrors.containsKey(
+          viewModel.tabManager.activeTabId.value,
+        ) -> R.drawable.ic_lock_open
         UrlFormatter.isSecure(url) -> R.drawable.ic_lock
         else -> R.drawable.ic_lock_open
       },
@@ -1300,6 +1323,7 @@ class BrowserActivity :
     burnButton.setOnClickListener { confirmBurn() }
     menuButton.setOnClickListener { showMenu() }
     error.errorRetry.setOnClickListener { webView?.reload() }
+    error.errorInsecure.setOnClickListener { continueInsecurely() }
   }
 
   private fun observeState() {
@@ -1922,24 +1946,29 @@ class BrowserActivity :
     contentDisposition: String,
     mimeType: String,
   ) {
-    if (isAndroidApp(url, contentDisposition, mimeType)) {
-      AlertDialog.Builder(this)
-        .setTitle(R.string.apk_download_title)
-        .setMessage(R.string.apk_download_message)
-        .setPositiveButton(R.string.apk_download_confirm) { _, _ ->
-          startDownload(source, tabId, url, userAgent, contentDisposition, mimeType)
-        }
-        .setNegativeButton(android.R.string.cancel, null)
-        .show()
-      return
+    confirmIfAndroidApp(url, contentDisposition, mimeType) {
+      startDownload(source, tabId, url, userAgent, contentDisposition, mimeType)
     }
-    startDownload(source, tabId, url, userAgent, contentDisposition, mimeType)
   }
 
   /** An app file installs code, not content; a page offering one gets a second look first. */
-  private fun isAndroidApp(url: String, contentDisposition: String, mimeType: String): Boolean =
-    mimeType.substringBefore(';').trim().equals(APK_MIME_TYPE, ignoreCase = true) ||
-      URLUtil.guessFileName(url, contentDisposition, mimeType).endsWith(".apk", ignoreCase = true)
+  private fun confirmIfAndroidApp(
+    url: String,
+    contentDisposition: String?,
+    mimeType: String?,
+    start: () -> Unit,
+  ) {
+    if (!AndroidAppFile.matches(url, contentDisposition, mimeType)) {
+      start()
+      return
+    }
+    AlertDialog.Builder(this)
+      .setTitle(R.string.apk_download_title)
+      .setMessage(R.string.apk_download_message)
+      .setPositiveButton(R.string.apk_download_confirm) { _, _ -> start() }
+      .setNegativeButton(android.R.string.cancel, null)
+      .show()
+  }
 
   private fun startDownload(
     source: WebView,
@@ -2241,7 +2270,6 @@ class BrowserActivity :
     const val DIM_PILL_ALPHA = 0.55f
     const val TOR_CHECK_URL = "https://check.torproject.org/"
     const val BROWSER_FALLBACK_URL = "browser_fallback_url"
-    const val APK_MIME_TYPE = "application/vnd.android.package-archive"
     const val CHECKS_PREFS = "browser_checks"
     const val KEY_WARNED_WEBVIEW = "warned_webview_version"
 
@@ -2277,3 +2305,6 @@ class BrowserActivity :
     """.trimIndent()
   }
 }
+
+/** A document that failed to load, and the unencrypted address it was upgraded from, if any. */
+private data class MainFrameError(val url: String, val code: Int, val insecureUrl: String? = null)

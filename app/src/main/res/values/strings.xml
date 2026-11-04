@@ -120,7 +120,8 @@
   <string name="error_connect">The connection was refused or dropped before the page arrived.</string>
   <string name="error_ssl">The site\'s security certificate could not be verified, so Wren did not load it.</string>
   <string name="error_generic">The page could not be loaded.</string>
-  <string name="https_fell_back">This site does not support HTTPS. Loaded over an unencrypted connection.</string>
+  <string name="error_no_https">The site did not answer over an encrypted connection. Either it has none, or something on this network is blocking it. Without encryption, anyone on this network can read and change the page.</string>
+  <string name="error_continue_insecure">Continue without encryption</string>
   <string name="strip_tracking_parameters">Remove tracking from links</string>
   <string name="strip_tracking_parameters_summary">Strips campaign and click identifiers such as utm_source and fbclid from addresses before they are loaded, copied or shared.</string>
   <string name="find_in_page">Find in page</string>

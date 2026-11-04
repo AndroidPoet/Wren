@@ -26,7 +26,6 @@ class WrenWebViewClient(
   private val onPageStarted: (url: String) -> Unit,
   private val onPageFinished: (url: String, title: String) -> Unit,
   private val onExternalIntent: (url: String) -> Boolean,
-  private val onSubresource: (WebResourceRequest) -> Unit = {},
   private val onIntercept: (WebResourceRequest) -> WebResourceResponse? = { null },
   /** Returns a replacement address to load instead, or null to let the request proceed. */
   private val onRewriteUrl: (url: String) -> String? = { null },
@@ -63,18 +62,10 @@ class WrenWebViewClient(
     if (request.isForMainFrame) onMainFrameError(request.url.toString(), error.errorCode)
   }
 
-  /**
-   * Observes sub-resource loads without altering them. A page playing HLS assembles the stream
-   * in JavaScript, so the playlist URL never reaches a `<video src>` and the injected detector
-   * cannot see it - but the request for it passes through here.
-   */
   override fun shouldInterceptRequest(
     view: WebView,
     request: WebResourceRequest,
-  ): WebResourceResponse? {
-    if (!request.isForMainFrame) onSubresource(request)
-    return onIntercept(request)
-  }
+  ): WebResourceResponse? = onIntercept(request)
 
   override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
     handleUrl(

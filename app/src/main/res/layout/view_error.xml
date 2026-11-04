@@ -68,4 +68,15 @@
     android:text="@string/error_retry"
     android:textAllCaps="false"
     android:textColor="@color/on_accent" />
+
+  <com.google.android.material.button.MaterialButton
+    android:id="@+id/errorInsecure"
+    style="@style/Widget.MaterialComponents.Button.TextButton"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="8dp"
+    android:text="@string/error_continue_insecure"
+    android:textAllCaps="false"
+    android:textColor="@color/ink_soft"
+    android:visibility="gone" />
 </LinearLayout>
