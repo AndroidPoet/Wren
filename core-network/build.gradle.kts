@@ -25,7 +25,6 @@ dependencies {
   testImplementation(libs.coroutines.test)
 
   // network
-  api(libs.sandwich)
   implementation(libs.retrofit)
   implementation(libs.retrofit.moshi)
   implementation(libs.okhttp.interceptor)

@@ -8,7 +8,6 @@ package dev.androidpoet.wren.core.data
 
 import app.cash.turbine.test
 import com.google.common.truth.Truth.assertThat
-import com.skydoves.sandwich.ApiResponse
 import dev.androidpoet.wren.core.data.repository.HistoryRepository
 import dev.androidpoet.wren.core.data.repository.SuggestionRepositoryImpl
 import dev.androidpoet.wren.core.model.HistoryEntry
@@ -40,7 +39,7 @@ class SuggestionRepositoryImplTest {
     whenever(historyRepository.search("kot", HistoryRepository.SUGGESTION_LIMIT))
       .thenReturn(listOf(historyEntry()))
     whenever(suggestClient.suggest("kot", SearchEngine.DUCKDUCKGO))
-      .thenReturn(ApiResponse.Success(listOf(SuggestionResponse("kotlin flow"))))
+      .thenReturn(Result.success(listOf(SuggestionResponse("kotlin flow"))))
 
     repository().suggestions(query = "kot", includeRemote = true).test {
       val local = awaitItem()

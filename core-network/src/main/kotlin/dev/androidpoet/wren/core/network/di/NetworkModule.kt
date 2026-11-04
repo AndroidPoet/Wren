@@ -6,7 +6,6 @@
 
 package dev.androidpoet.wren.core.network.di
 
-import com.skydoves.sandwich.retrofit.adapters.ApiResponseCallAdapterFactory
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -45,7 +44,6 @@ internal object NetworkModule {
       .client(okHttpClient)
       .baseUrl("https://duckduckgo.com/")
       .addConverterFactory(MoshiConverterFactory.create())
-      .addCallAdapterFactory(ApiResponseCallAdapterFactory.create())
       .build()
   }
 

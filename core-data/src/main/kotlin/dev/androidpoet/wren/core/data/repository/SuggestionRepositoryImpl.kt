@@ -7,9 +7,6 @@
 package dev.androidpoet.wren.core.data.repository
 
 import androidx.annotation.VisibleForTesting
-import com.skydoves.sandwich.message
-import com.skydoves.sandwich.onFailure
-import com.skydoves.sandwich.suspendOnSuccess
 import dev.androidpoet.wren.core.model.SearchEngine
 import dev.androidpoet.wren.core.model.Suggestion
 import dev.androidpoet.wren.core.network.Dispatcher
@@ -55,14 +52,14 @@ class SuggestionRepositoryImpl @Inject constructor(
     if (!includeRemote) return@flow
 
     suggestClient.suggest(query, engine)
-      .suspendOnSuccess {
+      .onSuccess { data ->
         val seen = local.mapTo(mutableSetOf()) { it.phrase.lowercase() }
         val remote = data
           .map { Suggestion(phrase = it.phrase) }
           .filter { seen.add(it.phrase.lowercase()) }
         emit((local + remote).take(SuggestionRepository.MAX_SUGGESTIONS))
       }
-      .onFailure { onError(message()) }
+      .onFailure { onError(it.message) }
   }.flowOn(ioDispatcher)
 
   private fun hostOf(url: String): String =

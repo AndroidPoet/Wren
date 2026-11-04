@@ -1,38 +1,85 @@
-<p align="center"><img src="art/logo.svg" width="96" alt=""></p>
+<p align="center">
+  <img src="art/social-preview.png" width="720" alt="Wren, a quiet way to browse">
+</p>
 
-# Wren
+<p align="center">
+  <a href="https://github.com/AndroidPoet/Wren/actions/workflows/ci.yml"><img src="https://github.com/AndroidPoet/Wren/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-A8482A" alt="License: GPL-3.0-or-later"></a>
+  <img src="https://img.shields.io/badge/Android-7.0%2B-5E4A36" alt="Android 7.0+">
+</p>
 
-A private Android browser that blocks trackers and ads out of the box. Free, open source, and
-with no account, no telemetry and no servers of its own: the only network traffic is the pages you
-open, your search engine's suggestions, filter-list updates, speed-dial site icons (can be
-turned off) and, if you turn it on, Tor.
+<p align="center">
+  A private Android browser that blocks trackers and ads out of the box.<br>
+  No account. No telemetry. No servers of its own.
+</p>
 
-## What it does
+<p align="center">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/1.png" width="23%" alt="">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/2.png" width="23%" alt="">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/3.png" width="23%" alt="">
+  <img src="fastlane/metadata/android/en-US/images/phoneScreenshots/4.png" width="23%" alt="">
+</p>
 
-- **Tracker and ad blocking**: EasyList, EasyPrivacy and uBlock Origin rules, compiled into a
+## Features
+
+**Blocking**
+- Tracker and ad blocking with EasyList, EasyPrivacy and uBlock Origin rules, compiled into a
   pattern engine with cosmetic filtering and scriptlets. Lists update from Settings, and you can
   add your own.
-- **Per-site panel** showing what was blocked, grouped by the company that owns it.
-- **Clear everything**: closes every tab and deletes history, cookies and cache. Optional wipe
-  on exit.
-- **Private tabs** on their own WebView profile: no history, cookies or cache written.
-- **Tor mode** through Guardian Project's tor-android.
-- **Privacy defaults**: HTTPS upgrade, tracking parameters stripped from links, fingerprinting
-  and WebRTC leak protection, cookie banners declined and hidden on common consent platforms, third-party cookies blocked,
-  `DNT` and `Sec-GPC` sent, form data never saved, location and camera/mic requests denied.
-- **App lock** with the device's own screen lock.
-- **Search**: DuckDuckGo by default; Brave, Startpage, Mojeek, Wikipedia and Google available.
-  `!bangs` work in the address bar.
-- **The rest of a browser**: tabs, history, bookmarks, downloads, reader mode, find in page,
-  desktop mode, QR sharing.
+- A per-site panel showing what was blocked, grouped by the company that owns it.
+- Cookie banners declined and hidden on common consent platforms.
 
-## Module layout
+**Privacy**
+- **Clear everything**: one tap closes every tab and deletes history, cookies and cache, with an
+  optional wipe on exit.
+- **Private tabs** on their own WebView profile: no history, cookies or cache written.
+- **Tor mode** through the Guardian Project's tor-android.
+- **App lock** using the device's own screen lock.
+- HTTPS upgrade, tracking parameters stripped from links, fingerprinting and WebRTC leak
+  protection, third-party cookies blocked, `DNT` and `Sec-GPC` sent, form data never saved,
+  location and camera/mic requests denied.
+
+**Browsing**
+- DuckDuckGo by default; Brave, Startpage, Mojeek, Wikipedia and Google available. `!bangs` work
+  in the address bar.
+- Tabs, history, bookmarks, downloads, reader mode, find in page, desktop mode and QR sharing.
+
+## What leaves your phone
+
+Wren has no backend. The only network traffic is:
+
+| Traffic | When |
+| --- | --- |
+| The pages you open | Always |
+| Search suggestions from your chosen engine | While typing; can be turned off |
+| Filter-list downloads | Only when you tap Update now, or change the lists, in Settings |
+| Speed-dial site icons | Can be turned off |
+| Tor | Only if you turn it on |
+
+## Download
+
+No release has been published yet. Until then, build it from source (below).
+
+## Build
+
+```bash
+./gradlew :app:assembleDebug     # build
+./gradlew testDebugUnitTest      # unit tests
+./gradlew spotlessApply          # format + license headers
+```
+
+Requires JDK 17+ (Android Studio's JBR works) and `compileSdk 37`. `minSdk` is 24.
+
+## How it works
+
+<details>
+<summary>Module layout</summary>
 
 | Module | Contains |
 | --- | --- |
 | `app` | Browser UI, tab management, WebView policy, settings |
 | `core-model` | `HistoryEntry`, `Bookmark`, `Suggestion`, `SearchEngine`, `TabSnapshot` |
-| `core-network` | Retrofit + Sandwich client for DuckDuckGo autocomplete |
+| `core-network` | Retrofit client for search-engine autocomplete |
 | `core-database` | Room database, DAOs and entity mappers for history and bookmarks |
 | `core-data` | Repositories that join network and database |
 | `core-test` | Shared test fixtures |
@@ -40,7 +87,10 @@ turned off) and, if you turn it on, Tor.
 
 `core-*` modules never depend on `app`; `app` talks only to `core-data`.
 
-## Design notes
+</details>
+
+<details>
+<summary>Design notes</summary>
 
 **A small pool of live tabs.** Up to four tabs keep a live `WebView`; the rest are held as saved
 state (`TabManager`). A tab still in the pool switches instantly and keeps loading, playing and
@@ -61,22 +111,14 @@ occupies one tile rather than three.
 so a load that is slow, failed or cancelled leaves the bar describing the page still on screen -
 the alternative is an address bar that can be made to display a site the user is not on.
 
-## Build
+</details>
 
-```bash
-./gradlew :app:assembleDebug     # build
-./gradlew testDebugUnitTest      # unit tests
-./gradlew spotlessApply          # format + license headers
-```
+## Contributing
 
-Requires JDK 17+ (Android Studio's JBR works) and `compileSdk 37`. `minSdk` is 24.
-
-## Credits
-
-The project scaffolding started from [skydoves/Pokedex](https://github.com/skydoves/Pokedex)
-(Apache-2.0). The bundled filter lists come from EasyList, uBlock Origin and StevenBlack/hosts.
-See `NOTICE` for each licence.
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the build,
+checks and ground rules. Report privacy leaks and security bugs privately, as described in
+[SECURITY.md](SECURITY.md).
 
 ## License
 
-GNU General Public License v3.0 or later. See `LICENSE`.
+GNU General Public License v3.0 or later. See [LICENSE](LICENSE).

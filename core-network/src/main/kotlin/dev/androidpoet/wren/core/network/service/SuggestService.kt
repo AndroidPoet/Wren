@@ -6,8 +6,8 @@
 
 package dev.androidpoet.wren.core.network.service
 
-import com.skydoves.sandwich.ApiResponse
 import okhttp3.ResponseBody
+import retrofit2.Response
 import retrofit2.http.GET
 import retrofit2.http.Url
 
@@ -17,5 +17,5 @@ interface SuggestService {
    * disagree on the response shape, so the body comes back raw and [SuggestParser] reads it.
    */
   @GET
-  suspend fun fetch(@Url url: String): ApiResponse<ResponseBody>
+  suspend fun fetch(@Url url: String): Response<ResponseBody>
 }

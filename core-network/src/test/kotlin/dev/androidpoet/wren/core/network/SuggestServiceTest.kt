@@ -7,10 +7,9 @@
 package dev.androidpoet.wren.core.network
 
 import com.google.common.truth.Truth.assertThat
-import com.skydoves.sandwich.ApiResponse
-import com.skydoves.sandwich.retrofit.adapters.ApiResponseCallAdapterFactory
 import dev.androidpoet.wren.core.model.SearchEngine
 import dev.androidpoet.wren.core.model.SearchEngine.SuggestFormat
+import dev.androidpoet.wren.core.network.service.SuggestClient
 import dev.androidpoet.wren.core.network.service.SuggestParser
 import dev.androidpoet.wren.core.network.service.SuggestService
 import kotlinx.coroutines.test.runTest
@@ -34,9 +33,18 @@ class SuggestServiceTest {
     server.start()
     service = Retrofit.Builder()
       .baseUrl(server.url("/"))
-      .client(OkHttpClient.Builder().build())
+      // Every engine's template names its real host; send whatever it builds to the mock server.
+      .client(
+        OkHttpClient.Builder()
+          .addInterceptor { chain ->
+            val request = chain.request()
+            val local = request.url.newBuilder()
+              .scheme("http").host(server.hostName).port(server.port).build()
+            chain.proceed(request.newBuilder().url(local).build())
+          }
+          .build(),
+      )
       .addConverterFactory(MoshiConverterFactory.create())
-      .addCallAdapterFactory(ApiResponseCallAdapterFactory.create())
       .build()
       .create(SuggestService::class.java)
   }
@@ -89,9 +97,27 @@ class SuggestServiceTest {
   fun `a server error surfaces as a failure rather than an exception`() = runTest {
     server.enqueue(MockResponse.Builder().code(500).body("").build())
 
-    val response = service.fetch(server.url("/ac/?q=kotlin").toString())
+    val result = SuggestClient(service).suggest("kotlin", SearchEngine.DUCKDUCKGO)
 
-    assertThat(response).isInstanceOf(ApiResponse.Failure::class.java)
+    assertThat(result.isFailure).isTrue()
+  }
+
+  @Test
+  fun `an unreachable server surfaces as a failure rather than an exception`() = runTest {
+    server.close()
+
+    val result = SuggestClient(service).suggest("kotlin", SearchEngine.DUCKDUCKGO)
+
+    assertThat(result.isFailure).isTrue()
+  }
+
+  @Test
+  fun `a successful answer is parsed with the engine's format`() = runTest {
+    server.enqueue(MockResponse.Builder().code(200).body("""[{"phrase":"kotlin flow"}]""").build())
+
+    val result = SuggestClient(service).suggest("kot", SearchEngine.DUCKDUCKGO)
+
+    assertThat(result.getOrThrow().map { it.phrase }).containsExactly("kotlin flow")
   }
 
   @Test
