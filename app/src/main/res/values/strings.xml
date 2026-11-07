@@ -260,7 +260,8 @@
   <string name="tor_menu_on">Tor on</string>
   <string name="tor_menu_connecting">Tor…</string>
   <string name="tor_new_identity">New identity</string>
-  <string name="tor_new_identity_done">New circuit requested</string>
+  <string name="tor_new_identity_done">New identity: tabs closed, data cleared, new circuits</string>
+  <string name="tor_new_identity_confirm">Close every tab, clear cookies, site data and history, and switch to new Tor circuits?</string>
   <string name="tor_verify">Check connection</string>
   <string name="tor_downloads_off">Downloads pause while Tor is on</string>
   <string name="tor_unsupported">This device\'s WebView cannot route through a proxy, so Tor is unavailable</string>

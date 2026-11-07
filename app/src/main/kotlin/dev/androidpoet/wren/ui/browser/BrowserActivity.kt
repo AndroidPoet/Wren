@@ -53,6 +53,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import dev.androidpoet.wren.R
 import dev.androidpoet.wren.browser.AppLock
 import dev.androidpoet.wren.browser.BrowserTab
+import dev.androidpoet.wren.browser.FileChooserUris
 import dev.androidpoet.wren.browser.PageSaver
 import dev.androidpoet.wren.browser.PrivacyCleaner
 import dev.androidpoet.wren.browser.PrivateProfile
@@ -273,7 +274,7 @@ class BrowserActivity :
   ) { result ->
     val uris = when {
       result.resultCode != RESULT_OK -> null
-      else -> result.data?.data?.let { arrayOf(it) }
+      else -> FileChooserUris.accept(result.data, packageName)
     }
     fileChooserCallback?.onReceiveValue(uris)
     fileChooserCallback = null
@@ -406,9 +407,15 @@ class BrowserActivity :
     liveWebViews.remove(tab.id)
     liveWebViews[tab.id] = view
     liveWebViews.forEach { (id, live) -> live.isVisible = id == tab.id }
-    configurator.configure(view, tab.isPrivate)
+    applySiteSettings(view, tab)
     applySecureFlag()
     renderErrorView()
+  }
+
+  /** The global settings, then the ones this site overrides: both must survive a tab switch. */
+  private fun applySiteSettings(view: WebView, tab: BrowserTab?) {
+    configurator.configure(view, tab?.isPrivate == true)
+    tab?.url?.let(HostMatcher::hostOf)?.let { host -> configurator.applyForHost(view, host) }
   }
 
   private fun createWebView(tab: BrowserTab): WebView = WebView(this).also { created ->
@@ -839,6 +846,18 @@ class BrowserActivity :
 
   /** Applied to everything that navigates: typed, tapped, or followed by the page. */
   private fun rewriteUrl(tabId: Long, url: String): String? {
+    val rewritten = navigationPolicy(url)
+    if (rewritten == url) return null
+    loadUrlInTab(tabId, rewritten)
+    return rewritten
+  }
+
+  /**
+   * Cleaning, the https upgrade and Tor routing, as one pure step. WebView never asks the
+   * client about a load the app starts itself, so typed addresses, bookmarks and intents go
+   * through here directly rather than only when a page navigates.
+   */
+  private fun navigationPolicy(url: String): String {
     var rewritten = url
     if (settings.stripTrackingParameters) rewritten = LinkCleaner.clean(rewritten)
     if (settings.httpsUpgrade && HostMatcher.hostOf(rewritten) !in httpOnlyHosts) {
@@ -847,10 +866,7 @@ class BrowserActivity :
         rewritten = upgraded
       }
     }
-    rewritten = routeForTor(rewritten)
-    if (rewritten == url) return null
-    loadUrlInTab(tabId, rewritten)
-    return rewritten
+    return routeForTor(rewritten)
   }
 
   /**
@@ -895,6 +911,7 @@ class BrowserActivity :
   }
 
   private fun errorReasonFor(url: String, code: Int): Int = when {
+    settings.torMode && torController.state.value.status == TorStatus.FAILED -> R.string.tor_failed
     settings.torMode && !torController.state.value.isOn -> R.string.error_tor_connecting
     settings.torMode && url in torForcedHttps -> R.string.error_tor_plain_http
     else -> errorReason(code)
@@ -922,7 +939,7 @@ class BrowserActivity :
       return
     }
     val view = liveWebViews[tabId] ?: return
-    val routed = routeForTor(url)
+    val routed = navigationPolicy(url)
     viewModel.tabManager.update(tabId, url = routed)
     view.loadUrl(routed, configurator.requestHeaders())
   }
@@ -935,7 +952,7 @@ class BrowserActivity :
 
   private fun loadUrl(requested: String) {
     val view = webView ?: return
-    val url = routeForTor(requested)
+    val url = navigationPolicy(requested)
     viewModel.tabManager.updateActive(url = url)
     renderHome(url)
     if (url == UrlFormatter.NEW_TAB_URL) {
@@ -1383,7 +1400,9 @@ class BrowserActivity :
       return
     }
     lifecycleScope.launch {
-      torController.state.first { it.proxyInstalled || it.status == TorStatus.FAILED }
+      // A failed start seals the route with a dead-end proxy, so this still returns; what it
+      // never does is run the load before something sits in front of WebView.
+      torController.state.first { it.proxyInstalled || !settings.torMode }
       block()
     }
   }
@@ -1412,9 +1431,16 @@ class BrowserActivity :
       return
     }
     torController.setEnabled(enabled)
-    liveWebViews.forEach { (id, view) ->
-      configurator.configure(view, viewModel.tabManager.tab(id)?.isPrivate == true)
-      privacyScripts.updateFor(view)
+    if (enabled) {
+      // A page already running would keep talking direct while Tor starts. Every page is
+      // retired with its history, and the active one returns once the proxy fronts WebView.
+      retireAllWebViews()
+      whenNetworkReady { restoreActiveTab() }
+    } else {
+      liveWebViews.forEach { (id, view) ->
+        applySiteSettings(view, viewModel.tabManager.tab(id))
+        privacyScripts.updateFor(view)
+      }
     }
     renderTor(torController.state.value)
   }
@@ -1431,10 +1457,20 @@ class BrowserActivity :
 
   override fun onTorSetEnabled(enabled: Boolean) = setTorEnabled(enabled)
 
+  /**
+   * A new identity is what Tor Browser means by it: every tab closed, cookies, storage and
+   * history gone, and fresh circuits. A new circuit under the old cookies would be no identity
+   * change at all.
+   */
   override fun onTorNewIdentity() {
-    torController.newIdentity()
-    toast(R.string.tor_new_identity_done)
-    if (!isHomeVisible) webView?.reload()
+    AlertDialog.Builder(this)
+      .setMessage(R.string.tor_new_identity_confirm)
+      .setPositiveButton(R.string.tor_new_identity) { _, _ ->
+        torController.newIdentity()
+        clearBrowsingData(R.string.tor_new_identity_done)
+      }
+      .setNegativeButton(android.R.string.cancel, null)
+      .show()
   }
 
   override fun onTorVerify() = openTab(TOR_CHECK_URL, isPrivate = false)
@@ -1481,7 +1517,7 @@ class BrowserActivity :
       MenuAction.DESKTOP_SITE -> {
         settings.desktopMode = !settings.desktopMode
         webView?.let { view ->
-          configurator.configure(view, tab?.isPrivate == true)
+          applySiteSettings(view, tab)
           view.reload()
         }
       }
@@ -1880,7 +1916,7 @@ class BrowserActivity :
       .show()
   }
 
-  private fun clearBrowsingData() {
+  private fun clearBrowsingData(doneMessage: Int = R.string.browsing_data_cleared) {
     lifecycleScope.launch {
       privacyCleaner.clearAll(webView, includeHistory = true)
       // Every page goes, private ones first so their profile can be deleted underneath them.
@@ -1888,7 +1924,7 @@ class BrowserActivity :
       privateProfile.destroy()
       viewModel.tabManager.closeAll()
       restoreActiveTab()
-      toast(R.string.browsing_data_cleared)
+      toast(doneMessage)
     }
   }
 
@@ -1999,6 +2035,7 @@ class BrowserActivity :
         contentDisposition = contentDisposition,
         mimeType = mimeType,
         pageUrl = pageUrl,
+        isPrivate = viewModel.tabManager.tab(tabId)?.isPrivate == true,
       )
       toast(if (id != null) R.string.download_started else R.string.download_failed)
     }
@@ -2252,7 +2289,7 @@ class BrowserActivity :
     liveWebViews.values.forEach { it.onResume() }
     // Settings is a separate activity, so anything changed there lands on the live WebView here.
     webView?.let { view ->
-      configurator.configure(view, viewModel.tabManager.activeTab()?.isPrivate == true)
+      applySiteSettings(view, viewModel.tabManager.activeTab())
       cosmeticFilter.updateFor(view, viewModel.tabManager.activeTab()?.url)
       privacyScripts.updateFor(view)
     }

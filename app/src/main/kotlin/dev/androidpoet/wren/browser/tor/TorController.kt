@@ -92,6 +92,7 @@ class TorController @Inject constructor(
   private var pendingStart = false
   private var stopBroadcastsSeen = 0
   private var systemProxySelector: ProxySelector? = null
+  private var sealing = false
 
   private val connection = object : ServiceConnection {
     override fun onServiceConnected(name: ComponentName, binder: IBinder) {
@@ -211,6 +212,19 @@ class TorController @Inject constructor(
     pollJob?.cancel()
     unbind()
     _state.update { it.copy(status = TorStatus.FAILED, error = message) }
+    // The mode is still on, so nothing may leave direct. If Tor died before its proxy was in
+    // front of WebView, a dead end goes there instead, until the user turns the mode off.
+    if (settings.torMode && !_state.value.proxyInstalled) {
+      if (sealing) {
+        // The override itself is what failed: the mode cannot be honoured at all.
+        settings.torMode = false
+        _state.update { it.copy(error = "$message; proxy override failed, Tor mode is off") }
+      } else {
+        sealing = true
+        installProxy(DEAD_END_PORT)
+        sealing = false
+      }
+    }
   }
 
   private fun pollBootstrap() {
@@ -230,7 +244,11 @@ class TorController @Inject constructor(
   }
 
   private fun installProxy(port: Int) {
-    val config = ProxyConfig.Builder().addProxyRule("http://127.0.0.1:$port").build()
+    // Without this WebView would still send loopback and link-local addresses direct.
+    val config = ProxyConfig.Builder()
+      .addProxyRule("http://127.0.0.1:$port")
+      .removeImplicitRules()
+      .build()
     runCatching {
       ProxyController.getInstance().setProxyOverride(config, mainExecutor) {
         _state.update { it.copy(proxyInstalled = true) }
@@ -301,6 +319,8 @@ class TorController @Inject constructor(
   }.isSuccess
 
   private companion object {
+    /** Nothing listens here; a proxy pointed at it refuses every connection. */
+    const val DEAD_END_PORT = 1
     const val BOOTSTRAP_PHASE = "status/bootstrap-phase"
     const val POLL_INTERVAL_MS = 500L
     const val STOP_TIMEOUT_MS = 4000L

@@ -39,7 +39,7 @@ class DownloadsViewModel @Inject constructor(
 
   fun dismiss(download: Download) = controller.dismiss(download)
 
-  fun retry(download: Download) = controller.retry(download)
+  fun retry(download: Download): Boolean = controller.retry(download)
 
   fun clearFinished() = controller.clearFinished()
 

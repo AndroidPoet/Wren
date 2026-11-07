@@ -25,11 +25,19 @@ class ListUrlPolicyTest {
 
   @Test
   fun `redirects into the phone's own networks are refused`() {
-    for (url in listOf(
-      "https://localhost/x", "https://router.local/x", "https://127.0.0.1/x", "https://10.0.0.5/x",
-      "https://172.16.3.1/x", "https://192.168.1.1/x", "https://169.254.169.254/x", "https://[::1]/x",
-      "https://[fe80::1]/x", "https://[fd12::1]/x",
-    )) {
+    val urls = listOf(
+      "https://localhost/x",
+      "https://router.local/x",
+      "https://127.0.0.1/x",
+      "https://10.0.0.5/x",
+      "https://172.16.3.1/x",
+      "https://192.168.1.1/x",
+      "https://169.254.169.254/x",
+      "https://[::1]/x",
+      "https://[fe80::1]/x",
+      "https://[fd12::1]/x",
+    )
+    for (url in urls) {
       assertWithMessage(url).that(ListUrlPolicy.acceptsRedirect(url)).isFalse()
     }
   }

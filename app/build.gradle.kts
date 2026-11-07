@@ -54,6 +54,8 @@ android {
     unitTests {
       isIncludeAndroidResources = true
       isReturnDefaultValues = true
+      // Robolectric loads a framework jar per test JVM; the default heap is not enough for the suite.
+      all { it.maxHeapSize = "3g" }
     }
   }
 

@@ -19,7 +19,8 @@ object DownloadNames {
   private const val FALLBACK = "download"
 
   /** Characters that steer or hide text: C0/C1 controls, zero-width and bidi marks, BOM. */
-  private val INVISIBLE = Regex("[\\u0000-\\u001f\\u007f-\\u009f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069\\ufeff]")
+  private val INVISIBLE =
+    Regex("[\\u0000-\\u001f\\u007f-\\u009f\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069\\ufeff]")
   private val SEPARATORS = Regex("[/\\\\:]")
 
   fun sanitize(raw: String?): String {

@@ -27,7 +27,13 @@ object UrlFormatter {
    * more likely to be `localhost:8080` or a typed search than a URI.
    */
   private val AUTHORITYLESS_SCHEMES = setOf(
-    "mailto", "tel", "sms", "intent", "market", "geo", "callto",
+    "mailto",
+    "tel",
+    "sms",
+    "intent",
+    "market",
+    "geo",
+    "callto",
     "about",
   )
 

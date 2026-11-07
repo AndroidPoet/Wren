@@ -29,11 +29,21 @@ object ListUrlPolicy {
   /** Loopback, link-local and private ranges, by name and by literal address. */
   fun isLocal(host: String): Boolean {
     val h = host.trim('[', ']').lowercase()
-    if (h == "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h == "0.0.0.0") return true
-    if (h == "::1" || h == "::" || h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd")) {
+    if (h == "localhost" || h.endsWith(
+        ".localhost",
+      ) || h.endsWith(".local") || h == "0.0.0.0"
+    ) {
+      return true
+    }
+    if (h == "::1" || h == "::" || h.startsWith(
+        "fe80:",
+      ) || h.startsWith("fc") || h.startsWith("fd")
+    ) {
       return h.contains(':')
     }
-    val octets = h.split('.').takeIf { it.size == 4 }?.map { it.toIntOrNull() ?: return false } ?: return false
+    val octets = h.split('.').takeIf {
+      it.size == 4
+    }?.map { it.toIntOrNull() ?: return false } ?: return false
     if (octets.any { it !in 0..255 }) return false
     val (a, b) = octets
     return a == 10 || a == 127 || a == 0 ||

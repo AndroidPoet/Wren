@@ -94,7 +94,9 @@ class UrlFormatterTest {
 
   @Test
   fun `typed javascript url becomes a search`() {
-    assertThat(UrlFormatter.toUrlOrSearch("javascript:alert(document.cookie)", SearchEngine.DUCKDUCKGO))
+    val typed = "javascript:alert(document.cookie)"
+
+    assertThat(UrlFormatter.toUrlOrSearch(typed, SearchEngine.DUCKDUCKGO))
       .startsWith("https://duckduckgo.com/?q=javascript%3Aalert")
     assertThat(UrlFormatter.toUrlOrSearch(" JavaScript://%0aalert(1)", SearchEngine.DUCKDUCKGO))
       .startsWith("https://duckduckgo.com/?q=JavaScript%3A%2F%2F")
@@ -102,8 +104,12 @@ class UrlFormatterTest {
 
   @Test
   fun `typed data file content and blob urls become a search`() {
-    for (text in listOf("data:text/html,hi", "file:///etc/hosts", "content://media/1", "blob:https://a.b/x")) {
-      assertThat(UrlFormatter.toUrlOrSearch(text, SearchEngine.DUCKDUCKGO)).startsWith("https://duckduckgo.com/?q=")
+    val typed =
+      listOf("data:text/html,hi", "file:///etc/hosts", "content://media/1", "blob:https://a.b/x")
+
+    for (text in typed) {
+      assertThat(UrlFormatter.toUrlOrSearch(text, SearchEngine.DUCKDUCKGO))
+        .startsWith("https://duckduckgo.com/?q=")
     }
   }
 

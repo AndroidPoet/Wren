@@ -18,9 +18,11 @@ import android.webkit.CookieManager
 import android.webkit.URLUtil
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
+import dev.androidpoet.wren.browser.PrivateProfile
 import dev.androidpoet.wren.core.data.repository.DownloadRepository
 import dev.androidpoet.wren.core.model.Download
 import dev.androidpoet.wren.core.model.DownloadStatus
+import dev.androidpoet.wren.settings.SettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -49,7 +51,12 @@ data class DownloadProgress(val downloadedBytes: Long, val totalBytes: Long)
 class DownloadController @Inject constructor(
   private val application: Application,
   private val repository: DownloadRepository,
+  private val settings: SettingsStore,
+  private val privateProfile: PrivateProfile,
 ) {
+
+  /** Downloads started from a private tab, so a retry does not reach for the normal jar. */
+  private val privateIds = HashSet<Long>()
 
   private val downloadManager = application.getSystemService<DownloadManager>()
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -74,15 +81,21 @@ class DownloadController @Inject constructor(
     )
   }
 
-  /** Queues a download and records it. Returns the id, or null when it could not be started. */
+  /**
+   * Queues a download and records it. Returns the id, or null when it could not be started.
+   * Refused outright under Tor: DownloadManager fetches from its own process, outside the
+   * proxy, and this is the one gate every caller passes through, retries included.
+   */
   fun enqueue(
     url: String,
     userAgent: String?,
     contentDisposition: String?,
     mimeType: String?,
     pageUrl: String?,
+    isPrivate: Boolean = false,
   ): Long? {
     if (!url.startsWith("http")) return null
+    if (settings.torMode) return null
     val manager = downloadManager ?: return null
     val fileName = DownloadNames.sanitize(URLUtil.guessFileName(url, contentDisposition, mimeType))
 
@@ -90,7 +103,10 @@ class DownloadController @Inject constructor(
       setMimeType(mimeType)
       userAgent?.let { addRequestHeader("User-Agent", it) }
       pageUrl?.let { addRequestHeader("Referer", it) }
-      CookieManager.getInstance().getCookie(url)?.let { addRequestHeader("Cookie", it) }
+      // A private page's download carries the private jar's cookies, never the normal one's;
+      // without a private jar it carries none.
+      val jar = if (isPrivate) privateProfile.cookieManager() else CookieManager.getInstance()
+      jar?.getCookie(url)?.let { addRequestHeader("Cookie", it) }
       setTitle(fileName)
       setDescription(hostOf(pageUrl ?: url))
       setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
@@ -102,6 +118,7 @@ class DownloadController @Inject constructor(
     val id = runCatching { manager.enqueue(request) }
       .onFailure { Timber.w(it, "download of %s could not be enqueued", url) }
       .getOrNull() ?: return null
+    if (isPrivate) privateIds += id
 
     scope.launch {
       repository.record(
@@ -134,9 +151,19 @@ class DownloadController @Inject constructor(
   }
 
   /** Re-queues a failed or cancelled download from its original address. */
-  fun retry(download: Download) {
+  /** Starts the download again. False when it could not be, which under Tor it never can. */
+  fun retry(download: Download): Boolean {
+    if (settings.torMode) return false
     scope.launch { repository.remove(download.id) }
-    enqueue(download.url, null, null, download.mimeType.ifBlank { null }, null)
+    val wasPrivate = privateIds.remove(download.id)
+    return enqueue(
+      download.url,
+      null,
+      null,
+      download.mimeType.ifBlank { null },
+      null,
+      isPrivate = wasPrivate,
+    ) != null
   }
 
   fun clearFinished() {

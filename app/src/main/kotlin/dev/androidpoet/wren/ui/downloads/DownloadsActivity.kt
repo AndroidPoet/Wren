@@ -118,7 +118,9 @@ class DownloadsActivity : AppCompatActivity() {
       when (item.itemId) {
         ACTION_OPEN -> open(row)
         ACTION_SHARE -> share(row)
-        ACTION_RETRY -> viewModel.retry(row.download)
+        ACTION_RETRY -> if (!viewModel.retry(row.download)) {
+          Toast.makeText(this, R.string.tor_downloads_off, Toast.LENGTH_SHORT).show()
+        }
         ACTION_CANCEL, ACTION_REMOVE -> viewModel.dismiss(row.download)
         else -> return@setOnMenuItemClickListener false
       }

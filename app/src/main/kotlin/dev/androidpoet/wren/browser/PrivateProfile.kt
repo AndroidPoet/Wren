@@ -41,6 +41,10 @@ class PrivateProfile @Inject constructor(@ApplicationContext private val context
       .isSuccess
   }
 
+  /** True once [attach] has really bound this view; a failed attach leaves it on the default. */
+  fun isAttached(webView: WebView): Boolean = isSupported &&
+    runCatching { WebViewCompat.getProfile(webView).name == NAME }.getOrDefault(false)
+
   fun cookieManager(): CookieManager? = profile { it.cookieManager }
 
   fun serviceWorkerController(): ServiceWorkerController? = profile { it.serviceWorkerController }

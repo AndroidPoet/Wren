@@ -43,9 +43,9 @@ class WebViewConfigurator @Inject constructor(
       javaScriptEnabled = settings.javaScriptEnabled
 
       // Storage. A private tab on its own profile may store whatever it likes: the profile is
-      // deleted with the session. Only an old WebView without profiles falls back to "writes
-      // nothing", the one meaning of private it can honour.
-      val isolated = isPrivate && privateProfile.isSupported
+      // deleted with the session. A WebView without profiles, or one where the profile did not
+      // take, falls back to "writes nothing", the one meaning of private it can honour.
+      val isolated = isPrivate && privateProfile.isAttached(webView)
       domStorageEnabled = !isPrivate || isolated
       cacheMode =
         if (isPrivate && !isolated) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
@@ -187,7 +187,7 @@ class WebViewConfigurator @Inject constructor(
   }
 
   fun applyCookiePolicy(webView: WebView, isPrivate: Boolean) {
-    if (isPrivate) {
+    if (isPrivate && privateProfile.isAttached(webView)) {
       // Cookies land in the private profile's own jar, which dies with the session. The
       // default manager is never touched from here: its settings are global to every tab.
       val jar = privateProfile.cookieManager()
