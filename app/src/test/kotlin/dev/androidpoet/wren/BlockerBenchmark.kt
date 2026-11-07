@@ -73,6 +73,26 @@ class BlockerBenchmark {
   }
 
   @Test
+  fun `full bundled build`() {
+    assumeTrue(System.getProperty("wren.bench") == "true")
+    val assets = File("src/main/assets")
+    repeat(3) { round ->
+      val started = System.nanoTime()
+      val builder = EngineBuilder()
+        .addHostSet(assets.resolve("hosts.bin").inputStream().use(CompactHostSet::load))
+      for (name in listOf("blocklist.txt", "rules.txt", "cosmetic.txt")) {
+        assets.resolve(name).bufferedReader().useLines { builder.addLines(it) }
+      }
+      val engine = builder.build(version = 0)
+      println(
+        "full build round $round: ${(System.nanoTime() - started) / 1_000_000} ms " +
+          "(${engine.hosts.size} hosts, ${engine.rules.size} rules, " +
+          "${engine.cosmetics.size} cosmetic)",
+      )
+    }
+  }
+
+  @Test
   fun `cost by phase`() {
     assumeTrue(System.getProperty("wren.bench") == "true")
     val assets = File("src/main/assets")

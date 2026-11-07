@@ -248,8 +248,8 @@
   <string name="tor">Tor</string>
   <string name="section_tor">Tor</string>
   <string name="tor_mode">Route through Tor</string>
-  <string name="tor_mode_summary">Sends every tab through three volunteer relays of the Tor network, so sites see a Tor exit address instead of yours. Pages load slower, downloads pause, and sites without HTTPS are refused. Wren is not the Tor Browser: sites can still tell browsers apart.</string>
-  <string name="tor_explainer">Every tab and every request the app makes leaves through three volunteer relays. Sites see a Tor exit address, not yours. Pages load slower, downloads pause, and sites without HTTPS are refused. Wren is not the Tor Browser: sites can still tell browsers apart.</string>
+  <string name="tor_mode_summary">Sends every tab through three volunteer relays of the Tor network, so sites see a Tor exit address instead of yours. Tor pages keep their own cookies and storage, apart from your normal browsing, and nothing they visit is written to history. Each site gets its own circuit and pages see a UTC clock in English. Pages load slower, downloads pause, and sites without HTTPS are refused. Turning Tor off closes the pages opened while it was on. Wren is not the Tor Browser: sites can still tell browsers apart.</string>
+  <string name="tor_explainer">Every tab and every request the app makes leaves through three volunteer relays. Sites see a Tor exit address, not yours. Tor pages keep their own cookies and storage, apart from your normal browsing, nothing they visit is written to history, each site gets its own circuit, and pages see a UTC clock in English. Pages load slower, downloads pause, and sites without HTTPS are refused. Turning Tor off closes the pages opened while it was on. Wren is not the Tor Browser: sites can still tell browsers apart.</string>
   <string name="tor_on">Connected through the Tor network</string>
   <string name="tor_connecting">Connecting to Tor · %1$d%%</string>
   <string name="tor_stopping">Disconnecting from Tor</string>
@@ -261,6 +261,13 @@
   <string name="tor_menu_connecting">Tor…</string>
   <string name="tor_new_identity">New identity</string>
   <string name="tor_new_identity_done">New identity: tabs closed, data cleared, new circuits</string>
+  <string name="tor_new_identity_failed">Tabs closed and data cleared, but Tor did not switch circuits</string>
+  <string name="tor_off_confirm">Turn Tor off? The pages opened while it was on will be closed so they never load over your own connection.</string>
+  <string name="tor_off_action">Turn off</string>
+  <string name="tor_off_pages_closed">Tor off. Pages opened over Tor were closed.</string>
+  <string name="tor_external_app_title">Open in another app?</string>
+  <string name="tor_external_app_message">The other app will fetch this from your own connection, not through Tor.</string>
+  <string name="tor_external_app_open">Open</string>
   <string name="tor_new_identity_confirm">Close every tab, clear cookies, site data and history, and switch to new Tor circuits?</string>
   <string name="tor_verify">Check connection</string>
   <string name="tor_downloads_off">Downloads pause while Tor is on</string>
@@ -270,7 +277,7 @@
 
   <!-- Site panel: who was blocked, and sites that keep their login through a clear -->
   <string name="keep_signed_in">Stay signed in here</string>
-  <string name="keep_signed_in_summary">Cookies and site data for this site survive Clear browsing data.</string>
+  <string name="keep_signed_in_summary">Cookies for this site survive Clear browsing data, so you stay signed in. Not while Tor is on.</string>
   <string name="tracker_owner_other">Other</string>
   <string name="tracker_more_hosts">+%d more</string>
   <plurals name="tracker_host_count">

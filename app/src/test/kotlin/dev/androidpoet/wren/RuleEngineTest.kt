@@ -103,7 +103,7 @@ class FilterRuleTest {
   @Test
   fun `rules the engine cannot honour are dropped`() {
     assertThat(FilterRule.parse("||a.com^\$popup")).isNull()
-    assertThat(FilterRule.parse("||a.com^\$redirect=noopjs")).isNull()
+    assertThat(FilterRule.parse("@@||a.com^\$redirect-rule=noopjs")).isNull()
     assertThat(FilterRule.parse("/banner\\d+/\$image")).isNull()
     assertThat(FilterRule.parse("/ads/")).isNull()
     assertThat(FilterRule.parse("! comment")).isNull()
@@ -243,5 +243,103 @@ class RuleEngineTest {
     println("bundled rules: ${bundled.size}; ${perDecisionNs / 1000.0} us per decision on the JVM")
     assertThat(blockedCount).isGreaterThan(0)
     assertThat(perDecisionNs).isLessThan(200_000)
+  }
+
+  class RuleOptionsTest {
+
+    private fun decide(engine: RuleEngine, url: String): FilterRule? {
+      val pageHost = "news.com"
+      return engine.decide(RequestContext(url), RequestType.SCRIPT, true, pageHost, false)
+    }
+
+    @Test
+    fun `a redirect rule keeps its block and names its resource`() {
+      val rule = FilterRule.parse(
+        "||imasdk.googleapis.com/js/sdkloader/ima3.js\$script,redirect=google-ima.js",
+      )!!
+      assertThat(rule.redirect).isEqualTo("google-ima.js")
+      assertThat(FilterRule.parse("||a.com/x.js\$script,redirect=noopjs:10")!!.redirect)
+        .isEqualTo("noopjs")
+      assertThat(FilterRule.parse("||a.com/x.js\$redirect-rule=noopjs")!!.redirectOnly).isTrue()
+      assertThat(FilterRule.parse("@@||a.com/x.js\$redirect=noopjs")).isNull()
+    }
+
+    @Test
+    fun `a redirect-rule blocks nothing but names the stand-in for a block made elsewhere`() {
+      val engine = RuleEngine.parse(
+        sequenceOf(
+          "||ads.example.com/x.js\$script,redirect-rule=noopjs",
+          "||ads.example.com/y.js\$script",
+          "||ads.example.com/y.js\$script,redirect-rule=nooptext",
+        ),
+      )
+      assertThat(decide(engine, "https://ads.example.com/x.js")).isNull()
+      assertThat(decide(engine, "https://ads.example.com/y.js")!!.redirect).isEqualTo("nooptext")
+      val hostHit = RequestContext("https://ads.example.com/x.js")
+      assertThat(engine.decide(hostHit, RequestType.SCRIPT, true, "news.com", true)!!.redirect)
+        .isEqualTo("noopjs")
+    }
+
+    @Test
+    fun `decide returns the winning rule and the host sentinel`() {
+      val engine = RuleEngine.parse(sequenceOf("||ads.example.com/x.js\$script,redirect=noopjs"))
+      assertThat(decide(engine, "https://ads.example.com/x.js")!!.redirect).isEqualTo("noopjs")
+      assertThat(decide(engine, "https://other.example.com/x.js")).isNull()
+      val request = RequestContext("https://t.example/x.js")
+      val byHost = engine.decide(request, RequestType.SCRIPT, true, "news.com", true)
+      assertThat(byHost).isSameInstanceAs(RuleEngine.HOST_BLOCK)
+    }
+
+    @Test
+    fun `a host set hit still serves the redirect a rule names for that url`() {
+      val engine = RuleEngine.parse(
+        sequenceOf(
+          "||pagead2.googlesyndication.com/pagead/js/adsbygoogle.js\$script,redirect=noopjs",
+          "||pagead2.googlesyndication.com/other.js\$script,redirect=noopjs,domain=~news.com",
+        ),
+      )
+      val shimmed = RequestContext("https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js")
+      assertThat(engine.decide(shimmed, RequestType.SCRIPT, true, "news.com", true)!!.redirect)
+        .isEqualTo("noopjs")
+      val plain = RequestContext("https://pagead2.googlesyndication.com/x.js")
+      assertThat(engine.decide(plain, RequestType.SCRIPT, true, "news.com", true))
+        .isSameInstanceAs(RuleEngine.HOST_BLOCK)
+      val excluded = RequestContext("https://pagead2.googlesyndication.com/other.js")
+      assertThat(engine.decide(excluded, RequestType.SCRIPT, true, "news.com", true))
+        .isSameInstanceAs(RuleEngine.HOST_BLOCK)
+    }
+
+    @Test
+    fun `a badfilter cancels the rule it repeats`() {
+      val engine = RuleEngine.parse(
+        sequenceOf(
+          "||smartlook.com^",
+          "||smartlook.com^\$badfilter",
+          "||top.mail.ru^\$script",
+          "||keep.example^",
+        ),
+      )
+      assertThat(decide(engine, "https://smartlook.com/x.js")).isNull()
+      assertThat(decide(engine, "https://top.mail.ru/x.js")).isNotNull()
+      assertThat(decide(engine, "https://keep.example/x.js")).isNotNull()
+    }
+
+    @Test
+    fun `generichide exceptions are kept by host`() {
+      val engine = RuleEngine.parse(
+        sequenceOf("@@||bild.de^\$ghide", "@@||kbb.com^\$generichide,important"),
+      )
+      assertThat(engine.isGenericHideExempt("www.bild.de")).isTrue()
+      assertThat(engine.isGenericHideExempt("kbb.com")).isTrue()
+      assertThat(engine.isGenericHideExempt("news.com")).isFalse()
+    }
+
+    @Test
+    fun `an important rule beats an exception even after a host set hit`() {
+      val engine = RuleEngine.parse(sequenceOf("||evil.org^\$important", "@@||evil.org/ok.js"))
+      val request = RequestContext("https://evil.org/ok.js")
+      assertThat(engine.decide(request, RequestType.SCRIPT, true, "news.com", true)).isNotNull()
+      assertThat(engine.decide(request, RequestType.SCRIPT, true, "news.com", false)).isNotNull()
+    }
   }
 }

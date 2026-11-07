@@ -102,7 +102,10 @@ class DownloadController @Inject constructor(
     val request = DownloadManager.Request(Uri.parse(url)).apply {
       setMimeType(mimeType)
       userAgent?.let { addRequestHeader("User-Agent", it) }
-      pageUrl?.let { addRequestHeader("Referer", it) }
+      DownloadHeaders.referer(
+        pageUrl,
+        settings.trimReferrers,
+      )?.let { addRequestHeader("Referer", it) }
       // A private page's download carries the private jar's cookies, never the normal one's;
       // without a private jar it carries none.
       val jar = if (isPrivate) privateProfile.cookieManager() else CookieManager.getInstance()

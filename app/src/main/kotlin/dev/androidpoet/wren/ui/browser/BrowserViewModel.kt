@@ -109,7 +109,8 @@ class BrowserViewModel @Inject constructor(
 
   fun onPageCommitted(url: String, title: String, isPrivate: Boolean) {
     currentUrl.value = url
-    val skip = isPrivate || !settings.recordHistory ||
+    // A Tor visit written to history is a record of the Tor session, on disk, in the clear.
+    val skip = isPrivate || settings.torMode || !settings.recordHistory ||
       url.isBlank() || url == UrlFormatter.NEW_TAB_URL || !url.startsWith("http")
     if (skip) return
     viewModelScope.launch { historyRepository.recordVisit(url, title) }

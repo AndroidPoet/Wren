@@ -72,11 +72,27 @@ engine. Before relying on it for anything sensitive, know the limits:
   partitioning and WebRTC internals come from the system WebView, not from Wren. Wren warns when
   the engine is out of date, but only you can update it.
 - **Tor mode is not Tor Browser.** It sends every tab and every request the app makes through
-  Tor, refuses plain HTTP, pauses downloads and removes WebRTC from pages. It does not make you
-  look like other Tor users: fingerprint protection adds noise that changes each time Wren starts
-  rather than giving every user the same answers, and the engine version, screen size and fonts
-  stay visible. All sites share the same circuits until you choose New identity, which closes
-  every tab, clears data and asks Tor for new circuits.
+  Tor, keeps Tor pages in a storage profile of their own that is thrown away when Tor is turned
+  off, writes nothing they visit to history, gives each destination host its own circuit,
+  refuses plain HTTP, pauses downloads, removes WebRTC from pages, shows them a UTC clock and
+  answers in English. It does not make you look like other Tor users: fingerprint protection
+  adds noise that changes each time Wren starts rather than giving every user the same answers,
+  and the screen size and fonts stay visible. Tor Browser isolates circuits by the site you are
+  on; a WebView cannot, so Wren isolates them by the host being fetched. New identity closes
+  every tab, deletes the Tor profile, moves the tunnel so no old connection survives, and asks
+  Tor for new circuits. Web Workers do not see the clock and WebRTC shims; a page that measures
+  the time zone inside a worker learns it.
+- **One DNS lookup escapes Tor.** When a page asks the engine to look up a host ahead of time
+  (`<link rel="dns-prefetch">`), Chromium's WebView resolves it through the phone's DNS, not
+  through the proxy, and offers apps no switch for it. A page can use that to learn which
+  resolver, and so roughly which network, a Tor visitor is on. Tor over a VPN, or a private DNS
+  server, moves that disclosure from your ISP to that provider; nothing in Wren can close it.
+- **The engine names the app.** Android's WebView adds an `X-Requested-With: dev.androidpoet.wren`
+  header to the requests pages make, and no app can turn that off until Chromium finishes
+  removing it. Wren strips it from the page request itself, but images, scripts and fetches
+  still carry it, so a site can tell it is talking to Wren. The user agent and client hints are
+  Chrome's reduced ones (`Android 10; K`, no device model or build), so the phone itself is not
+  named.
 - **Safe Browsing talks to Google.** Short hashed prefixes of addresses go to Google through
   Android, except in Tor mode. There is no switch for it yet.
 - **Nobody independent has audited Wren.** The source is public and reviews of it are

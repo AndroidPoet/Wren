@@ -9,15 +9,15 @@
  * that detects blockers, replays ads, or fetches them another way. Names and arguments follow
  * the uBlock Origin conventions the lists are written in; implementations are Wren's own.
  *
- * Runs at document start, before any page script. The table of which sites call what is
- * appended by the app as WREN_SCRIPTLETS; the dispatcher at the bottom applies it.
+ * Runs at document start, before any page script, inside one closure the app assembles from
+ * this file, the scriptlet table and cosmetic_filter.js. Nothing here is attached to window:
+ * a global with the browser's name in it would tell every page which browser it runs in.
+ * The expression evaluates to the dispatcher the injector calls with the table.
  */
-(function () {
+var runScriptlets = (function () {
   'use strict';
-  if (window.__wrenScriptlets) return;
-  window.__wrenScriptlets = true;
 
-  var MAGIC = 'wren-abort-' + Math.random().toString(36).slice(2);
+  var MAGIC = 'abort-' + Math.random().toString(36).slice(2);
 
   function toRegex(needle, flags) {
     if (!needle) return null;
@@ -63,9 +63,12 @@
     return raw;
   }
 
+  var swallowing = false;
+  // A nameless mark on a request the page must not see through; no string a page can look for.
+  var BLOCKED = typeof Symbol === 'function' ? Symbol() : '__' + MAGIC;
   function swallowMagicErrors() {
-    if (window.__wrenSwallow) return;
-    window.__wrenSwallow = true;
+    if (swallowing) return;
+    swallowing = true;
     window.addEventListener('error', function (e) {
       if (e && e.message && String(e.message).indexOf(MAGIC) >= 0) {
         e.stopImmediatePropagation();
@@ -442,11 +445,11 @@
     var open = XMLHttpRequest.prototype.open;
     var send = XMLHttpRequest.prototype.send;
     XMLHttpRequest.prototype.open = function (method, url) {
-      this.__wrenBlocked = propsMatch(String(url), method, props);
+      this[BLOCKED] = propsMatch(String(url), method, props);
       return open.apply(this, arguments);
     };
     XMLHttpRequest.prototype.send = function () {
-      if (this.__wrenBlocked) { fakeXhr(this); return; }
+      if (this[BLOCKED]) { fakeXhr(this); return; }
       return send.apply(this, arguments);
     };
   };
@@ -473,6 +476,21 @@
     });
   };
 
+  // A page that enforces Trusted Types rejects plain strings on script text; a policy that
+  // passes the text through is what the page's own code would use.
+  var scriptPolicy;
+  function scriptText(text) {
+    try {
+      if (window.trustedTypes && trustedTypes.createPolicy) {
+        if (!scriptPolicy) {
+          scriptPolicy = trustedTypes.createPolicy('nodeText', { createScript: function (s) { return s; } });
+        }
+        return scriptPolicy.createScript(text);
+      }
+    } catch (ignored) {}
+    return text;
+  }
+
   function nodeTextEditor(nodeName, needle, replacement) {
     if (!nodeName) return;
     var tag = nodeName.toUpperCase();
@@ -482,7 +500,10 @@
       var text = node.textContent;
       if (!pattern || !pattern.test(text)) return;
       pattern.lastIndex = 0;
-      node.textContent = replacement === undefined ? '' : text.replace(pattern, replacement);
+      var edited = replacement === undefined ? '' : text.replace(pattern, replacement);
+      try {
+        node.textContent = tag === 'SCRIPT' ? scriptText(edited) : edited;
+      } catch (ignored) {}
     };
     new MutationObserver(function (records) {
       records.forEach(function (record) { record.addedNodes.forEach(edit); });
@@ -631,7 +652,81 @@
     'rc': 'remove-class',
     'rmnt': 'remove-node-text',
     'rpnt': 'replace-node-text',
-    'cookie-remover': 'remove-cookie'
+    'cookie-remover': 'remove-cookie',
+    'trusted-rpfr': 'trusted-replace-fetch-response',
+    'trusted-rpnt': 'replace-node-text',
+    'trusted-replace-node-text': 'replace-node-text',
+    'trusted-set': 'set-constant',
+    'trusted-set-constant': 'set-constant',
+    'trusted-set-cookie': 'set-cookie',
+    'trusted-set-local-storage-item': 'set-local-storage-item',
+    'trusted-set-session-storage-item': 'set-session-storage-item',
+    'trusted-prevent-xhr': 'no-xhr-if',
+    'trusted-prevent-fetch': 'no-fetch-if',
+    'prevent-setTimeout': 'no-setTimeout-if',
+    'prevent-setInterval': 'no-setInterval-if',
+    'prevent-addEventListener': 'addEventListener-defuser',
+    'prevent-window-open': 'no-window-open-if',
+    'prevent-eval-if': 'noeval-if',
+    'adjust-setTimeout': 'nano-setTimeout-booster',
+    'adjust-setInterval': 'nano-setInterval-booster',
+    'norafif': 'no-requestAnimationFrame-if',
+    'prevent-refresh': 'refresh-defuser'
+  };
+
+  lib['set-attr'] = function (selector, attr, value) {
+    if (!selector || !attr) return;
+    var allowed = value === undefined || value === '' || value === 'true' || value === 'false' ||
+      /^\d+$/.test(value) || value === '[]' || value === '{}';
+    if (!allowed) return;
+    var v = value === undefined ? '' : value;
+    observe(function () {
+      document.querySelectorAll(selector).forEach(function (el) {
+        if (el.getAttribute(attr) !== v) el.setAttribute(attr, v);
+      });
+    });
+  };
+
+  lib['refresh-defuser'] = function (delay) {
+    var wanted = delay === undefined || delay === '' ? null : Number(delay);
+    observe(function () {
+      document.querySelectorAll('meta[http-equiv="refresh" i]').forEach(function (meta) {
+        var content = meta.getAttribute('content') || '';
+        var seconds = parseFloat(content);
+        if (wanted !== null && seconds !== wanted) return;
+        meta.remove();
+      });
+    });
+  };
+
+  lib['no-requestAnimationFrame-if'] = function (needle) {
+    var native = window.requestAnimationFrame;
+    if (typeof native !== 'function') return;
+    var negate = needle && needle.charAt(0) === '!';
+    var re = toRegex(negate ? needle.slice(1) : needle);
+    window.requestAnimationFrame = function (callback) {
+      var hit = re ? re.test(String(callback)) : true;
+      if (negate ? !hit : hit) return 0;
+      return native.apply(this, arguments);
+    };
+  };
+
+  lib['disable-newtab-links'] = function () {
+    document.addEventListener('click', function (event) {
+      var target = event.target;
+      while (target && target.tagName !== 'A') target = target.parentElement;
+      if (target && target.getAttribute('target') === '_blank') event.preventDefault();
+    }, true);
+  };
+
+  lib['set-cookie-reload'] = function (name, value, path) {
+    if (!name) return;
+    var present = document.cookie.split(';').some(function (c) { return c.trim().indexOf(name + '=') === 0; });
+    lib['set-cookie'](name, value, path);
+    if (!present) {
+      var now = document.cookie.split(';').some(function (c) { return c.trim().indexOf(name + '=') === 0; });
+      if (now) location.reload();
+    }
   };
 
   function splitArgs(call) {
@@ -665,11 +760,12 @@
     return calls.filter(function (call) { return excepted.indexOf(call) < 0; });
   }
 
-  window.__wrenRunScriptlets = function (table) {
+  return function (table) {
     var calls = callsFor(table, location.hostname);
     for (var i = 0; i < calls.length; i++) {
       var args = splitArgs(calls[i]);
-      var name = aliases[args[0]] || args[0];
+      var raw = args[0].replace(/\.js$/, '');
+      var name = aliases[raw] || raw;
       var fn = lib[name];
       if (!fn) continue;
       try { fn.apply(null, args.slice(1)); } catch (e) {}

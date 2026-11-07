@@ -14,6 +14,8 @@ import dev.androidpoet.wren.browser.blocking.rules.RequestType
 import dev.androidpoet.wren.browser.blocking.rules.RuleEngine
 import dev.androidpoet.wren.settings.SettingsStore
 import java.io.ByteArrayInputStream
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReferenceArray
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -52,9 +54,11 @@ class ContentBlocker @Inject constructor(
     val thirdParty = pageHost == null || !HostMatcher.isSameParty(requestHost, pageHost)
     val hostHit = thirdParty && blocklist.isBlocked(requestHost)
     val typeMask = RequestType.infer(context.url) { acceptHeaderOf(request) }
-    val blocked = rules.shouldBlock(context, typeMask, thirdParty, pageHost, hostHit, page.rules)
-    if (!blocked) return null
+    val verdict = rules.decide(context, typeMask, thirdParty, pageHost, hostHit, page.rules)
+      ?: return null
 
+    // A redirect rule names what to serve instead; a plain block falls back to the host shims.
+    verdict.redirect?.let(blocklist::resourceFor)?.let { return resourceResponse(it) }
     val shimAsset = blocklist.shimAssetFor(requestHost)
     return if (shimAsset != null) shimResponse(shimAsset) else BLOCKED_RESPONSE()
   }
@@ -68,8 +72,13 @@ class ContentBlocker @Inject constructor(
     val rules: PageRules,
   )
 
-  @Volatile
-  private var lastPage: PageFacts? = null
+  /**
+   * A few pages' worth, not one: two tabs loading at once, or a service worker whose requests
+   * name the page by referrer rather than by tab address, would otherwise evict each other on
+   * every request.
+   */
+  private val recentPages = AtomicReferenceArray<PageFacts?>(PAGE_CACHE_SLOTS)
+  private val nextSlot = AtomicInteger()
 
   /**
    * A page makes hundreds of requests and every one of them carries the same page address, so
@@ -78,8 +87,10 @@ class ContentBlocker @Inject constructor(
    * entry is immutable, so a lost race costs one recomputation and nothing else.
    */
   private fun pageFactsFor(pageUrl: String, rules: RuleEngine): PageFacts {
-    val cached = lastPage
-    if (cached != null && cached.engine === rules && cached.url == pageUrl) return cached
+    for (i in 0 until PAGE_CACHE_SLOTS) {
+      val cached = recentPages.get(i) ?: continue
+      if (cached.engine === rules && cached.url == pageUrl) return cached
+    }
     val host = HostMatcher.hostOf(pageUrl)
     return PageFacts(
       url = pageUrl,
@@ -87,7 +98,7 @@ class ContentBlocker @Inject constructor(
       host = host,
       isExempt = host != null && rules.isPageExempt(host),
       rules = rules.pageRulesFor(host),
-    ).also { lastPage = it }
+    ).also { recentPages.set(nextSlot.getAndIncrement() and (PAGE_CACHE_SLOTS - 1), it) }
   }
 
   private fun acceptHeaderOf(request: WebResourceRequest): String? {
@@ -104,7 +115,26 @@ class ContentBlocker @Inject constructor(
     ByteArrayInputStream(blocklist.shimBytes(assetPath)),
   )
 
+  private fun resourceResponse(resource: Blocklist.Resource): WebResourceResponse =
+    WebResourceResponse(
+      resource.mimeType,
+      if (resource.mimeType.startsWith("image/") || resource.mimeType.startsWith("audio/") ||
+        resource.mimeType.startsWith("video/")
+      ) {
+        null
+      } else {
+        "utf-8"
+      },
+      200,
+      "OK",
+      // Scripts and media are fetched cross-origin; without this a page's own CORS check
+      // would reject the stand-in and fall back to the behaviour the rule exists to prevent.
+      NO_STORE + ("Access-Control-Allow-Origin" to "*"),
+      ByteArrayInputStream(blocklist.resourceBytes(resource)),
+    )
+
   private companion object {
+    const val PAGE_CACHE_SLOTS = 4
     val NO_STORE = mapOf("Cache-Control" to "no-store")
 
     /**

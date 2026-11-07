@@ -20,6 +20,7 @@ import dev.androidpoet.wren.settings.SettingsStore
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
+import java.util.UUID
 import java.util.WeakHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -133,15 +134,26 @@ class CosmeticFilter @Inject constructor(
     }
   }
 
-  /** Library, then the scriptlet table for this engine, then the injector; cached per version. */
+  /**
+   * One closure per engine version: the reply channel taken off `window` under its random
+   * name, the library, the scriptlet table (parsed from a JSON string, which the engine does
+   * faster than an object literal of this size), then the injector. Nothing is left on the
+   * page's global object, so a page cannot tell this browser from any other Chromium WebView.
+   */
   private fun scriptFor(engine: BlockEngine): String {
     cachedScript?.let { if (it.first == engine.version) return it.second }
-    val table = engine.cosmetics.scriptletTableJson()
-    val script = buildString(library.length + table.length + injector.length + 64) {
+    val table = JSONObject.quote(engine.cosmetics.scriptletTableJson())
+    val name = JSONObject.quote(CHANNEL)
+    val script = buildString(library.length + table.length + injector.length + 256) {
+      append("(function () {\n")
+      append("var DEBUG = ").append(BuildConfig.DEBUG).append(";\n")
+      append("var CHANNEL = null;\n")
+      append("try { CHANNEL = window[").append(name).append("] || null; ")
+      append("delete window[").append(name).append("]; } catch (e) {}\n")
       append(library).append('\n')
-      if (BuildConfig.DEBUG) append("window.__wrenDebug = true;\n")
-      append("var WREN_SCRIPTLETS = ").append(table).append(";\n")
+      append("var SCRIPTLET_TABLE = JSON.parse(").append(table).append(");\n")
       append(injector)
+      append("\n})();\n")
     }
     cachedScript = engine.version to script
     return script
@@ -153,7 +165,13 @@ class CosmeticFilter @Inject constructor(
   private companion object {
     const val LIBRARY_ASSET = "scriptlets.js"
     const val INJECTOR_ASSET = "cosmetic_filter.js"
-    const val CHANNEL = "WrenCosmetic"
+
+    /**
+     * The message channel's global name. Random per process and deleted from `window` by the
+     * document-start script as soon as it has a reference, so no page sees a name that says
+     * which browser it is in, nor one that stays the same across sessions.
+     */
+    val CHANNEL: String = "w" + UUID.randomUUID().toString().replace("-", "")
     const val MAX_SURVEY_TOKENS = 4000
     const val MAX_TOKEN_LENGTH = 128
     val ALLOWED_ORIGINS = setOf("*")

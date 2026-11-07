@@ -77,9 +77,16 @@ class TorController @Inject constructor(
   val isSupported: Boolean
     get() = WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)
 
-  /** Whether a page load may start: Tor is off, or the proxy already fronts every request. */
+  /**
+   * Whether a page load may start: Tor is off, or the proxy fronts every request and Tor has
+   * either built its circuits or given up. A load during bootstrap would only die at the local
+   * port; after a failed start it dies there too, which is the point.
+   */
   val isNetworkReady: Boolean
-    get() = !settings.torMode || _state.value.proxyInstalled
+    get() = !settings.torMode || isReady(_state.value)
+
+  fun isReady(state: TorState): Boolean =
+    !settings.torMode || (state.proxyInstalled && state.status != TorStatus.STARTING)
 
   private val mainHandler = Handler(Looper.getMainLooper())
   private val mainExecutor = Executor { mainHandler.post(it) }
@@ -122,13 +129,27 @@ class TorController @Inject constructor(
     if (enabled) start() else stop()
   }
 
-  /** Asks Tor for fresh circuits, so the next connections leave through a different exit. */
-  fun newIdentity() {
-    val control = service?.torControlConnection ?: return
-    scope.launch(Dispatchers.IO) {
-      runCatching { control.signal(TorControlCommands.SIGNAL_NEWNYM) }
-        .onFailure { Timber.w(it, "new identity failed") }
+  /**
+   * Fresh circuits for everything that follows. NEWNYM alone leaves the tunnels already open
+   * on their old circuits, and WebView keeps idle connections for minutes, so the tunnel port
+   * is moved first: Tor closes the old listener with every tunnel on it, and the proxy
+   * override pointed at the new port starts with an empty connection pool. False when Tor did
+   * not take the change, in which case nothing may claim a new identity.
+   */
+  suspend fun newIdentity(): Boolean {
+    val control = service?.torControlConnection ?: return false
+    val fresh = withContext(Dispatchers.IO) { freePort() }
+    val changed = withContext(Dispatchers.IO) {
+      runCatching {
+        control.setConf("HTTPTunnelPort", "127.0.0.1:$fresh IsolateDestAddr")
+        control.signal(TorControlCommands.SIGNAL_NEWNYM)
+      }.onFailure { Timber.w(it, "new identity failed") }.isSuccess
     }
+    if (changed) {
+      settings.torHttpPort = fresh
+      installProxy(fresh)
+    }
+    return changed
   }
 
   private fun start() {
@@ -152,7 +173,7 @@ class TorController @Inject constructor(
       if (_state.value.status != TorStatus.STARTING) return@launch
       installProxy(ports.http)
       registerReceiver()
-      // tor-android 0.4.9.14 dropped the setter; status now goes to the app's own package by default.
+      // tor-android 0.4.9.14 dropped the setter; status goes to the app's own package by default.
       val intent = Intent(application, TorService::class.java)
       bound = application.bindService(intent, connection, Context.BIND_AUTO_CREATE)
       if (!bound) {
@@ -300,11 +321,18 @@ class TorController @Inject constructor(
     return Ports(socks, http)
   }
 
+  /**
+   * `IsolateDestAddr` gives every destination host its own circuit, so one exit never sees
+   * the whole session. WebView's proxy override carries no per-request credentials, which
+   * rules out Tor Browser's per-site (first-party) isolation; per-destination is the
+   * strongest isolation the tunnel port can offer, at the cost of more circuit builds on a
+   * page's first load.
+   */
   private fun writeTorrc(ports: Ports) {
     TorService.getTorrc(application).writeText(
       """
-      SOCKSPort 127.0.0.1:${ports.socks}
-      HTTPTunnelPort 127.0.0.1:${ports.http}
+      SOCKSPort 127.0.0.1:${ports.socks} IsolateDestAddr
+      HTTPTunnelPort 127.0.0.1:${ports.http} IsolateDestAddr
       ClientOnly 1
       AvoidDiskWrites 1
       """.trimIndent() + "\n",

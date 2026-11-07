@@ -11,7 +11,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.collection.LruCache
 import dev.androidpoet.wren.browser.blocking.HostMatcher
-import dev.androidpoet.wren.browser.tor.TorProxySelector
 import dev.androidpoet.wren.core.network.Dispatcher
 import dev.androidpoet.wren.core.network.WrenAppDispatchers
 import dev.androidpoet.wren.settings.SettingsStore
@@ -106,11 +105,19 @@ class FaviconStore @Inject constructor(
     }.onFailure { Timber.w(it, "could not cache an icon for %s", host) }
   }
 
+  /** Forgets every icon: the files are named after visited hosts. */
+  fun clear() {
+    synchronized(misses) { misses.clear() }
+    memory.evictAll()
+    runCatching { directory.listFiles()?.forEach { it.delete() } }
+      .onFailure { Timber.w(it, "could not clear the icon cache") }
+  }
+
   private fun fetch(host: String): Bitmap? {
     if (!settings.loadSiteIcons || host in misses) return null
-    // With Tor on but still connecting, this request would leave from the real address.
-    // Skip without recording a miss; the next open retries.
-    if (TorProxySelector.wouldLeakFor(settings)) return null
+    // Under Tor an icon fetch would announce a dial site to an exit before any tap; the icons
+    // already on disk still show. Skip without recording a miss; a later open retries.
+    if (settings.torMode) return null
 
     for (path in ICON_PATHS) {
       val bitmap = runCatching { download("https://$host$path") }.getOrNull()

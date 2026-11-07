@@ -11,8 +11,10 @@ import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewDatabase
 import androidx.webkit.CookieManagerCompat
+import androidx.webkit.WebStorageCompat
 import androidx.webkit.WebViewFeature
 import dev.androidpoet.wren.browser.blocking.HostMatcher
+import dev.androidpoet.wren.browser.favicon.FaviconStore
 import dev.androidpoet.wren.core.data.repository.HistoryRepository
 import dev.androidpoet.wren.settings.SettingsStore
 import javax.inject.Inject
@@ -29,22 +31,43 @@ import javax.inject.Singleton
 class PrivacyCleaner @Inject constructor(
   private val historyRepository: HistoryRepository,
   private val settings: SettingsStore,
+  private val faviconStore: FaviconStore,
 ) {
   /** Clears everything a site left behind. [webView] is the live view whose cache is dropped. */
   suspend fun clearAll(webView: WebView?, includeHistory: Boolean) {
     clearSiteData(webView)
-    if (includeHistory) historyRepository.clear()
+    if (includeHistory) {
+      historyRepository.clear()
+      faviconStore.clear()
+    }
   }
 
+  /**
+   * Under Tor nothing is kept: a new identity that introduces itself with the old session
+   * cookie is the old identity. Elsewhere the kept sites' cookies come back; their other
+   * storage does not, because the engine's one complete wipe cannot spare an origin.
+   */
   fun clearSiteData(webView: WebView?) {
-    val kept = settings.keptSignedInHosts().map(HostMatcher::registrableDomain).toSet()
+    val kept = if (settings.torMode) {
+      emptySet()
+    } else {
+      settings.keptSignedInHosts().map(HostMatcher::registrableDomain).toSet()
+    }
     val cookies = CookieManager.getInstance()
     val saved = cookiesToKeep(cookies, kept)
-    cookies.removeAllCookies {
+    val restore = {
       saved.forEach { (url, cookie) -> cookies.setCookie(url, cookie) }
       cookies.flush()
     }
-    clearStorageExcept(kept)
+    if (WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)) {
+      // Cookies, cache, every storage API, service workers and their caches, in one call:
+      // the per-API calls below leave localStorage behind when an origin is spared and never
+      // touched service workers at all.
+      WebStorageCompat.deleteBrowsingData(WebStorage.getInstance()) { restore() }
+    } else {
+      cookies.removeAllCookies { restore() }
+      clearStorageExcept(kept)
+    }
     webView?.apply {
       clearCache(true)
       clearFormData()

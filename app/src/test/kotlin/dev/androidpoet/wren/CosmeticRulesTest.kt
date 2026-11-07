@@ -163,4 +163,76 @@ class EngineBuilderTest {
     assertThat(payload.length).isLessThan(60_000)
     assertThat(survey).contains("#google_ads_frame")
   }
+
+  @Test
+  fun `procedural and snippet lines never become blocked hosts`() {
+    val engine = EngineBuilder().addLines(
+      sequenceOf(
+        "instagram.com#?#div:has-text(Paid partnership)",
+        "x.com#\$#.foo { display: none !important; }",
+        "yahoo.com#%#//scriptlet('abort-on-property-read', 'x')",
+        "bing.com#@?#.cookie",
+        "github.com#@\$#.x",
+        "nytimes.com##.ad-slot",
+      ),
+    ).build(version = 0)
+    assertThat(engine.hosts.size).isEqualTo(0)
+    assertThat(engine.hosts.matchesSuffixOf("www.instagram.com")).isFalse()
+    assertThat(engine.cosmetics.hidingPayloadFor("www.nytimes.com")).contains(".ad-slot")
+  }
+
+  @Test
+  fun `a hash glued to text is not a hosts file comment`() {
+    assertThat(EngineBuilder.hostsFileEntry("0.0.0.0 tracker.example # note"))
+      .isEqualTo("tracker.example")
+    assertThat(EngineBuilder.hostsFileEntry("# only a comment")).isNull()
+    assertThat(EngineBuilder.hostsFileEntry("site.example#?#.x")).isNull()
+  }
+
+  @Test
+  fun `procedural selectors and html filters stay out of the style sheet`() {
+    val rules = CosmeticRules.Builder().apply {
+      assertThat(add("a.com##div:has-text(Sponsored)")).isFalse()
+      assertThat(add("a.com##^script:has-text(adblock)")).isFalse()
+      assertThat(add("a.com##div:has(> .ad)")).isTrue()
+      assertThat(add("a.com##.x:upward(2)")).isFalse()
+    }.build()
+    assertThat(rules.hidingPayloadFor("a.com")).contains("div:has(> .ad)")
+    assertThat(rules.hidingPayloadFor("a.com")).doesNotContain("has-text")
+  }
+
+  @Test
+  fun `scriptlet aliases and js suffixes are accepted`() {
+    val rules = CosmeticRules.Builder().apply {
+      assertThat(add("youtube.com##+js(trusted-rpfr, \"adPlacements\", \"no_ads\")")).isTrue()
+      assertThat(add("a.com##+js(cookie-remover.js, x)")).isTrue()
+      assertThat(add("a.com##+js(not-a-real-scriptlet, x)")).isFalse()
+    }.build()
+    assertThat(rules.scriptletsFor("www.youtube.com").single()).startsWith("trusted-rpfr")
+  }
+
+  @Test
+  fun `if blocks follow the chromium mobile conditions`() {
+    val engine = EngineBuilder().addLines(
+      sequenceOf(
+        "!#if env_firefox",
+        "||firefox-only.example^",
+        "!#else",
+        "||not-firefox.example^",
+        "!#endif",
+        "!#if !env_mobile",
+        "||desktop-only.example^",
+        "!#endif",
+        "!#if env_chromium || cap_html_filtering",
+        "||chromium-or.example^",
+        "!#endif",
+        "||always.example^",
+      ),
+    ).build(version = 0)
+    assertThat(engine.hosts.matchesSuffixOf("firefox-only.example")).isFalse()
+    assertThat(engine.hosts.matchesSuffixOf("not-firefox.example")).isTrue()
+    assertThat(engine.hosts.matchesSuffixOf("desktop-only.example")).isFalse()
+    assertThat(engine.hosts.matchesSuffixOf("chromium-or.example")).isTrue()
+    assertThat(engine.hosts.matchesSuffixOf("always.example")).isTrue()
+  }
 }

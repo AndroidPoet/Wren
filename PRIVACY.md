@@ -38,10 +38,18 @@ sends the Do Not Track and Global Privacy Control signals.
 
 Wren runs on Android's system WebView, which is the Chromium engine shipped and updated by Google
 or your phone maker. The engine's version, security patches and internal isolation are outside
-Wren's control. Tor mode routes all of Wren's traffic through Tor and removes WebRTC, but it does
-not make you indistinguishable from other users the way Tor Browser does, and every site shares the
-same circuits until you choose New identity. Wren has not been independently audited. If your
-safety depends on anonymity, use Tor Browser for Android.
+Wren's control. Tor mode routes all of Wren's traffic through Tor, keeps Tor pages in their own
+storage profile that is deleted when Tor is turned off or a new identity is requested, records
+no history for them, gives each host its own circuit, removes WebRTC, shows pages a UTC clock
+and answers in English, but it does not make you indistinguishable from other users the way Tor
+Browser does. One lookup escapes it: a page's DNS prefetch hint is resolved by the engine through
+the phone's DNS rather than through Tor, and no app can turn that off; Tor over a VPN or a
+private DNS server moves that disclosure away from your ISP. Web Workers do not get the clock and
+WebRTC shims. The engine adds an `X-Requested-With` header naming
+Wren to the requests pages make, which no app can switch off yet; Wren removes it from the page
+request itself and sends Chrome's reduced user agent, so sites learn the browser but not the
+phone. Wren has not been independently audited. If your safety depends on anonymity, use Tor
+Browser for Android.
 
 ## Permissions
 

@@ -140,6 +140,11 @@ class SettingsStore @Inject constructor(
   fun setFilterListUpdatedAt(id: String, value: Long) =
     preferences.edit { putLong("$KEY_FILTER_LIST_UPDATED$id", value) }
 
+  /** The shape of the cached filter lists; see FilterListManager.LIST_FORMAT. */
+  var filterListFormat: Int
+    get() = preferences.getInt(KEY_FILTER_LIST_FORMAT, 0)
+    set(value) = preferences.edit { putInt(KEY_FILTER_LIST_FORMAT, value) }
+
   fun filterListEtag(id: String): String? = preferences.getString("$KEY_FILTER_LIST_ETAG$id", null)
 
   fun setFilterListEtag(id: String, value: String?) =
@@ -215,9 +220,36 @@ class SettingsStore @Inject constructor(
     set(value) = preferences.edit { putBoolean(KEY_STRIP_TRACKING, value) }
 
   /** Block requests to known ad and tracking hosts. */
+  /**
+   * Read on every request the blocker sees, so both live in fields rather than behind the
+   * preference lock. The setters update the fields first; the listener covers writes made
+   * from elsewhere, such as the settings screen's own preference widgets.
+   */
+  @Volatile
+  private var blockAdsCached: Boolean = preferences.getBoolean(KEY_BLOCK_ADS, true)
+
+  @Volatile
+  private var allowlistCached: Set<String> =
+    HashSet(preferences.getStringSet(KEY_ALLOWLIST, emptySet()).orEmpty())
+
+  private val hotKeyListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+    when (key) {
+      KEY_BLOCK_ADS -> blockAdsCached = preferences.getBoolean(KEY_BLOCK_ADS, true)
+      KEY_ALLOWLIST ->
+        allowlistCached = HashSet(preferences.getStringSet(KEY_ALLOWLIST, emptySet()).orEmpty())
+    }
+  }
+
+  init {
+    preferences.registerOnSharedPreferenceChangeListener(hotKeyListener)
+  }
+
   var blockAds: Boolean
-    get() = preferences.getBoolean(KEY_BLOCK_ADS, true)
-    set(value) = preferences.edit { putBoolean(KEY_BLOCK_ADS, value) }
+    get() = blockAdsCached
+    set(value) {
+      blockAdsCached = value
+      preferences.edit { putBoolean(KEY_BLOCK_ADS, value) }
+    }
 
   /** Hosts the user has chosen to stop blocking on, usually because a site broke. */
   private var jsOffHosts: Set<String>
@@ -247,10 +279,13 @@ class SettingsStore @Inject constructor(
   }
 
   private var allowlistedHosts: Set<String>
-    get() = preferences.getStringSet(KEY_ALLOWLIST, emptySet()).orEmpty()
-    set(value) = preferences.edit { putStringSet(KEY_ALLOWLIST, value) }
+    get() = allowlistCached
+    set(value) {
+      allowlistCached = HashSet(value)
+      preferences.edit { putStringSet(KEY_ALLOWLIST, value) }
+    }
 
-  fun isAllowlisted(host: String): Boolean = host in allowlistedHosts
+  fun isAllowlisted(host: String): Boolean = host in allowlistCached
 
   fun setAllowlisted(host: String, allowlisted: Boolean) {
     // getStringSet hands back a live set that must not be mutated in place.
@@ -334,6 +369,7 @@ class SettingsStore @Inject constructor(
     private const val KEY_BLOCKLIST_UPDATED = "blocklist_updated"
     private const val KEY_FILTER_LISTS = "filter_lists"
     private const val KEY_FILTER_LIST_UPDATED = "filter_list_updated_"
+    private const val KEY_FILTER_LIST_FORMAT = "filter_list_format"
     private const val KEY_FILTER_LIST_ETAG = "filter_list_etag_"
     private const val KEY_RENDERING_MODE = "rendering_mode"
     private const val KEY_TEXT_ZOOM = "text_zoom"

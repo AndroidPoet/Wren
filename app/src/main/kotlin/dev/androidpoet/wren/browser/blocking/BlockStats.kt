@@ -6,6 +6,8 @@
 
 package dev.androidpoet.wren.browser.blocking
 
+import android.os.Handler
+import android.os.Looper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,12 +29,30 @@ class BlockStats @Inject constructor() {
   private val _blocked = MutableStateFlow<Map<Long, Int>>(emptyMap())
   val blocked: StateFlow<Map<Long, Int>> = _blocked.asStateFlow()
 
-  /** Called from the resource-interception thread. */
+  private val mainHandler = Handler(Looper.getMainLooper())
+
+  @Volatile
+  private var publishPending = false
+
+  /**
+   * Called from the resource-interception thread. The flow is published at most every
+   * [PUBLISH_DELAY_MS]: a page blocking two hundred requests must not redraw the shield two
+   * hundred times, nor copy the whole map for each one.
+   */
   @Synchronized
   fun recordBlocked(tabId: Long, host: String) {
     counts[tabId] = (counts[tabId] ?: 0) + 1
     val forTab = hosts.getOrPut(tabId) { LinkedHashSet() }
     if (forTab.size < MAX_HOSTS) forTab.add(host)
+    if (!publishPending) {
+      publishPending = true
+      mainHandler.postDelayed(::publish, PUBLISH_DELAY_MS)
+    }
+  }
+
+  @Synchronized
+  private fun publish() {
+    publishPending = false
     _blocked.value = counts.toMap()
   }
 
@@ -50,5 +70,6 @@ class BlockStats @Inject constructor() {
 
   private companion object {
     const val MAX_HOSTS = 40
+    const val PUBLISH_DELAY_MS = 100L
   }
 }

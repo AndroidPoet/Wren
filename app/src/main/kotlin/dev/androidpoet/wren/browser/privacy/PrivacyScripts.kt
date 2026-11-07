@@ -59,23 +59,17 @@ class PrivacyScripts @Inject constructor(
     """.trimIndent()
   }
 
-  private val torScript: String = """
-    (function () {
-      try {
-        ['RTCPeerConnection', 'webkitRTCPeerConnection', 'RTCDataChannel'].forEach(function (name) {
-          try {
-            Object.defineProperty(window, name, { value: undefined, writable: false, configurable: false });
-          } catch (ignored) {}
-        });
-      } catch (ignored) {}
-    })();
-  """.trimIndent()
+  /** WebRTC removed and the clock moved to UTC; see the asset. */
+  private val torScript: String by lazy { read("tor.js") }
+
+  private val gpcScript: String by lazy { read("gpc.js") }
 
   private class Handlers {
     var tor: ScriptHandler? = null
     var fingerprint: ScriptHandler? = null
     var autoconsent: ScriptHandler? = null
     var referrer: ScriptHandler? = null
+    var gpc: ScriptHandler? = null
   }
 
   private val handlers = WeakHashMap<WebView, Handlers>()
@@ -101,7 +95,7 @@ class PrivacyScripts @Inject constructor(
       installed.referrer,
       settings.trimReferrers,
     ) { referrerScript }
-    // WebRTC negotiates its own UDP sockets past any proxy, handing the page the real address.
+    installed.gpc = sync(webView, installed.gpc, settings.sendDoNotTrack) { gpcScript }
     installed.tor = sync(webView, installed.tor, settings.torMode) { torScript }
   }
 

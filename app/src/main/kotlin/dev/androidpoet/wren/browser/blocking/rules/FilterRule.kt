@@ -20,6 +20,10 @@ class FilterRule(
   val excludedDomains: Array<String>?,
   val isException: Boolean,
   val isImportant: Boolean,
+  /** The resource a `$redirect=` rule serves in place of the blocked response, if any. */
+  val redirect: String? = null,
+  /** A `$redirect-rule=`: names the stand-in for a block some other rule makes, blocks nothing. */
+  val redirectOnly: Boolean = false,
 ) {
 
   /**
@@ -51,7 +55,7 @@ class FilterRule(
 
     private val UNSUPPORTED_OPTIONS = hashSetOf(
       "popup", "popunder", "generichide", "ghide", "genericblock", "elemhide", "ehide",
-      "specifichide", "shide", "csp", "redirect", "redirect-rule", "rewrite", "removeparam",
+      "specifichide", "shide", "csp", "rewrite", "removeparam",
       "queryprune", "header", "method", "denyallow", "to", "all", "inline-script",
       "inline-font", "badfilter", "empty", "mp4", "object-subrequest", "webrtc", "cname",
       "strict1p", "strict3p", "permissions", "replace", "urltransform", "urlskip", "ipaddress",
@@ -84,23 +88,49 @@ class FilterRule(
      * anything else. Such rules turn blocking off for the page, which the engine handles by
      * host rather than by pattern.
      */
-    fun documentExceptionHost(raw: String): String? {
-      val line = raw.trim()
+    fun documentExceptionHost(raw: String): String? = hostExceptionFor(raw, DOCUMENT_OPTIONS)
+
+    /**
+     * The host a `@@||host^$generichide` (or `$elemhide`) exception turns generic hiding off
+     * for: lists use it where the generic selectors break a site's layout.
+     */
+    fun genericHideExceptionHost(raw: String): String? = hostExceptionFor(raw, GENERIC_HIDE_OPTIONS)
+
+    private fun hostExceptionFor(raw: String, names: Set<String>): String? {
+      val line = raw.trimSpaces()
       if (!line.startsWith("@@||")) return null
       val dollar = line.lastIndexOf('$')
       if (dollar < 0) return null
       val options = line.substring(dollar + 1).split(',')
-      if (options.none { it == "document" || it == "doc" }) return null
-      if (options.any { it != "document" && it != "doc" && it != "important" }) return null
+      if (options.none { it in names }) return null
+      if (options.any { it !in names && it != "important" }) return null
       val body = line.substring(4, dollar).removeSuffix("^").lowercase()
-      if (body.isEmpty() || body.any { !(it.isLetterOrDigit() || it == '.' || it == '-') }) {
+      if (body.isEmpty() || body.any { !(it.isWordChar() || it == '.' || it == '-') }) {
         return null
       }
       return body
     }
 
+    private val DOCUMENT_OPTIONS = setOf("document", "doc")
+    private val GENERIC_HIDE_OPTIONS = setOf("generichide", "ghide", "elemhide", "ehide")
+
+    /**
+     * The rule a `$badfilter` line cancels, as the text it would have been written as, or null
+     * when the line is not one. Lists cancel another list's rule by repeating it with this
+     * option, so an exact text match is what the authors mean.
+     */
+    fun badFilterTarget(raw: String): String? {
+      val line = raw.trimSpaces()
+      val dollar = line.lastIndexOf('$')
+      if (dollar < 0) return null
+      val options = line.substring(dollar + 1).split(',').filter { it != "badfilter" }
+      if (options.size == line.substring(dollar + 1).split(',').size) return null
+      val body = line.substring(0, dollar)
+      return if (options.isEmpty()) body else body + "$" + options.joinToString(",")
+    }
+
     fun parse(raw: String): FilterRule? {
-      val line = raw.trim()
+      val line = raw.trimSpaces()
       if (!isNetworkRule(line)) return null
       var body = line
       var exception = false
@@ -121,6 +151,8 @@ class FilterRule(
       var positiveTypes = 0
       var negativeTypes = 0
       var important = false
+      var redirect: String? = null
+      var redirectOnly = false
       if (options != null) {
         for (option in options.split(',')) {
           val negated = option.startsWith("~")
@@ -133,6 +165,13 @@ class FilterRule(
             "first-party", "1p" -> party = if (negated) THIRD_PARTY else FIRST_PARTY
             "important" -> important = true
             "match-case" -> Unit
+            // A redirect rule blocks and serves a stand-in; the block part must survive even
+            // where the stand-in is unknown, or the ad request simply goes through.
+            "redirect", "redirect-rule" -> {
+              if (exception || value.isEmpty()) return null
+              redirect = value.substringBefore(':').trimSpaces()
+              redirectOnly = key == "redirect-rule"
+            }
             "domain", "from" -> {
               if (value.isEmpty()) return null
               for (entry in value.split('|')) {
@@ -178,6 +217,8 @@ class FilterRule(
         excludedDomains = excluded?.toTypedArray(),
         isException = exception,
         isImportant = important,
+        redirect = redirect,
+        redirectOnly = redirectOnly,
       )
     }
   }

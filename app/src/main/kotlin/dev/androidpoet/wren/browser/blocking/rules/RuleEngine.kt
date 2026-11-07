@@ -25,6 +25,9 @@ class RuleEngine private constructor(
   private val exceptionsWithoutToken: Array<FilterRule>,
   private val exceptionsByPageDomain: Map<String, Array<FilterRule>>,
   private val exemptPages: CompactHostSet,
+  private val genericHideExemptPages: CompactHostSet,
+  private val importantBlocks: Array<FilterRule>,
+  private val redirects: Array<FilterRule>,
   val size: Int,
 ) {
 
@@ -77,6 +80,10 @@ class RuleEngine private constructor(
   /** True when a `$document` exception turns blocking off for pages on [pageHost]. */
   fun isPageExempt(pageHost: String): Boolean = exemptPages.matchesSuffixOf(pageHost)
 
+  /** True where a list turned generic hiding off (`$generichide`); specific rules still apply. */
+  fun isGenericHideExempt(pageHost: String): Boolean =
+    genericHideExemptPages.matchesSuffixOf(pageHost)
+
   /**
    * The final word on a request. [alreadyBlocked] carries the host list's verdict, which the
    * exceptions here can still overturn; a block rule marked `$important` cannot be overturned.
@@ -88,9 +95,24 @@ class RuleEngine private constructor(
     pageHost: String?,
     alreadyBlocked: Boolean,
     pageRules: PageRules = pageRulesFor(pageHost),
-  ): Boolean {
+  ): Boolean = decide(request, typeMask, thirdParty, pageHost, alreadyBlocked, pageRules) != null
+
+  /**
+   * The rule that blocks this request, [HOST_BLOCK] when the host set did and no exception
+   * objects, or null to let it through. An `$important` rule beats every exception, also when
+   * the host set made the first call.
+   */
+  fun decide(
+    request: RequestContext,
+    typeMask: Int,
+    thirdParty: Boolean,
+    pageHost: String?,
+    alreadyBlocked: Boolean,
+    pageRules: PageRules = pageRulesFor(pageHost),
+  ): FilterRule? {
+    var block: FilterRule = HOST_BLOCK
     if (!alreadyBlocked) {
-      val block = firstMatch(
+      block = firstMatch(
         blocks,
         blocksWithoutToken,
         pageRules.blocks,
@@ -98,10 +120,10 @@ class RuleEngine private constructor(
         typeMask,
         thirdParty,
         pageHost,
-      ) ?: return false
-      if (block.isImportant) return true
+      ) ?: return null
+      if (block.isImportant) return withRedirect(block, request, typeMask, thirdParty, pageHost)
     }
-    return firstMatch(
+    val exception = firstMatch(
       exceptions,
       exceptionsWithoutToken,
       pageRules.exceptions,
@@ -109,7 +131,39 @@ class RuleEngine private constructor(
       typeMask,
       thirdParty,
       pageHost,
-    ) == null
+    ) ?: return withRedirect(block, request, typeMask, thirdParty, pageHost)
+    if (!alreadyBlocked || exception.isImportant) return null
+    for (rule in importantBlocks) {
+      if (rule.appliesTo(typeMask, thirdParty, pageHost) &&
+        rule.pattern.matches(request.url, request.hostStart, request.hostEnd)
+      ) {
+        return rule
+      }
+    }
+    return null
+  }
+
+  /**
+   * The request is blocked, by the host set or by a rule of its own; a redirect rule for the
+   * same URL still decides what the page gets back, because the stand-in is what keeps the
+   * page working. Only blocked requests pay for this scan.
+   */
+  private fun withRedirect(
+    block: FilterRule,
+    request: RequestContext,
+    typeMask: Int,
+    thirdParty: Boolean,
+    pageHost: String?,
+  ): FilterRule {
+    if (block.redirect != null) return block
+    for (rule in redirects) {
+      if (rule.appliesTo(typeMask, thirdParty, pageHost) &&
+        rule.pattern.matches(request.url, request.hostStart, request.hostEnd)
+      ) {
+        return rule
+      }
+    }
+    return block
   }
 
   private fun firstMatch(
@@ -160,14 +214,28 @@ class RuleEngine private constructor(
   /** Accumulates list lines, then files every rule under its best token. */
   class Builder {
     private val rules = ArrayList<FilterRule>()
+    private val sources = ArrayList<String>()
     private val exemptHosts = HashSet<String>()
+    private val genericHideHosts = HashSet<String>()
+    private val badFilters = HashSet<String>()
 
     fun add(line: String): Builder {
       FilterRule.documentExceptionHost(line)?.let {
         exemptHosts.add(it)
         return this
       }
-      FilterRule.parse(line)?.let(rules::add)
+      FilterRule.genericHideExceptionHost(line)?.let {
+        genericHideHosts.add(it)
+        return this
+      }
+      FilterRule.badFilterTarget(line)?.let {
+        badFilters.add(it)
+        return this
+      }
+      FilterRule.parse(line)?.let {
+        rules.add(it)
+        sources.add(line.trimSpaces())
+      }
       return this
     }
 
@@ -177,6 +245,15 @@ class RuleEngine private constructor(
     }
 
     fun build(): RuleEngine {
+      if (badFilters.isNotEmpty()) {
+        val kept = rules.indices.filter { sources[it] !in badFilters }
+        val survivors = kept.map(rules::get)
+        val survivorSources = kept.map(sources::get)
+        rules.clear()
+        rules.addAll(survivors)
+        sources.clear()
+        sources.addAll(survivorSources)
+      }
       val candidates = rules.map { Tokeniser.candidateTokens(it.pattern) }
       val frequency = HashMap<Int, Int>()
       for (tokens in candidates) {
@@ -189,6 +266,7 @@ class RuleEngine private constructor(
       val blockByDomain = HashMap<String, MutableList<FilterRule>>()
       val exceptionByDomain = HashMap<String, MutableList<FilterRule>>()
       rules.forEachIndexed { i, rule ->
+        if (rule.redirectOnly) return@forEachIndexed
         val tokens = candidates[i]
         var best = 0
         var bestFrequency = Int.MAX_VALUE
@@ -223,13 +301,27 @@ class RuleEngine private constructor(
         exceptionsWithoutToken = exceptionRest.toTypedArray(),
         exceptionsByPageDomain = exceptionByDomain.mapValues { it.value.toTypedArray() },
         exemptPages = CompactHostSet.of(exemptHosts),
-        size = rules.size + exemptHosts.size,
+        genericHideExemptPages = CompactHostSet.of(genericHideHosts),
+        importantBlocks = rules.filter { it.isImportant && !it.isException }.toTypedArray(),
+        redirects = rules.filter { it.redirect != null }.toTypedArray(),
+        size = rules.size + exemptHosts.size + genericHideHosts.size,
       )
     }
   }
 
   companion object {
     val EMPTY: RuleEngine = Builder().build()
+
+    /** Stands for "the host set blocked it" where a rule is expected. */
+    val HOST_BLOCK = FilterRule(
+      pattern = UrlPattern.parse(""),
+      types = RequestType.ALL,
+      party = FilterRule.ANY_PARTY,
+      domains = null,
+      excludedDomains = null,
+      isException = false,
+      isImportant = false,
+    )
 
     fun parse(lines: Sequence<String>): RuleEngine = Builder().addAll(lines).build()
   }

@@ -75,4 +75,25 @@ class CompactHostSetTest {
     assertThat(bundled.matchesSuffixOf("www.wikipedia.org")).isFalse()
     assertThat(bundled.matchesSuffixOf("fonts.gstatic.com")).isFalse()
   }
+
+  @Test
+  fun `the bundled host set names no first-party sites`() {
+    // Cosmetic lines (`site.com##.ad`) once leaked their site into the set; every embed from
+    // these sites was then refused on every other page.
+    val file = File("src/main/assets/hosts.bin")
+    val bundled = file.inputStream().buffered().use(CompactHostSet::load)
+    for (host in listOf(
+      "www.youtube.com",
+      "www.paypal.com",
+      "disqus.com",
+      "accounts.google.com",
+      "www.instagram.com",
+      "www.nytimes.com",
+      "www.reddit.com",
+      "media.giphy.com",
+    )) {
+      assertThat(bundled.matchesSuffixOf(host)).isFalse()
+    }
+    assertThat(bundled.matchesSuffixOf("ads.doubleclick.net")).isTrue()
+  }
 }

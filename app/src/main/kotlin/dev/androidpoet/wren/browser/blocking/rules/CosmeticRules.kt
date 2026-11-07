@@ -104,15 +104,19 @@ class CosmeticRules private constructor(
     /** Adds one list line if it is a hiding rule or scriptlet the engine can apply. */
     fun add(line: String): Boolean {
       val separator = separatorIn(line) ?: return false
+      // Procedural (`#?#`), style (`#$#`) and snippet (`#%#`) rules are cosmetic lines the
+      // engine cannot apply; they are recognised so they never fall through to the host or
+      // pattern parsers, and dropped here.
+      if (separator.second != "##" && separator.second != "#@#") return false
       val isException = separator.second == "#@#"
       val domains = line.substring(0, separator.first)
-      val body = line.substring(separator.first + separator.second.length).trim()
+      val body = line.substring(separator.first + separator.second.length).trimSpaces()
       if (body.isEmpty() || domains.contains('*')) return false
       val included = ArrayList<String>()
       val excluded = ArrayList<String>()
       if (domains.isNotEmpty()) {
         for (entry in domains.split(',')) {
-          val domain = entry.trim().lowercase()
+          val domain = entry.trimSpaces().lowercase()
           if (domain.isEmpty()) continue
           if (domain.startsWith("~")) excluded.add(domain.substring(1)) else included.add(domain)
         }
@@ -131,6 +135,9 @@ class CosmeticRules private constructor(
       isException: Boolean,
     ): Boolean {
       if (!isPlausibleSelector(selector)) return false
+      // `##^` is an HTML filter and `:has-text()` and friends are procedural: the style engine
+      // rejects both, and one rejected selector voids every rule grouped with it on the page.
+      if (selector[0] == '^' || isProcedural(selector)) return false
       count++
       when {
         isException && included.isEmpty() -> genericExceptions.add(selector)
@@ -156,8 +163,8 @@ class CosmeticRules private constructor(
       isException: Boolean,
     ): Boolean {
       if (!body.endsWith(")")) return false
-      val call = body.substring(4, body.length - 1).trim()
-      val name = call.substringBefore(',').trim()
+      val call = body.substring(4, body.length - 1).trimSpaces()
+      val name = call.substringBefore(',').trimSpaces().removeSuffix(".js")
       // An empty exception call turns every scriptlet off for the site.
       if (name.isNotEmpty() && name !in SUPPORTED_SCRIPTLETS) return false
       if (included.isEmpty()) return false
@@ -218,7 +225,50 @@ class CosmeticRules private constructor(
       "rmnt", "replace-node-text", "rpnt", "noeval", "noeval-if", "nowebrtc", "nobab", "nofab",
       "popads-dummy", "set-cookie", "set-local-storage-item", "set-session-storage-item",
       "remove-cookie", "cookie-remover", "href-sanitizer", "no-cookie-if",
+      // Aliases the lists use for the same functions; the library maps them back.
+      "trusted-rpfr", "trusted-rpnt", "trusted-replace-node-text", "trusted-set",
+      "trusted-set-constant", "trusted-set-cookie", "trusted-set-local-storage-item",
+      "trusted-set-session-storage-item", "trusted-prevent-xhr", "trusted-prevent-fetch",
+      "prevent-setTimeout", "prevent-setInterval", "prevent-addEventListener",
+      "prevent-window-open", "prevent-eval-if", "adjust-setTimeout", "adjust-setInterval",
+      "no-requestAnimationFrame-if", "norafif", "set-attr", "refresh-defuser",
+      "prevent-refresh", "disable-newtab-links", "set-cookie-reload",
     )
+
+    /**
+     * Cosmetic separators, longest first so `#@?#` is not read as `#@#`. Any of them marks a
+     * line that names a site, which is why the host parser must never see such a line.
+     */
+    private val SEPARATORS = arrayOf(
+      "#@$?#", "#$?#", "#@?#", "#@$#", "#@%#", "#@#", "#?#", "#$#", "#%#", "##",
+    )
+
+    /** Procedural operators uBlock applies in script; a style sheet rejects them all. */
+    private val PROCEDURAL_NAMES = hashSetOf(
+      "has-text", "matches-css", "matches-css-before", "matches-css-after", "xpath", "upward",
+      "remove", "min-text-length", "matches-path", "watch-attr", "matches-attr", "matches-prop",
+      "others", "if", "if-not", "style", "remove-attr", "remove-class", "matches-media", "shadow",
+      "contains",
+    )
+
+    /**
+     * True when any `:name` in the selector is a procedural operator. A hand scan rather than
+     * a regex: this runs once per selector of every list, and a matcher per call is what made
+     * the cold start wait.
+     */
+    fun isProcedural(selector: String): Boolean {
+      var colon = selector.indexOf(':')
+      while (colon >= 0) {
+        var end = colon + 1
+        while (end < selector.length && (selector[end].isWordChar() || selector[end] == '-')) {
+          end++
+        }
+        val name = selector.substring(colon + 1, end)
+        if (name.startsWith("-abp-") || name in PROCEDURAL_NAMES) return true
+        colon = selector.indexOf(':', end)
+      }
+      return false
+    }
 
     /** The id or class a generic selector hinges on, lowercased, or null when it has none. */
     fun genericKeyOf(selector: String): String? {
@@ -231,7 +281,7 @@ class CosmeticRules private constructor(
       return selector.substring(1, end).lowercase()
     }
 
-    private fun isIdentChar(c: Char): Boolean = c.isLetterOrDigit() || c == '_' || c == '-'
+    private fun isIdentChar(c: Char): Boolean = c.isWordChar() || c == '_' || c == '-'
 
     /** True for lines carrying a hiding rule or scriptlet: `domains##selector` and kin. */
     fun isCosmeticLine(line: String): Boolean = separatorIn(line) != null
@@ -239,11 +289,10 @@ class CosmeticRules private constructor(
     private fun separatorIn(line: String): Pair<Int, String>? {
       val hash = line.indexOf('#')
       if (hash < 0) return null
-      return when {
-        line.startsWith("#@#", hash) -> hash to "#@#"
-        line.startsWith("##", hash) -> hash to "##"
-        else -> null
+      for (separator in SEPARATORS) {
+        if (line.startsWith(separator, hash)) return hash to separator
       }
+      return null
     }
 
     /**

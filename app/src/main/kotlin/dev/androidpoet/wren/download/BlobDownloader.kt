@@ -43,7 +43,12 @@ class BlobDownloader @Inject constructor(
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-  private class Transfer(val file: File, val stream: OutputStream, var bytes: Long = 0L)
+  private class Transfer(
+    val file: File,
+    val stream: OutputStream,
+    val apkAllowed: Boolean,
+    var bytes: Long = 0L,
+  )
 
   /** Only transfers this side started are accepted; unknown ids from page JS are ignored. */
   private val transfers = ConcurrentHashMap<String, Transfer>()
@@ -65,6 +70,31 @@ class BlobDownloader @Inject constructor(
     ) { _, message, _, _, _ ->
       if (message.type == WebMessageCompat.TYPE_STRING) message.data?.let(::onMessage)
     }
+    // The channel object is taken off `window` before any page script runs, and reached
+    // afterwards through a DOM event whose name no page can enumerate; a global would name
+    // this browser to every page.
+    if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+      runCatching {
+        WebViewCompat.addDocumentStartJavaScript(webView, captureScript, ALL_ORIGINS)
+      }.onFailure { Timber.w(it, "could not hide the blob channel") }
+    }
+  }
+
+  private val captureScript: String by lazy {
+    val name = JSONObject.quote(BRIDGE_NAME)
+    val event = JSONObject.quote(EVENT_NAME)
+    """
+      (function () {
+        try {
+          var sink = window[$name];
+          delete window[$name];
+          if (!sink) return;
+          document.addEventListener($event, function (e) {
+            try { sink.postMessage(String(e.detail)); } catch (ignored) {}
+          });
+        } catch (ignored) {}
+      })();
+    """.trimIndent()
   }
 
   private fun onMessage(payload: String) {
@@ -77,16 +107,22 @@ class BlobDownloader @Inject constructor(
     }
   }
 
-  fun download(webView: WebView, blobUrl: String, mimeType: String?) {
+  /**
+   * [apkAllowed] is whether the user already confirmed an app download for this URL: the type
+   * the page's script reports afterwards may not upgrade a file to an app package on its own.
+   */
+  fun download(webView: WebView, blobUrl: String, mimeType: String?, apkAllowed: Boolean) {
     if (!isSupported) {
       Timber.w("blob downloads need a WebView with message listeners")
       return
     }
     val id = UUID.randomUUID().toString()
     val file = File(application.cacheDir, "blob-" + id)
-    transfers[id] = Transfer(file, file.outputStream().buffered())
+    transfers[id] = Transfer(file, file.outputStream().buffered(), apkAllowed)
     val script = READER_SCRIPT
       .replace("__ID__", id)
+      .replace("__NAME__", JSONObject.quote(BRIDGE_NAME))
+      .replace("__EVENT__", JSONObject.quote(EVENT_NAME))
       // Both strings come from the page; quoting them as JSON is what keeps them strings.
       .replace("__URL__", JSONObject.quote(blobUrl))
       .replace("__MIME__", JSONObject.quote(mimeType.orEmpty()))
@@ -108,7 +144,12 @@ class BlobDownloader @Inject constructor(
     scope.launch {
       runCatching {
         transfer.stream.close()
-        val mime = mimeType.ifBlank { "application/octet-stream" }.substringBefore(';')
+        var mime = mimeType.ifBlank { "application/octet-stream" }.substringBefore(';').trim()
+        if (mime.equals(AndroidAppFile.MIME_TYPE, ignoreCase = true) && !transfer.apkAllowed) {
+          // The page's script, not the download listener, called this an app; it is saved as
+          // plain bytes rather than as something a file manager offers to install.
+          mime = "application/octet-stream"
+        }
         val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "bin"
         val name = "download-" + System.currentTimeMillis() + "." + extension
         val uri = publish(transfer.file, name, mime) ?: error("could not publish")
@@ -142,14 +183,22 @@ class BlobDownloader @Inject constructor(
     DownloadsFolder.publish(application, source, displayName, mimeType)
 
   private companion object {
-    const val BRIDGE_NAME = "WrenBlobSink"
+    /** Random per process; see [install]. Must be a valid identifier. */
+    val BRIDGE_NAME: String = "b" + UUID.randomUUID().toString().replace("-", "")
+    val EVENT_NAME: String = "e" + UUID.randomUUID().toString().replace("-", "")
     val ALL_ORIGINS = setOf("*")
     const val MAX_BYTES = 512L * 1024 * 1024
 
     val READER_SCRIPT = """
       (function () {
         var id = '__ID__';
-        function post(m) { m.id = id; WrenBlobSink.postMessage(JSON.stringify(m)); }
+        var sink = window[__NAME__];
+        function post(m) {
+          m.id = id;
+          var text = JSON.stringify(m);
+          if (sink) { sink.postMessage(text); return; }
+          document.dispatchEvent(new CustomEvent(__EVENT__, { detail: text }));
+        }
         try {
           fetch(__URL__).then(function (r) { return r.blob(); }).then(function (blob) {
             var CHUNK = 512 * 1024;

@@ -13,6 +13,7 @@ import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
 import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import dev.androidpoet.wren.BuildConfig
 import dev.androidpoet.wren.settings.SettingsStore
@@ -31,6 +32,7 @@ import javax.inject.Singleton
 class WebViewConfigurator @Inject constructor(
   private val settings: SettingsStore,
   private val privateProfile: PrivateProfile,
+  private val torProfile: TorProfile,
 ) {
 
   @SuppressLint("SetJavaScriptEnabled")
@@ -38,6 +40,16 @@ class WebViewConfigurator @Inject constructor(
     // Remote debugging over chrome://inspect. Debug builds only - this exposes page contents
     // to any adb client, so it must never ship enabled.
     WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
+
+    // The platform Autofill service is handed every page's domain along with its fields, and
+    // Google's asks its servers from the real address. A private or Tor page shows it nothing.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      webView.importantForAutofill = if (isPrivate || settings.torMode) {
+        View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
+      } else {
+        View.IMPORTANT_FOR_AUTOFILL_AUTO
+      }
+    }
 
     webView.settings.apply {
       javaScriptEnabled = settings.javaScriptEnabled
@@ -84,8 +96,9 @@ class WebViewConfigurator @Inject constructor(
       // mixed resource outright breaks the images on a long tail of older sites for no gain.
       mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
 
-      userAgentString = userAgent(defaultUserAgent = userAgentString)
+      userAgentString = userAgentFor(webView, desktop = settings.desktopMode)
     }
+    applyUserAgentMetadata(webView, desktop = settings.desktopMode)
 
     logSupportOnce()
     applyRenderingHints(webView)
@@ -178,7 +191,8 @@ class WebViewConfigurator @Inject constructor(
    */
   private fun applySpeculativeLoading(webView: WebView, isPrivate: Boolean) {
     if (!WebViewFeature.isFeatureSupported(WebViewFeature.SPECULATIVE_LOADING)) return
-    val status = if (settings.preloadPages && !isPrivate) {
+    // Off under Tor as well: a prerender tells the exit about pages never opened.
+    val status = if (settings.preloadPages && !isPrivate && !settings.torMode) {
       WebSettingsCompat.SPECULATIVE_LOADING_PRERENDER_ENABLED
     } else {
       WebSettingsCompat.SPECULATIVE_LOADING_DISABLED
@@ -187,15 +201,17 @@ class WebViewConfigurator @Inject constructor(
   }
 
   fun applyCookiePolicy(webView: WebView, isPrivate: Boolean) {
-    if (isPrivate && privateProfile.isAttached(webView)) {
-      // Cookies land in the private profile's own jar, which dies with the session. The
-      // default manager is never touched from here: its settings are global to every tab.
-      val jar = privateProfile.cookieManager()
-      if (jar != null) {
-        jar.setAcceptCookie(true)
-        jar.setAcceptThirdPartyCookies(webView, !settings.blockThirdPartyCookies)
-        return
-      }
+    // Cookies land in the private or Tor profile's own jar, which dies with the session. The
+    // default manager is never touched from here: its settings are global to every tab.
+    val jar = when {
+      isPrivate && privateProfile.isAttached(webView) -> privateProfile.cookieManager()
+      torProfile.isAttached(webView) -> torProfile.cookieManager()
+      else -> null
+    }
+    if (jar != null) {
+      jar.setAcceptCookie(true)
+      jar.setAcceptThirdPartyCookies(webView, !settings.blockThirdPartyCookies)
+      return
     }
     CookieManager.getInstance().apply {
       setAcceptCookie(!isPrivate)
@@ -203,7 +219,13 @@ class WebViewConfigurator @Inject constructor(
     }
   }
 
-  /** Stops WebView broadcasting the app's package name to every server it talks to. */
+  /**
+   * Asks WebView not to send the app's package name (`X-Requested-With`) to any server. The
+   * engine only honours an empty allow-list once its deprecation of the header has rolled
+   * out; on every WebView measured so far (up to 141) the header still goes to every site,
+   * and nothing an app can call changes that. The call stays so the day the engine flips,
+   * Wren is already quiet. The limit is documented in the README.
+   */
   private fun stripIdentifyingHeaders(webView: WebView) {
     if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
       runCatching {
@@ -222,31 +244,58 @@ class WebViewConfigurator @Inject constructor(
     webView.settings.javaScriptEnabled =
       settings.javaScriptEnabled && !settings.isJsDisabledFor(host)
     val desktop = settings.desktopMode || settings.isDesktopSite(host)
-    val wanted = if (desktop) {
-      DESKTOP_USER_AGENT
-    } else {
-      WebSettings.getDefaultUserAgent(webView.context).replace("; wv", "")
-    }
+    val wanted = userAgentFor(webView, desktop)
     if (webView.settings.userAgentString != wanted) {
       webView.settings.userAgentString = wanted
+      applyUserAgentMetadata(webView, desktop)
     }
   }
 
-  /** Headers sent with every top-level navigation the omnibox starts. */
-  fun requestHeaders(): Map<String, String> =
-    if (settings.sendDoNotTrack) mapOf("DNT" to "1", "Sec-GPC" to "1") else emptyMap()
+  /** Chrome's reduced user agent, mobile or desktop, on this device's engine version. */
+  private fun userAgentFor(webView: WebView, desktop: Boolean): String {
+    val major = chromeMajor(webView)
+    return if (desktop) UserAgents.desktop(major) else UserAgents.mobile(major)
+  }
 
-  private fun userAgent(defaultUserAgent: String): String = when {
-    settings.desktopMode -> DESKTOP_USER_AGENT
-    // Drop the "; wv" WebView marker. Plenty of sites branch on it and serve a stripped-down
-    // page or an app-install interstitial; without it they serve their normal mobile site,
-    // which is most of the gap between "a WebView" and "a browser".
-    else -> defaultUserAgent.replace("; wv", "")
+  private fun applyUserAgentMetadata(webView: WebView, desktop: Boolean) {
+    if (!WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) return
+    runCatching {
+      WebSettingsCompat.setUserAgentMetadata(
+        webView.settings,
+        UserAgents.metadata(chromeMajor(webView), desktop, engineVersion(webView)),
+      )
+    }.onFailure { Timber.w(it, "could not set user agent metadata") }
+  }
+
+  private var cachedChromeMajor = 0
+
+  private fun chromeMajor(webView: WebView): Int {
+    if (cachedChromeMajor != 0) return cachedChromeMajor
+    val default = runCatching { WebSettings.getDefaultUserAgent(webView.context) }.getOrNull()
+    return (UserAgents.chromeMajor(engineVersion(webView), default) ?: FALLBACK_CHROME_MAJOR)
+      .also { cachedChromeMajor = it }
+  }
+
+  private fun engineVersion(webView: WebView): String? = runCatching {
+    WebViewCompat.getCurrentWebViewPackage(webView.context)?.versionName
+  }.getOrNull()
+
+  /** Headers sent with every top-level navigation the omnibox starts. */
+  fun requestHeaders(): Map<String, String> = buildMap {
+    if (settings.sendDoNotTrack) {
+      put("DNT", "1")
+      put("Sec-GPC", "1")
+    }
+    // The Tor profile sets this for every request on engines with custom headers; this covers
+    // the document on the ones without.
+    if (settings.torMode) put(TorProfile.ACCEPT_LANGUAGE, TorProfile.ENGLISH)
+    // Extra headers win over the engine's own, so the document request at least carries no
+    // package name; subresources still do (see [stripIdentifyingHeaders]).
+    put("X-Requested-With", "")
   }
 
   private companion object {
-    const val DESKTOP_USER_AGENT =
-      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " +
-        "Chrome/125.0.0.0 Safari/537.36"
+    /** Only reached when neither the WebView package nor its default UA names a version. */
+    const val FALLBACK_CHROME_MAJOR = 133
   }
 }

@@ -62,6 +62,7 @@ import dev.androidpoet.wren.browser.ReaderMode
 import dev.androidpoet.wren.browser.RenderingMode
 import dev.androidpoet.wren.browser.SpeculativeLoader
 import dev.androidpoet.wren.browser.TabManager
+import dev.androidpoet.wren.browser.TorProfile
 import dev.androidpoet.wren.browser.UrlFormatter
 import dev.androidpoet.wren.browser.WebViewConfigurator
 import dev.androidpoet.wren.browser.WebViewFreshness
@@ -154,6 +155,12 @@ class BrowserActivity :
 
   @Inject
   lateinit var privateProfile: PrivateProfile
+
+  @Inject
+  lateinit var torProfile: TorProfile
+
+  /** Whether the live pages belong to the Tor profile; they must follow the mode. */
+  private var pagesOnTor = false
 
   @Inject
   lateinit var filterListManager: FilterListManager
@@ -332,7 +339,12 @@ class BrowserActivity :
     registerBackHandling()
     if (savedInstanceState == null) warnIfWebViewStale()
 
-    if (savedInstanceState == null) privateProfile.destroy()
+    if (savedInstanceState == null) {
+      privateProfile.destroy()
+      torProfile.destroyAll()
+    }
+    pagesOnTor = settings.torMode
+    if (pagesOnTor) torProfile.enterEnglish()
     whenNetworkReady {
       attachWebView(viewModel.tabManager.ensureTab())
       handleIntent(intent, isColdStart = true)
@@ -422,6 +434,8 @@ class BrowserActivity :
     val tabId = tab.id
     if (tab.isPrivate && privateProfile.attach(created)) {
       privateProfile.serviceWorkerController()?.let(serviceWorkerBlocker::install)
+    } else if (settings.torMode && torProfile.attach(created)) {
+      torProfile.serviceWorkerController()?.let(serviceWorkerBlocker::install)
     }
     created.layoutParams = ViewGroup.LayoutParams(
       ViewGroup.LayoutParams.MATCH_PARENT,
@@ -451,7 +465,7 @@ class BrowserActivity :
       onIcon = { pageUrl, icon ->
         // A favicon file is named after its host, which is a visited-site record on disk.
         val isPrivate = viewModel.tabManager.tab(tabId)?.isPrivate == true
-        if (pageUrl != null && !isPrivate) {
+        if (pageUrl != null && !isPrivate && !settings.torMode) {
           lifecycleScope.launch { faviconStore.remember(pageUrl, icon) }
         }
       },
@@ -939,6 +953,10 @@ class BrowserActivity :
       return
     }
     val view = liveWebViews[tabId] ?: return
+    if (!torController.isNetworkReady) {
+      whenNetworkReady { loadUrlInTab(tabId, url) }
+      return
+    }
     val routed = navigationPolicy(url)
     viewModel.tabManager.update(tabId, url = routed)
     view.loadUrl(routed, configurator.requestHeaders())
@@ -952,6 +970,12 @@ class BrowserActivity :
 
   private fun loadUrl(requested: String) {
     val view = webView ?: return
+    // Tor just switched on and the proxy is not in front of WebView yet: whatever asked for
+    // this load (a shared link, a long press, a popup) waits for it rather than going direct.
+    if (!torController.isNetworkReady) {
+      whenNetworkReady { if (webView === view) loadUrl(requested) }
+      return
+    }
     val url = navigationPolicy(requested)
     viewModel.tabManager.updateActive(url = url)
     renderHome(url)
@@ -1402,7 +1426,7 @@ class BrowserActivity :
     lifecycleScope.launch {
       // A failed start seals the route with a dead-end proxy, so this still returns; what it
       // never does is run the load before something sits in front of WebView.
-      torController.state.first { it.proxyInstalled || !settings.torMode }
+      torController.state.first(torController::isReady)
       block()
     }
   }
@@ -1415,14 +1439,34 @@ class BrowserActivity :
       else -> getString(R.string.tor)
     }
     alpha = if (state.isOn) 1f else DIM_PILL_ALPHA
-    val previous = lastTorStatus
     lastTorStatus = state.status
-    // A page that loaded while the route was changing hands is worth fetching again on the
-    // route the user asked for: the circuit just opened, or the direct path just returned.
-    val cameBack = previous == TorStatus.STOPPING && state.status == TorStatus.OFF
-    val routeChanged = previous != null && previous != state.status &&
-      (state.status == TorStatus.ON || cameBack)
-    if (routeChanged && !isHomeVisible) webView?.reload()
+    syncPagesWithRoute()
+  }
+
+  /**
+   * Pages follow the route, whichever screen flipped it. Tor on: every page is retired, since
+   * one already running would keep talking direct while Tor starts and carries the clear-net
+   * identity; the active tab returns on the Tor profile once the proxy fronts WebView. Tor off:
+   * the pages opened over Tor are closed with their profile, never reloaded over the direct
+   * route, because that one request would join the Tor session to the real address.
+   */
+  private fun syncPagesWithRoute() {
+    val onTor = settings.torMode
+    if (onTor == pagesOnTor) return
+    pagesOnTor = onTor
+    if (onTor) {
+      retireAllWebViews()
+      torProfile.enterEnglish()
+      whenNetworkReady { restoreActiveTab() }
+    } else {
+      discardAllWebViews()
+      torProfile.leaveEnglish()
+      torProfile.rotate()
+      viewModel.tabManager.closeAll()
+      restoreActiveTab()
+      toast(R.string.tor_off_pages_closed)
+    }
+    applySecureFlag()
   }
 
   private fun setTorEnabled(enabled: Boolean) {
@@ -1430,19 +1474,15 @@ class BrowserActivity :
       toast(R.string.tor_unsupported)
       return
     }
-    torController.setEnabled(enabled)
-    if (enabled) {
-      // A page already running would keep talking direct while Tor starts. Every page is
-      // retired with its history, and the active one returns once the proxy fronts WebView.
-      retireAllWebViews()
-      whenNetworkReady { restoreActiveTab() }
-    } else {
-      liveWebViews.forEach { (id, view) ->
-        applySiteSettings(view, viewModel.tabManager.tab(id))
-        privacyScripts.updateFor(view)
-      }
+    if (!enabled && liveWebViews.isNotEmpty() && !isHomeVisible) {
+      AlertDialog.Builder(this)
+        .setMessage(R.string.tor_off_confirm)
+        .setPositiveButton(R.string.tor_off_action) { _, _ -> torController.setEnabled(false) }
+        .setNegativeButton(android.R.string.cancel, null)
+        .show()
+      return
     }
-    renderTor(torController.state.value)
+    torController.setEnabled(enabled)
   }
 
   private fun torMenuLabel(): String = when (torController.state.value.status) {
@@ -1466,8 +1506,12 @@ class BrowserActivity :
     AlertDialog.Builder(this)
       .setMessage(R.string.tor_new_identity_confirm)
       .setPositiveButton(R.string.tor_new_identity) { _, _ ->
-        torController.newIdentity()
-        clearBrowsingData(R.string.tor_new_identity_done)
+        lifecycleScope.launch {
+          val rotated = torController.newIdentity()
+          clearBrowsingData(
+            if (rotated) R.string.tor_new_identity_done else R.string.tor_new_identity_failed,
+          )
+        }
       }
       .setNegativeButton(android.R.string.cancel, null)
       .show()
@@ -1559,12 +1603,20 @@ class BrowserActivity :
     }
   }
 
+  /**
+   * The address the user is looking at: the committed one. [BrowserTab.url] moves at the start
+   * of a navigation, so a page that begins a slow load elsewhere could otherwise put the other
+   * site's name on the lock panel, into a share sheet or on a bookmark while still on screen.
+   */
+  private fun shownUrlOf(tab: BrowserTab): String = tab.committedUrl ?: tab.url
+
   override fun siteSecurityInfo(): SiteSecurityInfo? {
     val tab = viewModel.tabManager.activeTab() ?: return null
-    val host = HostMatcher.hostOf(tab.url) ?: return null
+    val url = shownUrlOf(tab)
+    val host = HostMatcher.hostOf(url) ?: return null
     return SiteSecurityInfo(
       host = host,
-      isSecure = UrlFormatter.isSecure(tab.url),
+      isSecure = UrlFormatter.isSecure(url),
       // Null for a page served over http, which is exactly what the panel should show.
       certificate = webView?.certificate,
       blockedHosts = blockStats.hostsFor(tab.id),
@@ -1637,21 +1689,22 @@ class BrowserActivity :
   /** Pins the current site to the launcher, favicon and all where one is cached. */
   private fun addToHomeScreen() {
     val tab = viewModel.tabManager.activeTab() ?: return
-    if (tab.url == UrlFormatter.NEW_TAB_URL) return
-    val label = tab.title.ifBlank { UrlFormatter.prettyHost(tab.url) }
+    val url = shownUrlOf(tab)
+    if (url == UrlFormatter.NEW_TAB_URL) return
+    val label = tab.title.ifBlank { UrlFormatter.prettyHost(url) }
     val open = Intent(this, BrowserActivity::class.java).apply {
       action = Intent.ACTION_VIEW
-      data = tab.url.toUri()
+      data = url.toUri()
     }
     lifecycleScope.launch {
-      val icon = faviconStore.iconFor(tab.url)
+      val icon = faviconStore.iconFor(url)
         ?.let { androidx.core.graphics.drawable.IconCompat.createWithBitmap(it) }
         ?: androidx.core.graphics.drawable.IconCompat.createWithResource(
           this@BrowserActivity,
           R.mipmap.ic_launcher,
         )
       val shortcut = androidx.core.content.pm.ShortcutInfoCompat
-        .Builder(this@BrowserActivity, tab.url)
+        .Builder(this@BrowserActivity, url)
         .setShortLabel(label)
         .setIcon(icon)
         .setIntent(open)
@@ -1762,6 +1815,8 @@ class BrowserActivity :
 
   /** Everything non-private that is open, written into the current session's record. */
   private fun persistCurrentSession() {
+    // A Tor session is never written down; the record on disk stays what it was before.
+    if (settings.torMode) return
     val pages = viewModel.tabManager.snapshots.value
       .filter { !it.isPrivate && it.url != UrlFormatter.NEW_TAB_URL }
       .map { dev.androidpoet.wren.core.model.SessionTab(url = it.url, title = it.title) }
@@ -1771,6 +1826,7 @@ class BrowserActivity :
 
   /** On a fresh process, the current session's pages come back instead of an empty browser. */
   private fun restoreSessionIfEmpty() {
+    if (settings.torMode) return
     if (viewModel.tabManager.size > 1) return
     if (viewModel.tabManager.activeTab()?.url != UrlFormatter.NEW_TAB_URL) return
     lifecycleScope.launch {
@@ -1876,7 +1932,7 @@ class BrowserActivity :
   }
 
   private fun showQrCode() {
-    val url = viewModel.tabManager.activeTab()?.url.orEmpty()
+    val url = viewModel.tabManager.activeTab()?.let(::shownUrlOf).orEmpty()
     if (url.isBlank() || url == UrlFormatter.NEW_TAB_URL) return
     val size = (resources.displayMetrics.density * QR_SIZE_DP).toInt()
     val bitmap = QrCode.encode(url, size) ?: return
@@ -1894,8 +1950,9 @@ class BrowserActivity :
 
   private fun shareCurrentPage() {
     val tab = viewModel.tabManager.activeTab() ?: return
-    if (tab.url == UrlFormatter.NEW_TAB_URL) return
-    shareUrl(tab.url, tab.title)
+    val url = shownUrlOf(tab)
+    if (url == UrlFormatter.NEW_TAB_URL) return
+    shareUrl(url, tab.title)
   }
 
   private fun shareUrl(url: String, subject: String) {
@@ -1922,6 +1979,7 @@ class BrowserActivity :
       // Every page goes, private ones first so their profile can be deleted underneath them.
       discardAllWebViews()
       privateProfile.destroy()
+      if (settings.torMode) torProfile.rotate()
       viewModel.tabManager.closeAll()
       restoreActiveTab()
       toast(doneMessage)
@@ -2017,7 +2075,12 @@ class BrowserActivity :
     if (url.startsWith("blob:")) {
       // A blob lives only in the page's JS heap; it is read out through the page itself.
       withDownloadsAccess {
-        blobDownloader.download(source, url, mimeType)
+        blobDownloader.download(
+          source,
+          url,
+          mimeType,
+          apkAllowed = AndroidAppFile.matches(url, contentDisposition, mimeType),
+        )
         toast(R.string.download_started)
       }
       return
@@ -2053,9 +2116,27 @@ class BrowserActivity :
           flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
       } else {
-        Intent(Intent.ACTION_VIEW, url.toUri())
+        // Only activities that expect web content may answer a link.
+        Intent(Intent.ACTION_VIEW, url.toUri()).apply {
+          addCategory(Intent.CATEGORY_BROWSABLE)
+          flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
       }
     }.getOrNull() ?: return false
+    if (settings.torMode) {
+      // Another app fetches whatever it is handed from the real address; the user decides.
+      AlertDialog.Builder(this)
+        .setTitle(R.string.tor_external_app_title)
+        .setMessage(R.string.tor_external_app_message)
+        .setPositiveButton(R.string.tor_external_app_open) { _, _ -> launchExternal(intent, url) }
+        .setNegativeButton(android.R.string.cancel, null)
+        .show()
+      return true
+    }
+    return launchExternal(intent, url)
+  }
+
+  private fun launchExternal(intent: Intent, url: String): Boolean {
     return try {
       startActivity(intent)
       true
@@ -2217,10 +2298,10 @@ class BrowserActivity :
     chrome.addView(binding.topBar, navIndex + 1)
   }
 
-  /** A private tab must not appear in screenshots or the recents preview. */
+  /** A private or Tor page must not appear in screenshots or the recents preview. */
   private fun applySecureFlag() {
     val isPrivate = viewModel.tabManager.activeTab()?.isPrivate == true
-    if (isPrivate || appLock.needsSecureWindow) {
+    if (isPrivate || settings.torMode || appLock.needsSecureWindow) {
       window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
     } else {
       window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)

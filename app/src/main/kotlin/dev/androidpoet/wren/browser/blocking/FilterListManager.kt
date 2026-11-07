@@ -20,6 +20,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -62,14 +63,30 @@ class FilterListManager @Inject constructor(
   fun start() {
     scope.launch {
       legacyCacheFile().delete()
-      if (!rebuild()) withContext(Dispatchers.Default) { blocklist.preload() }
+      // The bundled snapshot first: it is the smaller parse, and until some engine exists the
+      // first page's requests go through unfiltered. The cached lists then replace it.
+      withContext(Dispatchers.Default) { blocklist.preload() }
+      rebuild()
+      // A cached list fetched by an older build may lack what this build reads out of it, such
+      // as the files a list includes; one refetch brings every list up to the current shape.
+      val reshaped = settings.filterListFormat != LIST_FORMAT
       val stale = enabledIds().filter {
-        System.currentTimeMillis() - settings.filterListUpdatedAt(it) > REFRESH_INTERVAL_MS
+        reshaped || System.currentTimeMillis() - settings.filterListUpdatedAt(
+          it,
+        ) > REFRESH_INTERVAL_MS
       }
       if (stale.isEmpty()) return@launch
       delay(REFRESH_START_DELAY_MS)
       var changed = false
-      for (id in stale) if (fetch(id) == Fetched.UPDATED) changed = true
+      var failed = false
+      for (id in stale) {
+        when (fetch(id, whole = reshaped)) {
+          Fetched.UPDATED -> changed = true
+          Fetched.FAILED -> failed = true
+          Fetched.UNCHANGED -> Unit
+        }
+      }
+      if (reshaped && !failed) settings.filterListFormat = LIST_FORMAT
       if (changed) rebuild()
     }
   }
@@ -106,7 +123,8 @@ class FilterListManager @Inject constructor(
 
   private enum class Fetched { UPDATED, UNCHANGED, FAILED }
 
-  private fun fetch(id: String): Fetched {
+  /** [whole] asks for the full list even where the server would answer "not modified". */
+  private fun fetch(id: String, whole: Boolean = false): Fetched {
     val listUrl = urlOf(id) ?: return Fetched.FAILED
     // With Tor on but still connecting, this would leave from the real address. The list
     // stays on its cached copy until the next start, when the tunnel is already in place.
@@ -116,7 +134,7 @@ class FilterListManager @Inject constructor(
       // and it is read through a hard byte cap so a hostile server cannot fill the disk.
       require(listUrl.startsWith("https://", ignoreCase = true)) { "filter list must use https" }
       val cached = cacheFile(id)
-      var connection = open(id, listUrl, cached)
+      var connection = open(id, listUrl, cached, whole)
       var hops = 0
       // Redirects are followed by hand so each hop can be checked: HttpURLConnection would
       // happily land on a LAN address, and the list decides what the browser refuses to load.
@@ -126,7 +144,7 @@ class FilterListManager @Inject constructor(
         connection.disconnect()
         check(++hops <= ListUrlPolicy.MAX_REDIRECTS) { "too many redirects" }
         check(next != null && ListUrlPolicy.acceptsRedirect(next)) { "redirect refused: $location" }
-        connection = open(id, next, cached)
+        connection = open(id, next, cached, whole)
       }
       try {
         if (connection.responseCode == HttpURLConnection.HTTP_NOT_MODIFIED) {
@@ -140,6 +158,7 @@ class FilterListManager @Inject constructor(
           BoundedInputStream(connection.inputStream, MAX_BYTES).copyTo(out)
         }
         check(temp.length() > MIN_BYTES) { "list too small: ${temp.length()} bytes" }
+        appendIncludes(temp, connection.url)
         check(temp.renameTo(cached)) { "could not replace cached list" }
         settings.setFilterListEtag(id, connection.getHeaderField("ETag"))
         settings.setFilterListUpdatedAt(id, System.currentTimeMillis())
@@ -151,12 +170,51 @@ class FilterListManager @Inject constructor(
     }.onFailure { Timber.w(it, "filter list %s refresh failed", id) }.getOrDefault(Fetched.FAILED)
   }
 
-  private fun open(id: String, url: String, cached: File): HttpURLConnection {
+  /**
+   * uBlock's lists are split: `filters.txt` is a stub that `!#include`s the yearly files that
+   * hold most of its rules. The includes are fetched one level deep, from the same host as the
+   * list that names them, and appended to the cached copy, so the engine reads one file.
+   */
+  private fun appendIncludes(file: File, listUrl: URL) {
+    val names = file.bufferedReader().useLines { lines ->
+      lines.filter { it.startsWith(INCLUDE_DIRECTIVE) }
+        .map { it.substring(INCLUDE_DIRECTIVE.length).trim() }
+        .filter { it.isNotEmpty() && !it.contains(' ') }
+        .take(MAX_INCLUDES)
+        .toList()
+    }
+    if (names.isEmpty()) return
+    FileOutputStream(file, true).buffered().use { out ->
+      for (name in names) {
+        val target = runCatching { URL(listUrl, name) }.getOrNull() ?: continue
+        val ok = target.protocol == "https" && target.host == listUrl.host &&
+          ListUrlPolicy.acceptsRedirect(target.toString())
+        if (!ok) {
+          Timber.w("include %s of %s refused", name, listUrl)
+          continue
+        }
+        runCatching {
+          val connection =
+            open(FilterListCatalog.CUSTOM_ID, target.toString(), File(""), whole = true)
+          try {
+            val code = connection.responseCode
+            check(code == HttpURLConnection.HTTP_OK) { "HTTP $code" }
+            out.write("\n! --- included: $name ---\n".toByteArray())
+            BoundedInputStream(connection.inputStream, MAX_BYTES).copyTo(out)
+          } finally {
+            connection.disconnect()
+          }
+        }.onFailure { Timber.w(it, "include %s of %s failed", name, listUrl) }
+      }
+    }
+  }
+
+  private fun open(id: String, url: String, cached: File, whole: Boolean): HttpURLConnection {
     val connection = URL(url).openConnection() as HttpURLConnection
     connection.connectTimeout = FETCH_TIMEOUT_MS
     connection.readTimeout = FETCH_TIMEOUT_MS
     connection.instanceFollowRedirects = false
-    if (cached.exists()) {
+    if (cached.exists() && !whole) {
       settings.filterListEtag(id)?.let { connection.setRequestProperty("If-None-Match", it) }
       connection.ifModifiedSince = cached.lastModified()
     }
@@ -223,10 +281,15 @@ class FilterListManager @Inject constructor(
   private fun legacyCacheFile(): File = File(application.filesDir, LEGACY_CACHE_NAME)
 
   private companion object {
+    const val INCLUDE_DIRECTIVE = "!#include "
+    const val MAX_INCLUDES = 12
     const val CACHE_DIR = "filter_lists"
     val SNAPSHOT_TEXT_ASSETS = listOf("blocklist.txt", "rules.txt", "cosmetic.txt")
     const val LEGACY_CACHE_NAME = "blocklist_remote.bin"
     const val REFRESH_INTERVAL_MS = 7L * 24 * 60 * 60 * 1000
+
+    /** Bump when a build reads cached lists differently; 2 = included files appended. */
+    const val LIST_FORMAT = 2
     const val REFRESH_START_DELAY_MS = 20_000L
     const val FETCH_TIMEOUT_MS = 20_000
     const val MAX_BYTES = 16L * 1024 * 1024

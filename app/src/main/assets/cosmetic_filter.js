@@ -7,22 +7,23 @@
 /**
  * Applies the filter lists' element-hiding rules to the page.
  *
- * Runs at document start with two jobs. The scriptlet table (appended by the app as
- * WREN_SCRIPTLETS, run by scriptlets.js) goes first, before any page script. Then the app is
- * asked for this host's selectors; they arrive a few milliseconds later and go into a
- * stylesheet, grouped for speed and validated one by one only when a group is refused, because
- * one selector the engine cannot parse would otherwise void every rule beside it. Generic rules
- * keyed by an id or class are asked for as the page reports the ids and classes its DOM holds.
+ * Runs at document start with two jobs. The scriptlet table (SCRIPTLET_TABLE, run by the
+ * dispatcher from scriptlets.js) goes first, before any page script. Then the app is asked for
+ * this host's selectors; they arrive a few milliseconds later and go into a stylesheet, grouped
+ * for speed and validated one by one only when a group is refused, because one selector the
+ * engine cannot parse would otherwise void every rule beside it. Generic rules keyed by an id
+ * or class are asked for as the page reports the ids and classes its DOM holds.
+ *
+ * The app assembles one closure out of scriptlets.js, the table and this file, and binds
+ * DEBUG, CHANNEL (the reply channel, already taken off window) and SCRIPTLET_TABLE around it.
+ * Nothing is left on window for a page to find.
  */
 (function () {
   'use strict';
-  if (window.__wrenCosmetic) return;
-  window.__wrenCosmetic = true;
-
   try {
-    if (typeof WREN_SCRIPTLETS === 'object' && window.__wrenRunScriptlets) {
-      var ran = window.__wrenRunScriptlets(WREN_SCRIPTLETS);
-      if (window.__wrenDebug && ran) console.log('[wren] scriptlets: ' + ran + ' on ' + location.hostname);
+    if (typeof SCRIPTLET_TABLE === 'object' && typeof runScriptlets === 'function') {
+      var ran = runScriptlets(SCRIPTLET_TABLE);
+      if (DEBUG && ran) console.log('[wren] scriptlets: ' + ran + ' on ' + location.hostname);
     }
   } catch (ignored) {}
 
@@ -95,18 +96,18 @@
     for (var i = 0; i < x.length; i++) excepted[x[i]] = true;
     var list = fresh((payload.s || []).concat(payload.g || []));
     var applied = insert(list);
-    if (window.__wrenDebug) console.log('[wren] cosmetic: ' + applied + ' of ' + list.length + ' page selectors applied');
+    if (DEBUG) console.log('[wren] cosmetic: ' + applied + ' of ' + list.length + ' page selectors applied');
   }
 
   function applySurvey(payload) {
     var list = fresh(payload.m || []);
     var applied = insert(list);
-    if (window.__wrenDebug && list.length) console.log('[wren] cosmetic: ' + applied + ' of ' + list.length + ' surveyed selectors applied');
+    if (DEBUG && list.length) console.log('[wren] cosmetic: ' + applied + ' of ' + list.length + ' surveyed selectors applied');
   }
 
   insert(fresh(FALLBACK));
 
-  var channel = typeof WrenCosmetic !== 'undefined' ? WrenCosmetic : null;
+  var channel = typeof CHANNEL === 'object' ? CHANNEL : null;
   if (!channel) return;
 
   var ready = false;
@@ -215,9 +216,14 @@
   }
   hello();
 
+  // The observer starts now, on the document itself, so ids and classes are reported as the
+  // parser inserts them; waiting for DOMContentLoaded showed every generic ad until then.
+  // The full survey after parsing catches whatever the observer's batches missed.
+  watch();
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', watch, { once: true });
-  } else {
-    watch();
+    document.addEventListener('DOMContentLoaded', function () {
+      surveyTree(document.documentElement);
+      schedule(0);
+    }, { once: true });
   }
 })();
