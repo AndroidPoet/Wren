@@ -62,6 +62,31 @@ Addresses are looked up with your phone's own DNS. To encrypt those lookups, tur
 in Android's network settings; in Tor mode, lookups go through Tor instead. The full
 [privacy policy](PRIVACY.md) lists the same.
 
+## What Wren is not
+
+Wren is a shell around Android's system WebView, which is Chromium shipped and updated by Google
+or your phone maker. Wren decides what is loaded and where it goes; it does not control the
+engine. Before relying on it for anything sensitive, know the limits:
+
+- **The engine is the system's.** Its version, security patches, site isolation, JIT, storage
+  partitioning and WebRTC internals come from the system WebView, not from Wren. Wren warns when
+  the engine is out of date, but only you can update it.
+- **Tor mode is not Tor Browser.** It sends every tab and every request the app makes through
+  Tor, refuses plain HTTP, pauses downloads and removes WebRTC from pages. It does not make you
+  look like other Tor users: fingerprint protection adds noise that changes each time Wren starts
+  rather than giving every user the same answers, and the engine version, screen size and fonts
+  stay visible. All sites share the same circuits until you choose New identity, which closes
+  every tab, clears data and asks Tor for new circuits.
+- **Safe Browsing talks to Google.** Short hashed prefixes of addresses go to Google through
+  Android, except in Tor mode. There is no switch for it yet.
+- **Nobody independent has audited Wren.** The source is public and reviews of it are
+  welcome, but reading the source shows what Wren intends to do, not that it is safe against a
+  determined adversary.
+
+If your safety depends on being anonymous, use [Tor Browser for
+Android](https://www.torproject.org/download/#android). Wren is for everyday browsing with
+trackers and ads out of the way.
+
 ## Download
 
 Get the APK for your phone from [Releases](https://github.com/AndroidPoet/Wren/releases/latest):

@@ -1,6 +1,6 @@
 # Wren privacy policy
 
-Last updated: 4 November 2026
+Last updated: 7 November 2026
 
 Wren is an Android web browser made by AndroidPoet. It has no account, no analytics, no ads and
 no servers of its own. Nothing about you or your browsing is sent to us, because there is nowhere
@@ -33,6 +33,15 @@ Wren only makes these connections:
 The sites you visit see your connection as with any browser, and their own privacy policies
 apply. Wren blocks known trackers and ads on them, declines cookie banners where it can, and by default
 sends the Do Not Track and Global Privacy Control signals.
+
+## What Wren does not protect against
+
+Wren runs on Android's system WebView, which is the Chromium engine shipped and updated by Google
+or your phone maker. The engine's version, security patches and internal isolation are outside
+Wren's control. Tor mode routes all of Wren's traffic through Tor and removes WebRTC, but it does
+not make you indistinguishable from other users the way Tor Browser does, and every site shares the
+same circuits until you choose New identity. Wren has not been independently audited. If your
+safety depends on anonymity, use Tor Browser for Android.
 
 ## Permissions
 

@@ -1,5 +1,7 @@
 Wren is a private web browser that blocks trackers and ads out of the box. It is free and open source, has no account and no telemetry, and runs no servers of its own. The only traffic it makes is the pages you open, filter-list updates, speed-dial site icons (can be turned off) and, if you turn them on, search suggestions and Tor.
 
+Wren runs on Android's system WebView and is not a replacement for Tor Browser: Tor mode routes everything through Tor and removes WebRTC, but sites can still tell browsers apart, and the engine's version and patches come from the system. Wren has not been independently audited. If your safety depends on anonymity, use Tor Browser for Android.
+
 <b>Blocking</b>
 <ul>
 <li>EasyList, EasyPrivacy and uBlock Origin rules, with cosmetic filtering and scriptlets</li>
