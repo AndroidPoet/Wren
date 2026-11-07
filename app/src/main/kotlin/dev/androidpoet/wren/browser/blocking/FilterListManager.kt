@@ -8,6 +8,7 @@ package dev.androidpoet.wren.browser.blocking
 
 import android.app.Application
 import dev.androidpoet.wren.browser.blocking.rules.EngineBuilder
+import dev.androidpoet.wren.browser.tor.TorProxySelector
 import dev.androidpoet.wren.settings.SettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -107,6 +108,9 @@ class FilterListManager @Inject constructor(
 
   private fun fetch(id: String): Fetched {
     val listUrl = urlOf(id) ?: return Fetched.FAILED
+    // With Tor on but still connecting, this would leave from the real address. The list
+    // stays on its cached copy until the next start, when the tunnel is already in place.
+    if (TorProxySelector.wouldLeakFor(settings)) return Fetched.FAILED
     return runCatching {
       // A filter list decides what the browser refuses to load, so it only travels over TLS,
       // and it is read through a hard byte cap so a hostile server cannot fill the disk.

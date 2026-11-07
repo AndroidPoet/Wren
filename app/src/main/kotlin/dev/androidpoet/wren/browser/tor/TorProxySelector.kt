@@ -6,6 +6,7 @@
 
 package dev.androidpoet.wren.browser.tor
 
+import dev.androidpoet.wren.settings.SettingsStore
 import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -28,6 +29,16 @@ class TorProxySelector(port: Int) : ProxySelector() {
   override fun select(uri: URI?): List<Proxy> = proxies
 
   override fun connectFailed(uri: URI?, sa: SocketAddress?, ioe: IOException?) = Unit
+
+  companion object {
+    /**
+     * Whether a connection opened right now would leave from the real address: Tor mode is
+     * on, but the tunnel is not yet the process proxy. That window is Tor's own start-up,
+     * while its port is being chosen; callers skip the request and try again next time.
+     */
+    fun wouldLeakFor(settings: SettingsStore): Boolean =
+      settings.torMode && ProxySelector.getDefault() !is TorProxySelector
+  }
 }
 
 /** Reads Tor's `status/bootstrap-phase` reply, which carries a `PROGRESS=n` field. */

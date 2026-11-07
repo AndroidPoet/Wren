@@ -75,10 +75,6 @@ class WrenWebViewClient(
       mayLeaveApp = request.isForMainFrame && request.hasGesture(),
     )
 
-  @Deprecated("Kept for API 23, which does not call the WebResourceRequest overload.")
-  override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
-    handleUrl(url, isMainFrame = true, mayLeaveApp = true)
-
   private fun handleUrl(url: String, isMainFrame: Boolean, mayLeaveApp: Boolean): Boolean = when {
     url.startsWith("http://") || url.startsWith("https://") -> rewrite(url)
     UrlFormatter.isNonWebScheme(url) -> if (mayLeaveApp) onExternalIntent(url) else true

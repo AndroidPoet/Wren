@@ -12,6 +12,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.androidpoet.wren.browser.Bangs
 import dev.androidpoet.wren.browser.TabManager
 import dev.androidpoet.wren.browser.UrlFormatter
+import dev.androidpoet.wren.browser.tor.TorProxySelector
 import dev.androidpoet.wren.core.data.repository.BookmarkRepository
 import dev.androidpoet.wren.core.data.repository.HistoryRepository
 import dev.androidpoet.wren.core.data.repository.ShortcutRepository
@@ -72,7 +73,8 @@ class BrowserViewModel @Inject constructor(
       } else {
         suggestionRepository.suggestions(
           query = text,
-          includeRemote = settings.remoteSuggestions,
+          // While Tor is still starting, a lookup would leave from the real address.
+          includeRemote = settings.remoteSuggestions && !TorProxySelector.wouldLeakFor(settings),
           // A custom engine has no known autocomplete endpoint; the default one stands in.
           engine = if (settings.usingCustomSearch) SearchEngine.DEFAULT else settings.searchEngine,
           onError = { Timber.w("suggestion lookup failed: %s", it) },

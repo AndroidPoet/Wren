@@ -20,6 +20,7 @@ import androidx.webkit.WebViewFeature
 import dev.androidpoet.wren.settings.SettingsStore
 import timber.log.Timber
 import java.net.InetAddress
+import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -41,15 +42,28 @@ import javax.inject.Singleton
  * where the destination is unambiguous - never for a bare search suggestion, and never in a
  * private tab. It is a single setting the user can turn off.
  *
+ * Under Tor none of it runs: the DNS tier resolves through the system resolver, outside the
+ * tunnel, and the rest would announce a guess to an exit before the user has chosen it.
+ *
  * All of this needs WebView 133+; on anything older the feature checks fail and every call is a
  * no-op, so the browser still works, just without the head start.
  */
 @Singleton
-class SpeculativeLoader @Inject constructor(
+class SpeculativeLoader internal constructor(
   private val settings: SettingsStore,
+  private val executor: Executor,
+  private val resolve: (host: String) -> Unit,
 ) {
 
-  private val executor = Executors.newSingleThreadExecutor()
+  @Inject
+  constructor(settings: SettingsStore) : this(
+    settings,
+    Executors.newSingleThreadExecutor(),
+    { host -> InetAddress.getAllByName(host) },
+  )
+
+  /** Speculation is off by setting, and always off under Tor. */
+  private val allowed: Boolean get() = settings.preloadPages && !settings.torMode
   private var currentSignal: CancellationSignal? = null
   private var lastUrl: String? = null
 
@@ -88,7 +102,7 @@ class SpeculativeLoader @Inject constructor(
   fun primeForSites(urls: List<String>) {
     val profile = profile ?: return
     val origins = urls.map { originOf(it) }.filter { it.isNotBlank() }.distinct()
-    if (origins.isNotEmpty()) {
+    if (allowed && origins.isNotEmpty()) {
       if (WebViewFeature.isFeatureSupported(WebViewFeature.ADD_QUIC_HINTS_V1)) {
         runCatching { profile.addQuicHints(origins.toSet()) }
       }
@@ -133,13 +147,13 @@ class SpeculativeLoader @Inject constructor(
    * socket where preconnect exists. No prefetch - nothing about the page itself is fetched.
    */
   fun warmOrigin(url: String) {
-    if (!settings.preloadPages || !url.startsWith("https://", ignoreCase = true)) return
+    if (!allowed || !url.startsWith("https://", ignoreCase = true)) return
     val origin = originOf(url)
     if (origin.isBlank() || origin == lastWarmedOrigin) return
     lastWarmedOrigin = origin
     Timber.d("warming origin %s", origin)
     val host = origin.removePrefix("https://")
-    executor.execute { runCatching { InetAddress.getAllByName(host) } }
+    executor.execute { runCatching { resolve(host) } }
     val profile = profile ?: return
     if (WebViewFeature.isFeatureSupported(WebViewFeature.PRECONNECT)) {
       runCatching { profile.preconnect(origin) }
@@ -159,7 +173,7 @@ class SpeculativeLoader @Inject constructor(
    */
   fun speculate(url: String, isPrivate: Boolean) {
     // Prefetch and preconnect only speak https, and a private tab must leave no early footprints.
-    if (isPrivate || !settings.preloadPages || !url.startsWith("https://", ignoreCase = true)) {
+    if (isPrivate || !allowed || !url.startsWith("https://", ignoreCase = true)) {
       return
     }
     if (url == lastUrl) return
@@ -173,7 +187,7 @@ class SpeculativeLoader @Inject constructor(
     // saving the DNS round trip - often the slowest single step before the first byte.
     if (host.isNotEmpty()) {
       executor.execute {
-        runCatching { InetAddress.getAllByName(host) }
+        runCatching { resolve(host) }
           .onSuccess { Timber.d("dns prewarmed %s", host) }
       }
     }
@@ -217,7 +231,7 @@ class SpeculativeLoader @Inject constructor(
    * certain than a place the user already goes.
    */
   fun prerender(webView: WebView, url: String) {
-    if (!settings.preloadPages || !url.startsWith("https://", ignoreCase = true)) return
+    if (!allowed || !url.startsWith("https://", ignoreCase = true)) return
     if (!WebViewFeature.isFeatureSupported(WebViewFeature.PRERENDER_WITH_URL)) return
     prerenderSignal?.cancel()
     val signal = CancellationSignal()
@@ -246,6 +260,7 @@ class SpeculativeLoader @Inject constructor(
    * prefetch cache. Only on an unmetered network - speculation spends the user's data.
    */
   fun prefetchLikelyPages(urls: List<String>) {
+    if (!allowed) return
     val profile = profile ?: return
     if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROFILE_URL_PREFETCH)) return
     urls.take(STARTUP_PREFETCHES).forEach { url ->

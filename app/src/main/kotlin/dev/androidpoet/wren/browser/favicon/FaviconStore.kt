@@ -20,7 +20,6 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
 import java.net.HttpURLConnection
-import java.net.ProxySelector
 import java.net.URL
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -109,9 +108,9 @@ class FaviconStore @Inject constructor(
 
   private fun fetch(host: String): Bitmap? {
     if (!settings.loadSiteIcons || host in misses) return null
-    // With Tor on but still connecting, the proxy is not installed yet and this request would
-    // leave from the real address. Skip without recording a miss; the next open retries.
-    if (settings.torMode && ProxySelector.getDefault() !is TorProxySelector) return null
+    // With Tor on but still connecting, this request would leave from the real address.
+    // Skip without recording a miss; the next open retries.
+    if (TorProxySelector.wouldLeakFor(settings)) return null
 
     for (path in ICON_PATHS) {
       val bitmap = runCatching { download("https://$host$path") }.getOrNull()

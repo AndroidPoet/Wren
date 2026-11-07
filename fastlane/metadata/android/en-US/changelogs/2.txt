@@ -1,0 +1,1 @@
+Tor mode no longer warms DNS for guessed sites, and holds back search suggestions, site icons and filter-list updates until Tor is in front of them.
