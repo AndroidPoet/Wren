@@ -1,0 +1,1 @@
+Typed javascript: and data: addresses are searched for instead of run. App lock turns itself off, and says so, if the phone loses its screen lock. Filter-list redirects must stay on https and off local networks. Download names lose hidden text-direction tricks. Search suggestions are now off until you turn them on.

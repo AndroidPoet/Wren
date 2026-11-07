@@ -87,11 +87,24 @@ class UrlFormatterTest {
   }
 
   @Test
-  fun `about and data addresses are left alone`() {
+  fun `about blank is left alone`() {
     assertThat(UrlFormatter.toUrlOrSearch("about:blank", SearchEngine.DUCKDUCKGO))
       .isEqualTo("about:blank")
-    assertThat(UrlFormatter.toUrlOrSearch("data:text/html,hi", SearchEngine.DUCKDUCKGO))
-      .isEqualTo("data:text/html,hi")
+  }
+
+  @Test
+  fun `typed javascript url becomes a search`() {
+    assertThat(UrlFormatter.toUrlOrSearch("javascript:alert(document.cookie)", SearchEngine.DUCKDUCKGO))
+      .startsWith("https://duckduckgo.com/?q=javascript%3Aalert")
+    assertThat(UrlFormatter.toUrlOrSearch(" JavaScript://%0aalert(1)", SearchEngine.DUCKDUCKGO))
+      .startsWith("https://duckduckgo.com/?q=JavaScript%3A%2F%2F")
+  }
+
+  @Test
+  fun `typed data file content and blob urls become a search`() {
+    for (text in listOf("data:text/html,hi", "file:///etc/hosts", "content://media/1", "blob:https://a.b/x")) {
+      assertThat(UrlFormatter.toUrlOrSearch(text, SearchEngine.DUCKDUCKGO)).startsWith("https://duckduckgo.com/?q=")
+    }
   }
 
   @Test

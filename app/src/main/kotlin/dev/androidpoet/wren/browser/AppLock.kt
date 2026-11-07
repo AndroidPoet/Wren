@@ -9,6 +9,7 @@ package dev.androidpoet.wren.browser
 import android.app.Activity
 import android.os.Build
 import android.view.View
+import android.widget.Toast
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
 import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
@@ -26,9 +27,19 @@ import javax.inject.Singleton
  * in the foreground; leaving it re-locks, so a handed-over or pocketed phone shows nothing.
  */
 @Singleton
-class AppLock @Inject constructor(
+class AppLock internal constructor(
   private val settings: SettingsStore,
+  private val authenticatorAvailable: (FragmentActivity) -> Boolean,
 ) : DefaultLifecycleObserver {
+
+  @Inject
+  constructor(settings: SettingsStore) : this(
+    settings,
+    { activity ->
+      BiometricManager.from(activity)
+        .canAuthenticate(BIOMETRIC_WEAK or DEVICE_CREDENTIAL) == BiometricManager.BIOMETRIC_SUCCESS
+    },
+  )
 
   private var unlocked = false
 
@@ -60,12 +71,13 @@ class AppLock @Inject constructor(
     unlocked = false
   }
 
-  fun canAuthenticate(activity: FragmentActivity): Boolean = BiometricManager.from(activity)
-    .canAuthenticate(BIOMETRIC_WEAK or DEVICE_CREDENTIAL) == BiometricManager.BIOMETRIC_SUCCESS
+  fun canAuthenticate(activity: FragmentActivity): Boolean = authenticatorAvailable(activity)
 
   /**
    * Runs the gate if it is armed. [onLocked] fires first so the caller can hide its content;
-   * exactly one of [onUnlocked] or [onFailed] follows.
+   * exactly one of [onUnlocked] or [onFailed] follows. If the device lost its screen lock since
+   * the gate was armed there is nothing left to ask for: the lock disarms, [onDisarmed] reports
+   * it, and the screen opens, rather than opening silently while the setting still says locked.
    */
   fun gate(
     activity: FragmentActivity,
@@ -73,8 +85,16 @@ class AppLock @Inject constructor(
     onLocked: () -> Unit,
     onUnlocked: () -> Unit,
     onFailed: () -> Unit,
+    onDisarmed: () -> Unit = {},
   ) {
-    if (!settings.appLock || unlocked || !canAuthenticate(activity)) {
+    if (!settings.appLock || unlocked) {
+      onUnlocked()
+      return
+    }
+    if (!canAuthenticate(activity)) {
+      settings.appLock = false
+      shieldRecents(activity)
+      onDisarmed()
       onUnlocked()
       return
     }
@@ -116,6 +136,13 @@ fun FragmentActivity.applyAppLock(appLock: AppLock, content: View) {
           onLocked = { content.visibility = View.INVISIBLE },
           onUnlocked = { content.visibility = View.VISIBLE },
           onFailed = { finishAffinity() },
+          onDisarmed = {
+            Toast.makeText(
+              this@applyAppLock,
+              dev.androidpoet.wren.R.string.app_lock_disarmed,
+              Toast.LENGTH_LONG,
+            ).show()
+          },
         )
       }
 

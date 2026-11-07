@@ -51,7 +51,7 @@ Wren has no backend. The only network traffic is:
 | Traffic | When |
 | --- | --- |
 | The pages you open | Always |
-| Search suggestions from your chosen engine | While typing; can be turned off |
+| Search suggestions from your chosen engine | Only if turned on in Settings, then while typing |
 | Filter-list downloads | Shortly after launch when a list is over a week old (so also on first launch), or when you tap Update now in Settings |
 | Speed-dial site icons | Can be turned off |
 | Safe Browsing checks (hashed address prefixes, to Google through Android) | Always, except in Tor mode |

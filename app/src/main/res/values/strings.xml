@@ -185,6 +185,7 @@
   <string name="app_lock">App lock</string>
   <string name="app_lock_summary">Ask for your fingerprint or screen lock whenever Wren comes back to the foreground.</string>
   <string name="app_lock_unavailable">No screen lock is set up on this device</string>
+  <string name="app_lock_disarmed">App lock turned off: this device no longer has a screen lock</string>
   <string name="unlock_title">Unlock Wren</string>
   <string name="filter_list">Filter lists</string>
   <string name="report_broken_site">Report a broken site</string>

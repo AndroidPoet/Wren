@@ -115,14 +115,18 @@ class FilterListManager @Inject constructor(
       // A filter list decides what the browser refuses to load, so it only travels over TLS,
       // and it is read through a hard byte cap so a hostile server cannot fill the disk.
       require(listUrl.startsWith("https://", ignoreCase = true)) { "filter list must use https" }
-      val connection = URL(listUrl).openConnection() as HttpURLConnection
-      connection.connectTimeout = FETCH_TIMEOUT_MS
-      connection.readTimeout = FETCH_TIMEOUT_MS
-      connection.instanceFollowRedirects = true
       val cached = cacheFile(id)
-      if (cached.exists()) {
-        settings.filterListEtag(id)?.let { connection.setRequestProperty("If-None-Match", it) }
-        connection.ifModifiedSince = cached.lastModified()
+      var connection = open(id, listUrl, cached)
+      var hops = 0
+      // Redirects are followed by hand so each hop can be checked: HttpURLConnection would
+      // happily land on a LAN address, and the list decides what the browser refuses to load.
+      while (connection.responseCode in ListUrlPolicy.REDIRECT_CODES) {
+        val location = connection.getHeaderField("Location")
+        val next = location?.let { URL(connection.url, it).toString() }
+        connection.disconnect()
+        check(++hops <= ListUrlPolicy.MAX_REDIRECTS) { "too many redirects" }
+        check(next != null && ListUrlPolicy.acceptsRedirect(next)) { "redirect refused: $location" }
+        connection = open(id, next, cached)
       }
       try {
         if (connection.responseCode == HttpURLConnection.HTTP_NOT_MODIFIED) {
@@ -145,6 +149,18 @@ class FilterListManager @Inject constructor(
         connection.disconnect()
       }
     }.onFailure { Timber.w(it, "filter list %s refresh failed", id) }.getOrDefault(Fetched.FAILED)
+  }
+
+  private fun open(id: String, url: String, cached: File): HttpURLConnection {
+    val connection = URL(url).openConnection() as HttpURLConnection
+    connection.connectTimeout = FETCH_TIMEOUT_MS
+    connection.readTimeout = FETCH_TIMEOUT_MS
+    connection.instanceFollowRedirects = false
+    if (cached.exists()) {
+      settings.filterListEtag(id)?.let { connection.setRequestProperty("If-None-Match", it) }
+      connection.ifModifiedSince = cached.lastModified()
+    }
+    return connection
   }
 
   /**

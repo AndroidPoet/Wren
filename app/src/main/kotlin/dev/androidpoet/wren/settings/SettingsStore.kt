@@ -54,9 +54,12 @@ class SettingsStore @Inject constructor(
       searchEngine.homeUrl
     }
 
-  /** When false the omnibox never contacts the search engine while typing. */
+  /**
+   * When false the omnibox never contacts the search engine while typing. Off until the user
+   * turns it on: every keystroke it sends is a query the user has not yet decided to make.
+   */
   var remoteSuggestions: Boolean
-    get() = preferences.getBoolean(KEY_REMOTE_SUGGESTIONS, true)
+    get() = preferences.getBoolean(KEY_REMOTE_SUGGESTIONS, false)
     set(value) = preferences.edit { putBoolean(KEY_REMOTE_SUGGESTIONS, value) }
 
   var javaScriptEnabled: Boolean

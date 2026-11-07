@@ -23,7 +23,7 @@ Wren only makes these connections:
 | Connection | Goes to | When |
 | --- | --- | --- |
 | The pages you open | The sites you visit | Always |
-| Search suggestions | The search engine you chose (DuckDuckGo by default) | While you type, unless turned off in Settings |
+| Search suggestions | The search engine you chose (DuckDuckGo by default) | Only if turned on in Settings, then while you type |
 | Filter-list updates | The filter-list hosts, such as easylist.to | When a list is over a week old, or when you tap Update now |
 | Site icons for the home page | The site the icon belongs to | Unless turned off in Settings |
 | Safe Browsing checks | Google, through Android's WebView; only short hashed prefixes of addresses are sent | Always, except in Tor mode |

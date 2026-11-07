@@ -28,8 +28,15 @@ object UrlFormatter {
    */
   private val AUTHORITYLESS_SCHEMES = setOf(
     "mailto", "tel", "sms", "intent", "market", "geo", "callto",
-    "about", "data", "javascript", "file", "content",
+    "about",
   )
+
+  /**
+   * Schemes typed text may never become. A page cannot steer the top frame to these, and the
+   * omnibox was the one place left where a pasted `javascript:` snippet would run against the
+   * open site, so such text is searched for instead, as Chrome does with a paste.
+   */
+  private val UNSAFE_TYPED_SCHEMES = setOf("javascript", "data", "file", "content", "blob")
 
   private val NON_WEB_SCHEMES = setOf("mailto", "tel", "sms", "intent", "market", "geo", "callto")
 
@@ -44,9 +51,13 @@ object UrlFormatter {
     return lower.startsWith("javascript:") || lower.startsWith("data:")
   }
 
+  /** True for typed text that names a scheme the omnibox refuses to load. */
+  fun isUnsafeToType(text: String): Boolean = schemeOf(text.trim()) in UNSAFE_TYPED_SCHEMES
+
   fun toUrlOrSearch(input: String, engine: SearchEngine): String {
     val text = input.trim()
     if (text.isEmpty()) return NEW_TAB_URL
+    if (isUnsafeToType(text)) return search(text, engine)
     if (SCHEME_WITH_AUTHORITY.containsMatchIn(text)) return text
     if (schemeOf(text) in AUTHORITYLESS_SCHEMES) return text
     if (isProbablyUrl(text)) return "https://$text"
@@ -63,6 +74,7 @@ object UrlFormatter {
   fun toUrlOrSearch(input: String, searchTemplate: String): String {
     val text = input.trim()
     if (text.isEmpty()) return NEW_TAB_URL
+    if (isUnsafeToType(text)) return search(text, searchTemplate)
     if (SCHEME_WITH_AUTHORITY.containsMatchIn(text)) return text
     if (schemeOf(text) in AUTHORITYLESS_SCHEMES) return text
     if (isProbablyUrl(text)) return "https://$text"

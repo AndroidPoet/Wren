@@ -84,7 +84,7 @@ class DownloadController @Inject constructor(
   ): Long? {
     if (!url.startsWith("http")) return null
     val manager = downloadManager ?: return null
-    val fileName = URLUtil.guessFileName(url, contentDisposition, mimeType)
+    val fileName = DownloadNames.sanitize(URLUtil.guessFileName(url, contentDisposition, mimeType))
 
     val request = DownloadManager.Request(Uri.parse(url)).apply {
       setMimeType(mimeType)

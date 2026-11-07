@@ -1,4 +1,4 @@
-Wren is a private web browser that blocks trackers and ads out of the box. It is free and open source, has no account and no telemetry, and runs no servers of its own. The only traffic it makes is the pages you open, your search engine's suggestions, filter-list updates, speed-dial site icons (can be turned off) and, if you turn it on, Tor.
+Wren is a private web browser that blocks trackers and ads out of the box. It is free and open source, has no account and no telemetry, and runs no servers of its own. The only traffic it makes is the pages you open, filter-list updates, speed-dial site icons (can be turned off) and, if you turn them on, search suggestions and Tor.
 
 <b>Blocking</b>
 <ul>
