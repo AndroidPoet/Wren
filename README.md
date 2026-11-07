@@ -66,6 +66,19 @@ in Android's network settings; in Tor mode, lookups go through Tor instead. The 
 
 Get the APK for your phone from [Releases](https://github.com/AndroidPoet/Wren/releases/latest):
 `arm64-v8a` for most phones, or `universal` if you are not sure. Or build it from source (below).
+[Obtainium](https://github.com/ImranR98/Obtainium) can watch that page and install updates for you.
+
+**Check what you installed.** Every release ships a `SHA256SUMS` file, and every APK is signed
+with this certificate:
+
+```
+CN=AndroidPoet, O=AndroidPoet
+SHA-256: AD:76:AB:B2:F4:C5:4A:A9:E9:A9:9E:FA:F9:1F:AD:2B:2B:37:98:CF:87:26:5E:C2:DA:39:2C:57:B2:C8:C7:CE
+```
+
+Compare it after installing with [AppVerifier](https://github.com/soupslurpr/AppVerifier), or
+before installing with `apksigner verify --print-certs wren-*.apk`. Android refuses an update
+over Wren unless it is signed with this same key, so one checked install covers the ones after it.
 
 ## Build
 
