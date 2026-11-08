@@ -23,7 +23,7 @@ import dev.androidpoet.wren.core.database.entity.ShortcutEntity
     DownloadEntity::class,
     SessionEntity::class,
   ],
-  version = 5,
+  version = 6,
   exportSchema = true,
   // Adding a table is a migration Room can write itself, and it keeps the history, bookmarks and
   // shortcuts that a destructive fallback would have thrown away.
@@ -32,6 +32,7 @@ import dev.androidpoet.wren.core.database.entity.ShortcutEntity
     AutoMigration(from = 2, to = 3),
     AutoMigration(from = 3, to = 4),
     AutoMigration(from = 4, to = 5),
+    AutoMigration(from = 5, to = 6),
   ],
 )
 abstract class WrenDatabase : RoomDatabase() {

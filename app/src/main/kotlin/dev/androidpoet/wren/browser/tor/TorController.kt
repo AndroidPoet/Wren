@@ -74,8 +74,22 @@ class TorController @Inject constructor(
 
   val isEnabled: Boolean get() = settings.torMode
 
+  /**
+   * The proxy override puts Tor in front of every page; the profile keeps Tor pages' cookies,
+   * cache and TLS state apart from clear-net browsing. Without either, "Tor mode" would be a
+   * name for a leak, so both are required.
+   */
   val isSupported: Boolean
-    get() = WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)
+    get() = WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE) &&
+      WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
+
+  /**
+   * Runs on the main thread just before the route changes, with `true` when Tor is about to
+   * front the pages and `false` when the proxy is about to come down. The browser screen tears
+   * its pages down here, whatever lifecycle state it is in: a page that outlived the proxy
+   * under it would carry on direct.
+   */
+  var onBeforeRouteChange: ((toTor: Boolean) -> Unit)? = null
 
   /**
    * Whether a page load may start: Tor is off, or the proxy fronts every request and Tor has
@@ -125,6 +139,8 @@ class TorController @Inject constructor(
   }
 
   fun setEnabled(enabled: Boolean) {
+    if (enabled == settings.torMode && enabled == (_state.value.status != TorStatus.OFF)) return
+    onBeforeRouteChange?.invoke(enabled)
     settings.torMode = enabled
     if (enabled) start() else stop()
   }
@@ -237,9 +253,10 @@ class TorController @Inject constructor(
     // front of WebView, a dead end goes there instead, until the user turns the mode off.
     if (settings.torMode && !_state.value.proxyInstalled) {
       if (sealing) {
-        // The override itself is what failed: the mode cannot be honoured at all.
-        settings.torMode = false
-        _state.update { it.copy(error = "$message; proxy override failed, Tor mode is off") }
+        // The override itself is what failed. The mode stays on and the network stays closed:
+        // no load runs until the proxy fronts WebView, which it now never will, so the user
+        // has to turn Tor off deliberately rather than find pages quietly going direct.
+        _state.update { it.copy(error = "$message; pages stay blocked until Tor mode is off") }
       } else {
         sealing = true
         installProxy(DEAD_END_PORT)

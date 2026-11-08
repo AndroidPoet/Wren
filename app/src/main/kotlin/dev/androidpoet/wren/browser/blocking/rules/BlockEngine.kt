@@ -29,6 +29,9 @@ class BlockEngine(
  */
 class EngineBuilder {
   private val hosts = HashSet<String>()
+
+  /** Hosts a `||host^$badfilter` line cancels; taken out of the set once every list is read. */
+  private val cancelledHosts = HashSet<String>()
   private val hostSets = ArrayList<CompactHostSet>()
   private val rules = RuleEngine.Builder()
   private val cosmetics = CosmeticRules.Builder()
@@ -62,6 +65,11 @@ class EngineBuilder {
       hosts.add(it)
       return
     }
+    // A host rule compiles into the host set rather than the rule table, so the line that
+    // cancels it has to reach the set too; order between the two lines does not matter.
+    if (line.endsWith(BADFILTER)) {
+      plainHostOf(line.removeSuffix(BADFILTER))?.let(cancelledHosts::add)
+    }
     hostsFileEntry(line)?.let {
       hosts.add(it)
       return
@@ -94,12 +102,15 @@ class EngineBuilder {
 
   fun build(version: Int): BlockEngine {
     conditions.clear()
+    hosts.removeAll(cancelledHosts)
     var all = CompactHostSet.of(hosts)
     for (set in hostSets) all = CompactHostSet.union(all, set)
     return BlockEngine(all, rules.build(), cosmetics.build(), version)
   }
 
   companion object {
+    private const val BADFILTER = "\$badfilter"
+
     /**
      * The host of a `||host^` rule with no options beyond third-party, which the host set
      * expresses exactly (it is only consulted for third-party requests). Anything more specific

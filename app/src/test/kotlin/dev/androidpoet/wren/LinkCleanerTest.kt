@@ -70,4 +70,20 @@ class LinkCleanerTest {
     val url = "https://example.com/?redirect=https%3A%2F%2Fx.com%3Futm_source%3Dy"
     assertThat(LinkCleaner.clean(url)).isEqualTo(url)
   }
+
+  @Test
+  fun `tracking names are caught however they are cased or encoded`() {
+    assertThat(LinkCleaner.clean("https://a.com/?UTM_Source=x&id=1"))
+      .isEqualTo("https://a.com/?id=1")
+    assertThat(LinkCleaner.clean("https://a.com/?utm%5Fmedium=x&id=1"))
+      .isEqualTo("https://a.com/?id=1")
+    assertThat(LinkCleaner.clean("https://a.com/?fbclid=x&gad_source=1&ysclid=2&id=1"))
+      .isEqualTo("https://a.com/?id=1")
+  }
+
+  @Test
+  fun `a fragment that looks like a query is not touched`() {
+    assertThat(LinkCleaner.clean("https://a.com/?utm_source=x#/route?utm_source=keep"))
+      .isEqualTo("https://a.com/#/route?utm_source=keep")
+  }
 }

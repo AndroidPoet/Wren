@@ -172,4 +172,25 @@ class UrlFormatterTest {
     assertThat(UrlFormatter.isScriptOrDataUrl("data:text/html,hi")).isTrue()
     assertThat(UrlFormatter.isScriptOrDataUrl("https://data.example")).isFalse()
   }
+
+  @Test
+  fun `schemes the engine cannot render belong to another app`() {
+    assertThat(UrlFormatter.isExternalScheme("whatsapp://send?text=hi")).isTrue()
+    assertThat(UrlFormatter.isExternalScheme("intent://x/#Intent;end")).isTrue()
+    assertThat(UrlFormatter.isExternalScheme("MAILTO:a@b.c")).isTrue()
+    assertThat(UrlFormatter.isExternalScheme("https://example.com")).isFalse()
+    assertThat(UrlFormatter.isExternalScheme("about:blank")).isFalse()
+    assertThat(UrlFormatter.isExternalScheme("blob:https://example.com/1")).isFalse()
+    assertThat(UrlFormatter.isExternalScheme("data:text/html,x")).isFalse()
+    assertThat(UrlFormatter.isExternalScheme("example.com/path")).isFalse()
+  }
+
+  @Test
+  fun `a tab loads web addresses and the new tab page, nothing else`() {
+    assertThat(UrlFormatter.mayLoad("https://example.com")).isTrue()
+    assertThat(UrlFormatter.mayLoad("about:blank")).isTrue()
+    assertThat(UrlFormatter.mayLoad("file:///android_asset/x.html")).isFalse()
+    assertThat(UrlFormatter.mayLoad("content://downloads/1")).isFalse()
+    assertThat(UrlFormatter.mayLoad("javascript:alert(1)")).isFalse()
+  }
 }

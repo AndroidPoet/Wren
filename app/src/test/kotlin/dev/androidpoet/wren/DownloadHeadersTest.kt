@@ -35,4 +35,15 @@ class DownloadHeadersTest {
     assertThat(DownloadHeaders.referer("file:///sdcard/x.html", false)).isNull()
     assertThat(DownloadHeaders.referer(null, true)).isNull()
   }
+
+  @Test
+  fun test_referer_sendsNothingOnAnHttpsToHttpDowngrade() {
+    val page = "https://secure.example/account"
+
+    assertThat(DownloadHeaders.referer(page, true, "http://cdn.example/file.zip")).isNull()
+    assertThat(DownloadHeaders.referer(page, true, "https://cdn.example/file.zip"))
+      .isEqualTo("https://secure.example/")
+    assertThat(DownloadHeaders.referer("http://plain.example/", true, "http://cdn.example/f"))
+      .isEqualTo("http://plain.example/")
+  }
 }

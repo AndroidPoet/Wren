@@ -28,11 +28,14 @@ Wren only makes these connections:
 | Site icons for the home page | The site the icon belongs to | Unless turned off in Settings |
 | Safe Browsing checks | Google, through Android's WebView; only short hashed prefixes of addresses are sent | Always, except in Tor mode |
 | Passkey sign-ins | Your phone's password manager | Only when a site asks you to sign in with a passkey; off in Tor mode |
+| Downloads | The site hosting the file; through Tor in Tor mode | When you download a file |
+| Translate page | Google Translate | Only when you choose Translate page from the menu |
 | Tor | The Tor network | Only if you turn Tor mode on |
 
 The sites you visit see your connection as with any browser, and their own privacy policies
-apply. Wren blocks known trackers and ads on them, declines cookie banners where it can, and by default
-sends the Do Not Track and Global Privacy Control signals.
+apply. Wren blocks known trackers and ads on them, declines cookie banners where it can, and by
+default exposes the Do Not Track and Global Privacy Control signals to their scripts (the
+matching request headers are sent only where the engine lets an app add them).
 
 ## What Wren does not protect against
 
@@ -40,9 +43,10 @@ Wren runs on Android's system WebView, which is the Chromium engine shipped and 
 or your phone maker. The engine's version, security patches and internal isolation are outside
 Wren's control. Tor mode routes all of Wren's traffic through Tor, keeps Tor pages in their own
 storage profile that is deleted when Tor is turned off or a new identity is requested, records
-no history for them, gives each host its own circuit, removes WebRTC, shows pages a UTC clock
-and answers in English, but it does not make you indistinguishable from other users the way Tor
-Browser does. One lookup escapes it: a page's DNS prefetch hint is resolved by the engine through
+no history for them, gives each host its own circuit, runs downloads through Tor, removes
+WebRTC, shows pages a UTC clock and answers in English, but it does not make you
+indistinguishable from other users the way Tor Browser does: fingerprint noise is stable per
+site for the session rather than the same for every user. One lookup escapes it: a page's DNS prefetch hint is resolved by the engine through
 the phone's DNS rather than through Tor, and no app can turn that off; Tor over a VPN or a
 private DNS server moves that disclosure away from your ISP. Web Workers do not get the clock and
 WebRTC shims. The engine adds an `X-Requested-With` header naming
@@ -54,7 +58,8 @@ Browser for Android.
 ## Permissions
 
 - **Internet and network state**: to load pages and know when you are offline.
-- **Notifications**: to show download progress.
+- **Notifications** and a **foreground service**: to show download progress and keep a download
+  that runs through Tor going while Wren is in the background.
 - **Storage** (Android 9 and older only): to save downloads to your Downloads folder.
 
 Wren does not request access to your location, camera, microphone, contacts or files, and it

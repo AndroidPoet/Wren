@@ -78,7 +78,7 @@ object FilterListCatalog {
       "cookies",
       "Cookie banners (EasyList Cookie)",
       "https://secure.fanboy.co.nz/fanboy-cookiemonster.txt",
-      false,
+      true,
       FilterList.Group.ANNOYANCES,
     ),
     FilterList(

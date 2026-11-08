@@ -62,26 +62,40 @@ class WrenWebChromeClient(
     resultMsg: Message,
   ): Boolean {
     val transportView = WebView(view.context)
+    var done = false
+    val finish = {
+      if (!done) {
+        done = true
+        transportView.destroy()
+      }
+    }
     transportView.webViewClient = object : WebViewClient() {
       override fun shouldOverrideUrlLoading(
         transport: WebView,
         request: WebResourceRequest,
       ): Boolean {
         openIfWeb(request.url.toString())
-        transport.destroy()
+        finish()
         return true
       }
 
       @Deprecated("Kept for API 23, which does not call the WebResourceRequest overload.")
       override fun shouldOverrideUrlLoading(transport: WebView, url: String): Boolean {
         openIfWeb(url)
-        transport.destroy()
+        finish()
         return true
       }
     }
+    // A popup the page writes into directly (`window.open()` then `document.write`) never
+    // navigates, so nothing above would ever run; the transport is not kept around for it.
+    transportView.postDelayed(finish, TRANSPORT_LIFETIME_MS)
     (resultMsg.obj as? WebView.WebViewTransport)?.webView = transportView
     resultMsg.sendToTarget()
     return true
+  }
+
+  override fun onCloseWindow(window: WebView) {
+    window.destroy()
   }
 
   /**
@@ -116,5 +130,9 @@ class WrenWebChromeClient(
 
   override fun onPermissionRequest(request: PermissionRequest) {
     request.deny()
+  }
+
+  private companion object {
+    const val TRANSPORT_LIFETIME_MS = 10_000L
   }
 }

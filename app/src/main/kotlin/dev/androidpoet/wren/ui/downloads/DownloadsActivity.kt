@@ -106,7 +106,14 @@ class DownloadsActivity : AppCompatActivity() {
       }
 
       DownloadStatus.RUNNING, DownloadStatus.PAUSED -> {
-        menu.add(0, ACTION_CANCEL, 0, R.string.download_cancel)
+        if (controller.canPause(row.download)) {
+          if (row.download.status == DownloadStatus.RUNNING) {
+            menu.add(0, ACTION_PAUSE, 0, R.string.download_pause)
+          } else {
+            menu.add(0, ACTION_RESUME, 0, R.string.download_resume)
+          }
+        }
+        menu.add(0, ACTION_CANCEL, 1, R.string.download_cancel)
       }
 
       DownloadStatus.FAILED, DownloadStatus.CANCELLED -> {
@@ -119,8 +126,10 @@ class DownloadsActivity : AppCompatActivity() {
         ACTION_OPEN -> open(row)
         ACTION_SHARE -> share(row)
         ACTION_RETRY -> if (!viewModel.retry(row.download)) {
-          Toast.makeText(this, R.string.tor_downloads_off, Toast.LENGTH_SHORT).show()
+          Toast.makeText(this, R.string.download_failed, Toast.LENGTH_SHORT).show()
         }
+        ACTION_PAUSE -> controller.pause(row.download)
+        ACTION_RESUME -> controller.resume(row.download)
         ACTION_CANCEL, ACTION_REMOVE -> viewModel.dismiss(row.download)
         else -> return@setOnMenuItemClickListener false
       }
@@ -133,6 +142,8 @@ class DownloadsActivity : AppCompatActivity() {
     const val ACTION_OPEN = 1
     const val ACTION_SHARE = 2
     const val ACTION_RETRY = 3
+    const val ACTION_PAUSE = 6
+    const val ACTION_RESUME = 7
     const val ACTION_CANCEL = 4
     const val ACTION_REMOVE = 5
   }

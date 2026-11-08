@@ -49,4 +49,6 @@ class DownloadRepositoryImpl @Inject constructor(
   override suspend fun remove(id: Long) = withContext(ioDispatcher) { downloadDao.delete(id) }
 
   override suspend fun clearFinished() = withContext(ioDispatcher) { downloadDao.clearFinished() }
+
+  override suspend fun clearPrivate() = withContext(ioDispatcher) { downloadDao.clearPrivate() }
 }

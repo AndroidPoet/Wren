@@ -16,6 +16,7 @@ import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import dev.androidpoet.wren.BuildConfig
+import dev.androidpoet.wren.browser.privacy.PrivacyHeaders
 import dev.androidpoet.wren.settings.SettingsStore
 import timber.log.Timber
 import javax.inject.Inject
@@ -93,8 +94,13 @@ class WebViewConfigurator @Inject constructor(
 
       // Chrome's policy: insecure images, audio and video on an https page are upgraded to
       // https or dropped, and insecure scripts and frames are always blocked. Blocking every
-      // mixed resource outright breaks the images on a long tail of older sites for no gain.
-      mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+      // mixed resource outright breaks the images on a long tail of older sites, so that is
+      // reserved for HTTPS-only mode, where the user has asked for exactly that.
+      mixedContentMode = if (settings.httpsOnly) {
+        WebSettings.MIXED_CONTENT_NEVER_ALLOW
+      } else {
+        WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+      }
 
       userAgentString = userAgentFor(webView, desktop = settings.desktopMode)
     }
@@ -131,6 +137,27 @@ class WebViewConfigurator @Inject constructor(
     }
     if (WebViewFeature.isFeatureSupported(WebViewFeature.OFF_SCREEN_PRERASTER)) {
       WebSettingsCompat.setOffscreenPreRaster(webView.settings, true)
+    }
+
+    // GPC and DNT on every request of this view's profile, where the engine supports it.
+    if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+      runCatching {
+        PrivacyHeaders.apply(
+          WebViewCompat.getProfile(webView),
+          settings.sendDoNotTrack,
+        )
+      }
+    }
+
+    // Attribution Reporting lets a page register ad conversions with the Android advertising
+    // stack, outside the page and past the blocker. Off, on every engine that has the switch.
+    if (WebViewFeature.isFeatureSupported(WebViewFeature.ATTRIBUTION_REGISTRATION_BEHAVIOR)) {
+      runCatching {
+        WebSettingsCompat.setAttributionRegistrationBehavior(
+          webView.settings,
+          WebSettingsCompat.ATTRIBUTION_BEHAVIOR_DISABLED,
+        )
+      }
     }
 
     // Safe Browsing checks go to Google through the system, not through the page's proxy, so
@@ -213,10 +240,12 @@ class WebViewConfigurator @Inject constructor(
       jar.setAcceptThirdPartyCookies(webView, !settings.blockThirdPartyCookies)
       return
     }
-    CookieManager.getInstance().apply {
-      setAcceptCookie(!isPrivate)
-      setAcceptThirdPartyCookies(webView, !isPrivate && !settings.blockThirdPartyCookies)
-    }
+    // The default jar is shared by every normal tab, so only the per-view setting is touched
+    // here; a process-wide switch flipped from one tab would reach the others' requests.
+    CookieManager.getInstance().setAcceptThirdPartyCookies(
+      webView,
+      !isPrivate && !settings.blockThirdPartyCookies,
+    )
   }
 
   /**

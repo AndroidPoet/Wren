@@ -36,4 +36,7 @@ interface DownloadDao {
 
   @Query("DELETE FROM downloads WHERE status IN ('COMPLETE','FAILED','CANCELLED')")
   suspend fun clearFinished()
+
+  @Query("DELETE FROM downloads WHERE isPrivate = 1")
+  suspend fun clearPrivate()
 }

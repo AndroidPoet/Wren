@@ -14,15 +14,21 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.TextUtils
+import android.text.style.StyleSpan
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.webkit.CookieManager
+import android.webkit.HttpAuthHandler
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -49,6 +55,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.webkit.WebViewCompat
+import com.google.android.material.snackbar.Snackbar
 import dagger.hilt.android.AndroidEntryPoint
 import dev.androidpoet.wren.R
 import dev.androidpoet.wren.browser.AppLock
@@ -76,10 +83,12 @@ import dev.androidpoet.wren.browser.blocking.ServiceWorkerBlocker
 import dev.androidpoet.wren.browser.favicon.FaviconStore
 import dev.androidpoet.wren.browser.privacy.HttpsUpgrader
 import dev.androidpoet.wren.browser.privacy.LinkCleaner
+import dev.androidpoet.wren.browser.privacy.LinkUnwrapper
 import dev.androidpoet.wren.browser.privacy.PrivacyScripts
 import dev.androidpoet.wren.browser.tor.TorController
 import dev.androidpoet.wren.browser.tor.TorState
 import dev.androidpoet.wren.browser.tor.TorStatus
+import dev.androidpoet.wren.core.model.Download
 import dev.androidpoet.wren.core.model.SearchEngine
 import dev.androidpoet.wren.databinding.ActivityBrowserBinding
 import dev.androidpoet.wren.download.AndroidAppFile
@@ -340,8 +349,18 @@ class BrowserActivity :
     if (savedInstanceState == null) warnIfWebViewStale()
 
     if (savedInstanceState == null) {
-      privateProfile.destroy()
+      endPrivateSession()
       torProfile.destroyAll()
+      if (settings.clearPending) {
+        // The last run ended without a graceful exit; its clear-on-exit is owed now.
+        settings.clearPending = false
+        lifecycleScope.launch { privacyCleaner.clearSiteData(null) }
+      }
+    }
+    // Pages are torn down before the route under them changes, even while this screen is in
+    // the background and not observing: a Tor page outliving its proxy would go direct.
+    torController.onBeforeRouteChange = { toTor ->
+      if (toTor) retireAllWebViews() else discardAllWebViews()
     }
     pagesOnTor = settings.torMode
     if (pagesOnTor) torProfile.enterEnglish()
@@ -451,6 +470,7 @@ class BrowserActivity :
       onIntercept = { request -> interceptRequest(tabId, request) },
       onRewriteUrl = { url -> rewriteUrl(tabId, url) },
       onMainFrameError = { url, code -> onMainFrameError(tabId, url, code) },
+      onHttpAuth = ::promptHttpAuth,
       onFirstPaint = { url -> onFirstPaint(tabId, url) },
       onRendererGone = { view, didCrash -> onRendererGone(tabId, view, didCrash) },
     )
@@ -558,7 +578,8 @@ class BrowserActivity :
   }
 
   private fun warmLinkUnderFinger(webView: WebView) {
-    if (viewModel.tabManager.activeTab()?.isPrivate == true) return
+    val tab = viewModel.tabManager.activeTab() ?: return
+    if (tab.isPrivate) return
     val hit = webView.hitTestResult
     val link = hit.extra?.takeIf {
       (
@@ -567,6 +588,11 @@ class BrowserActivity :
         ) &&
         it.startsWith("https://", ignoreCase = true)
     } ?: return
+    // A touch that turns out to be a scroll must not announce itself to whatever third party
+    // the link under it points at; only the site's own origins are warmed on the way down.
+    val pageHost = HostMatcher.hostOf(shownUrlOf(tab)) ?: return
+    val linkHost = HostMatcher.hostOf(link) ?: return
+    if (!HostMatcher.isSameParty(linkHost, pageHost)) return
     speculativeLoader.warmOrigin(link)
   }
 
@@ -639,18 +665,15 @@ class BrowserActivity :
   }
 
   private fun downloadUrl(url: String) {
-    if (settings.torMode) {
-      // DownloadManager fetches from its own process, outside the proxy.
-      toast(R.string.tor_downloads_off)
-      return
-    }
-    val pageUrl = viewModel.tabManager.activeTab()?.url
+    val tab = viewModel.tabManager.activeTab()
+    val pageUrl = tab?.let(::shownUrlOf)
+    val isPrivate = tab?.isPrivate == true
     confirmIfAndroidApp(url, contentDisposition = null, mimeType = null) {
-      startLinkDownload(url, pageUrl)
+      startLinkDownload(url, pageUrl, isPrivate)
     }
   }
 
-  private fun startLinkDownload(url: String, pageUrl: String?) {
+  private fun startLinkDownload(url: String, pageUrl: String?, isPrivate: Boolean) {
     withDownloadsAccess {
       val id = downloadController.enqueue(
         url = url,
@@ -658,6 +681,7 @@ class BrowserActivity :
         contentDisposition = null,
         mimeType = null,
         pageUrl = pageUrl,
+        isPrivate = isPrivate,
       )
       toast(if (id != null) R.string.download_started else R.string.download_failed)
     }
@@ -794,6 +818,11 @@ class BrowserActivity :
   }
 
   private fun openTab(url: String, isPrivate: Boolean) {
+    if (isPrivate && !privateProfile.isSupported) {
+      // Without its own profile a private tab would read the normal cookie jar: not private.
+      toast(R.string.private_tabs_unsupported)
+      return
+    }
     saveActiveTabState()
     viewModel.tabManager.openTab(url, isPrivate)
     val tab = viewModel.tabManager.activeTab() ?: return
@@ -822,7 +851,13 @@ class BrowserActivity :
   /** Once no private tab is left, nothing it stored survives either. */
   private fun endPrivateSessionIfOver() {
     if (viewModel.tabManager.snapshots.value.any { it.isPrivate }) return
+    endPrivateSession()
+  }
+
+  /** Deletes the private profile and forgets the downloads its tabs started. */
+  private fun endPrivateSession() {
     privateProfile.destroy()
+    downloadController.forgetPrivate()
   }
 
   /** Save-Data follows the network: on for metered connections, off the moment Wi-Fi returns. */
@@ -873,7 +908,9 @@ class BrowserActivity :
    */
   private fun navigationPolicy(url: String): String {
     var rewritten = url
-    if (settings.stripTrackingParameters) rewritten = LinkCleaner.clean(rewritten)
+    if (settings.stripTrackingParameters) {
+      rewritten = LinkCleaner.clean(LinkUnwrapper.unwrap(rewritten))
+    }
     if (settings.httpsUpgrade && HostMatcher.hostOf(rewritten) !in httpOnlyHosts) {
       HttpsUpgrader.upgrade(rewritten)?.let { upgraded ->
         upgradedFrom[upgraded] = rewritten
@@ -894,6 +931,23 @@ class BrowserActivity :
     val insecureUrl = upgradedFrom.remove(url)?.takeUnless { settings.torMode }
     mainFrameErrors[tabId] = MainFrameError(url, errorCode, insecureUrl)
     renderErrorView()
+  }
+
+  /** A site behind HTTP authentication: the one dialog a browser cannot do without. */
+  private fun promptHttpAuth(handler: HttpAuthHandler, host: String, realm: String) {
+    val content = layoutInflater.inflate(R.layout.dialog_http_auth, null)
+    val username = content.findViewById<android.widget.EditText>(R.id.authUsername)
+    val password = content.findViewById<android.widget.EditText>(R.id.authPassword)
+    AlertDialog.Builder(this)
+      .setTitle(getString(R.string.http_auth_title, host))
+      .setMessage(realm.takeIf { it.isNotBlank() })
+      .setView(content)
+      .setPositiveButton(R.string.http_auth_sign_in) { _, _ ->
+        handler.proceed(username.text.toString(), password.text.toString())
+      }
+      .setNegativeButton(android.R.string.cancel) { _, _ -> handler.cancel() }
+      .setOnCancelListener { handler.cancel() }
+      .show()
   }
 
   /** The user has seen the warning and chosen the unencrypted page anyway. */
@@ -953,6 +1007,7 @@ class BrowserActivity :
       return
     }
     val view = liveWebViews[tabId] ?: return
+    if (!UrlFormatter.mayLoad(url)) return
     if (!torController.isNetworkReady) {
       whenNetworkReady { loadUrlInTab(tabId, url) }
       return
@@ -960,6 +1015,29 @@ class BrowserActivity :
     val routed = navigationPolicy(url)
     viewModel.tabManager.update(tabId, url = routed)
     view.loadUrl(routed, configurator.requestHeaders())
+  }
+
+  /**
+   * HTTPS-only mode's backstop. Navigations are upgraded before they leave, but a form posted
+   * to an http address never reaches the navigation callback; the request itself is the one
+   * place every plain-http document passes, and here it ends with a page saying why. A host
+   * the user excused on the error screen is let through for the session.
+   */
+  private fun refuseInsecureDocument(request: WebResourceRequest): WebResourceResponse? {
+    if (!settings.httpsOnly) return null
+    val url = request.url?.toString() ?: return null
+    if (!url.startsWith("http://", ignoreCase = true)) return null
+    val host = HostMatcher.hostOf(url) ?: return null
+    if (host in httpOnlyHosts || HttpsUpgrader.upgrade(url) == null) return null
+    val body = getString(R.string.https_only_blocked_page, UrlFormatter.prettyHost(url))
+    return WebResourceResponse(
+      "text/html",
+      "utf-8",
+      HTTPS_ONLY_STATUS,
+      "Blocked",
+      mapOf("Cache-Control" to "no-store"),
+      body.byteInputStream(),
+    )
   }
 
   /** Tor's tunnel port only carries CONNECT, so a plain-http page cannot travel through it. */
@@ -970,6 +1048,10 @@ class BrowserActivity :
 
   private fun loadUrl(requested: String) {
     val view = webView ?: return
+    if (!UrlFormatter.mayLoad(requested)) {
+      Timber.w("refused to load an address with a scheme the app never loads itself")
+      return
+    }
     // Tor just switched on and the proxy is not in front of WebView yet: whatever asked for
     // this load (a shared link, a long press, a popup) waits for it rather than going direct.
     if (!torController.isNetworkReady) {
@@ -1066,7 +1148,7 @@ class BrowserActivity :
   private fun interceptRequest(tabId: Long, request: WebResourceRequest): WebResourceResponse? {
     // The document itself must come back null instantly: anything else bypasses the
     // prefetch/prerender cache on activation and turns a warm navigation cold.
-    if (request.isForMainFrame) return null
+    if (request.isForMainFrame) return refuseInsecureDocument(request)
     val pageUrl = viewModel.tabManager.tab(tabId)?.url.orEmpty()
     val response = contentBlocker.intercept(request, pageUrl) ?: return null
     HostMatcher.hostOf(request.url?.toString().orEmpty())?.let { host ->
@@ -1196,7 +1278,7 @@ class BrowserActivity :
   }
 
   private fun renderOmnibox(url: String) = with(binding) {
-    omnibox.setText(UrlFormatter.prettyHost(url))
+    omnibox.setText(hostLabel(UrlFormatter.prettyHost(url)))
     securityIcon.setImageResource(
       when {
         url.isBlank() || url == UrlFormatter.NEW_TAB_URL -> R.drawable.ic_search
@@ -1208,6 +1290,33 @@ class BrowserActivity :
         else -> R.drawable.ic_lock_open
       },
     )
+  }
+
+  /**
+   * The host as the compact bar shows it: the registrable domain in bold, and a host too long
+   * for the bar cut from the *start*, so `accounts.google.com.security-check.example` is read
+   * from its real domain, not from the labels an attacker chose to put first.
+   */
+  private fun hostLabel(host: String): CharSequence {
+    if (host.isEmpty()) return host
+    val omnibox = binding.omnibox
+    val available = omnibox.width - omnibox.paddingStart - omnibox.paddingEnd
+    val shown: CharSequence = if (available > 0 && omnibox.paint.measureText(host) > available) {
+      TextUtils.ellipsize(host, omnibox.paint, available.toFloat(), TextUtils.TruncateAt.START)
+    } else {
+      host
+    }
+    val domain = HostMatcher.registrableDomain(host)
+    val start = shown.toString().lastIndexOf(domain)
+    if (domain.isEmpty() || start < 0) return shown
+    return SpannableString(shown).apply {
+      setSpan(
+        StyleSpan(Typeface.BOLD),
+        start,
+        start + domain.length,
+        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+      )
+    }
   }
 
   private fun setUpFindBar() = with(binding) {
@@ -1377,6 +1486,7 @@ class BrowserActivity :
             speculateFrom(suggestions)
           }
         }
+        launch { downloadController.completed.collect(::offerToOpen) }
         launch {
           viewModel.tabManager.snapshots.collectLatest { tabs ->
             binding.tabsButton.text = tabs.size.toString()
@@ -1456,10 +1566,13 @@ class BrowserActivity :
     pagesOnTor = onTor
     if (onTor) {
       retireAllWebViews()
+      // Private tabs come back on a Tor-scoped private profile, not the clear-net one.
+      endPrivateSession()
       torProfile.enterEnglish()
       whenNetworkReady { restoreActiveTab() }
     } else {
       discardAllWebViews()
+      endPrivateSession()
       torProfile.leaveEnglish()
       torProfile.rotate()
       viewModel.tabManager.closeAll()
@@ -1539,7 +1652,7 @@ class BrowserActivity :
       MenuAction.NEW_TAB -> openNewTab(isPrivate = false)
       MenuAction.NEW_PRIVATE_TAB -> openNewTab(isPrivate = true)
       MenuAction.BOOKMARK -> viewModel.toggleBookmark(
-        url = tab?.url.orEmpty(),
+        url = tab?.let(::shownUrlOf).orEmpty(),
         title = tab?.title.orEmpty(),
       ) { added -> toast(if (added) R.string.bookmark_added else R.string.bookmark_removed) }
 
@@ -1616,7 +1729,9 @@ class BrowserActivity :
     val host = HostMatcher.hostOf(url) ?: return null
     return SiteSecurityInfo(
       host = host,
-      isSecure = UrlFormatter.isSecure(url),
+      // An https address alone proves nothing: the screen may be showing Wren's own error page
+      // for it, and no verified document is on screen to vouch for the connection then.
+      isSecure = UrlFormatter.isSecure(url) && !mainFrameErrors.containsKey(tab.id),
       // Null for a page served over http, which is exactly what the panel should show.
       certificate = webView?.certificate,
       blockedHosts = blockStats.hostsFor(tab.id),
@@ -1673,8 +1788,9 @@ class BrowserActivity :
     settings.setKeptSignedIn(host, enabled)
   }
 
+  /** The host of the page on screen, never of one that has merely started loading. */
   private fun activeHost(): String? =
-    viewModel.tabManager.activeTab()?.url?.let(HostMatcher::hostOf)
+    viewModel.tabManager.activeTab()?.let(::shownUrlOf)?.let(HostMatcher::hostOf)
 
   private fun applySiteSettingsAndReload() {
     val view = webView ?: return
@@ -1716,7 +1832,7 @@ class BrowserActivity :
 
   /** Hands the page to Google's web translator - explicit, user-initiated, one page. */
   private fun translateCurrentPage() {
-    val url = viewModel.tabManager.activeTab()?.url ?: return
+    val url = viewModel.tabManager.activeTab()?.let(::shownUrlOf) ?: return
     if (url == UrlFormatter.NEW_TAB_URL) return
     val language = resources.configuration.locales[0].language
     val translated = "https://translate.google.com/translate?sl=auto&tl=" +
@@ -1833,7 +1949,7 @@ class BrowserActivity :
       val session = sessionRepository.get(settings.currentSession) ?: return@launch
       if (session.tabs.isEmpty()) return@launch
       discardAllWebViews()
-      privateProfile.destroy()
+      endPrivateSession()
       viewModel.tabManager.replaceAll(session.tabs.map { it.url to it.title })
       restoreActiveTab()
     }
@@ -1886,7 +2002,7 @@ class BrowserActivity :
     persistCurrentSession()
     settings.currentSession = name
     discardAllWebViews()
-    privateProfile.destroy()
+    endPrivateSession()
     viewModel.tabManager.replaceAll(emptyList())
     restoreActiveTab()
     persistCurrentSession()
@@ -1902,7 +2018,7 @@ class BrowserActivity :
       val session = sessionRepository.get(name) ?: return@launch
       settings.currentSession = name
       discardAllWebViews()
-      privateProfile.destroy()
+      endPrivateSession()
       viewModel.tabManager.replaceAll(session.tabs.map { it.url to it.title })
       restoreActiveTab()
     }
@@ -1920,7 +2036,7 @@ class BrowserActivity :
           settings.currentSession = SettingsStore.DEFAULT_SESSION
           val home = sessionRepository.get(SettingsStore.DEFAULT_SESSION)
           discardAllWebViews()
-          privateProfile.destroy()
+          endPrivateSession()
           viewModel.tabManager.replaceAll(
             home?.tabs?.map { it.url to it.title }.orEmpty(),
           )
@@ -1978,7 +2094,9 @@ class BrowserActivity :
       privacyCleaner.clearAll(webView, includeHistory = true)
       // Every page goes, private ones first so their profile can be deleted underneath them.
       discardAllWebViews()
-      privateProfile.destroy()
+      endPrivateSession()
+      // A fresh fingerprint seed: the canvas hash must not survive the identity it belonged to.
+      privacyScripts.rotateSeed()
       if (settings.torMode) torProfile.rotate()
       viewModel.tabManager.closeAll()
       restoreActiveTab()
@@ -2085,23 +2203,58 @@ class BrowserActivity :
       }
       return
     }
-    if (settings.torMode) {
-      // DownloadManager fetches from its own process, outside the proxy.
-      toast(R.string.tor_downloads_off)
+    if (url.startsWith("data:", ignoreCase = true)) {
+      // The address carries no name; only the page knows what its `download="…"` link said.
+      source.evaluateJavascript(DATA_NAME_SCRIPT.replace("__URL__", JSONObject.quote(url))) {
+        val name = runCatching { JSONObject("{\"n\":$it}").getString("n") }.getOrNull()
+        saveDownload(tabId, url, userAgent, contentDisposition, mimeType, name)
+      }
       return
     }
-    val pageUrl = viewModel.tabManager.tab(tabId)?.url
+    saveDownload(tabId, url, userAgent, contentDisposition, mimeType, suggestedName = null)
+  }
+
+  private fun saveDownload(
+    tabId: Long,
+    url: String,
+    userAgent: String,
+    contentDisposition: String,
+    mimeType: String,
+    suggestedName: String?,
+  ) {
+    val tab = viewModel.tabManager.tab(tabId)
     withDownloadsAccess {
       val id = downloadController.enqueue(
         url = url,
         userAgent = userAgent,
         contentDisposition = contentDisposition,
         mimeType = mimeType,
-        pageUrl = pageUrl,
-        isPrivate = viewModel.tabManager.tab(tabId)?.isPrivate == true,
+        pageUrl = tab?.let(::shownUrlOf),
+        isPrivate = tab?.isPrivate == true,
+        suggestedName = suggestedName,
       )
       toast(if (id != null) R.string.download_started else R.string.download_failed)
     }
+  }
+
+  /** A finished download is one tap from opening, without a trip to the downloads list. */
+  private fun offerToOpen(download: Download) {
+    val uri = downloadController.contentUriFor(download) ?: return
+    Snackbar.make(
+      binding.root,
+      getString(R.string.download_complete, download.fileName),
+      Snackbar.LENGTH_LONG,
+    )
+      .setAction(R.string.download_open) {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+          setDataAndType(uri, download.mimeType.ifBlank { "*/*" })
+          addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { startActivity(intent) }
+          .onFailure { toast(R.string.no_app_for_file) }
+      }
+      .setAnchorView(binding.menuButton)
+      .show()
   }
 
   private fun openExternally(url: String): Boolean {
@@ -2145,10 +2298,11 @@ class BrowserActivity :
       val fallback = intent.getStringExtra(BROWSER_FALLBACK_URL)
       if (fallback != null && UrlFormatter.isWebUrl(fallback)) {
         loadUrl(fallback)
-        true
       } else {
-        false
+        // Handing the address back to the engine would only put it in the omnibox as a page.
+        toast(R.string.no_app_for_link)
       }
+      true
     }
   }
 
@@ -2357,9 +2511,17 @@ class BrowserActivity :
     }
   }
 
+  override fun onStart() {
+    super.onStart()
+    // Back without the process dying: the exit the clear was waiting for did not happen.
+    settings.clearPending = false
+  }
+
   override fun onStop() {
     super.onStop()
     persistCurrentSession()
+    // If the system kills the process from here, the next cold start finishes the clear.
+    if (settings.clearOnExit) settings.clearPending = true
   }
 
   override fun onResume() {
@@ -2377,9 +2539,14 @@ class BrowserActivity :
   }
 
   override fun onDestroy() {
-    if (isFinishing && settings.clearOnExit) privacyCleaner.clearSiteData(webView)
+    torController.onBeforeRouteChange = null
+    if (isFinishing && settings.clearOnExit) {
+      // Best effort here; the pending flag set in onStop makes the next start finish it.
+      settings.clearPending = true
+      privacyCleaner.clearSiteDataNow(webView)
+    }
     if (isFinishing) discardAllWebViews() else retireAllWebViews()
-    if (isFinishing) privateProfile.destroy()
+    if (isFinishing) endPrivateSession()
     super.onDestroy()
   }
 
@@ -2387,6 +2554,18 @@ class BrowserActivity :
     const val DISABLED_ALPHA = 0.35f
     const val DIM_PILL_ALPHA = 0.55f
     const val TOR_CHECK_URL = "https://check.torproject.org/"
+    const val HTTPS_ONLY_STATUS = 403
+
+    /** The `download="…"` name of the link whose address is `__URL__`, or an empty string. */
+    private val DATA_NAME_SCRIPT = """
+      (function (u) {
+        var links = document.querySelectorAll('a[download]');
+        for (var i = 0; i < links.length; i++) {
+          if (links[i].href === u) return links[i].getAttribute('download') || '';
+        }
+        return '';
+      })(__URL__)
+    """.trimIndent()
     const val BROWSER_FALLBACK_URL = "browser_fallback_url"
     const val CHECKS_PREFS = "browser_checks"
     const val KEY_WARNED_WEBVIEW = "warned_webview_version"

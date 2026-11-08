@@ -6,6 +6,7 @@
 
 package dev.androidpoet.wren.core.database.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -19,4 +20,5 @@ data class DownloadEntity(
   val status: String,
   val localUri: String?,
   val createdAt: Long,
+  @ColumnInfo(defaultValue = "0") val isPrivate: Boolean = false,
 )

@@ -26,14 +26,17 @@
 
   /**
    * Known consent platforms. `detect` proves the platform is present, `reject` is its
-   * most-private control. Ordered roughly by how common they are.
+   * most-private control: a selector that means "reject" by the platform's own markup, never
+   * a close or a "more options" button, whose click would dismiss the banner while leaving
+   * the question unanswered or, worse, answered with the default. Where a platform's markup
+   * does not say which button rejects (`checkText`), the button's own label has to.
+   * Ordered roughly by how common they are.
    */
   var PLATFORMS = [
     {
       name: 'OneTrust',
       detect: '#onetrust-consent-sdk, #onetrust-banner-sdk',
-      reject: '#onetrust-reject-all-handler, .onetrust-close-btn-handler.banner-close-button, ' +
-        '.ot-pc-refuse-all-handler',
+      reject: '#onetrust-reject-all-handler, .ot-pc-refuse-all-handler',
     },
     {
       name: 'Cookiebot',
@@ -44,7 +47,74 @@
     {
       name: 'Quantcast',
       detect: '.qc-cmp2-container, #qc-cmp2-container',
-      reject: '.qc-cmp2-summary-buttons button[mode="secondary"], .qc-cmp2-footer button.css-1hy2vtq',
+      // The secondary button is "disagree" on some sites and "more options" on others.
+      reject: '.qc-cmp2-summary-buttons button[mode="secondary"], .qc-cmp2-footer button',
+      checkText: true,
+    },
+    {
+      name: 'Google Funding Choices',
+      detect: '.fc-consent-root',
+      reject: '.fc-cta-do-not-consent',
+    },
+    {
+      name: 'Iubenda',
+      detect: '#iubenda-cs-banner',
+      reject: '.iubenda-cs-reject-btn',
+    },
+    {
+      name: 'Klaro',
+      detect: '.klaro .cookie-notice, .klaro .cookie-modal',
+      reject: '.klaro .cn-decline, .klaro .cm-btn-decline',
+    },
+    {
+      name: 'Consentmanager',
+      detect: '#cmpbox, #cmpwrapper',
+      reject: '.cmpboxbtnno, .cmpboxbtn.cmpboxbtnno',
+    },
+    {
+      name: 'Axeptio',
+      detect: '#axeptio_overlay',
+      reject: '#axeptio_btn_dismiss',
+    },
+    {
+      name: 'tarteaucitron',
+      detect: '#tarteaucitronRoot, #tarteaucitronAlertBig',
+      reject: '#tarteaucitronAllDenied2, .tarteaucitronDeny',
+    },
+    {
+      name: 'Cookie Information',
+      detect: '#coiOverlay, #coi-banner-wrapper',
+      reject: '#declineButton, .coi-banner__decline',
+    },
+    {
+      name: 'Cookie Script',
+      detect: '#cookiescript_injected',
+      reject: '#cookiescript_reject',
+    },
+    {
+      name: 'Moove GDPR',
+      detect: '#moove_gdpr_cookie_info_bar',
+      reject: '.moove-gdpr-infobar-reject-btn',
+    },
+    {
+      name: 'Shopify',
+      detect: '#shopify-pc__banner',
+      reject: '#shopify-pc__banner__btn-decline',
+    },
+    {
+      name: 'Civic',
+      detect: '#ccc',
+      reject: '#ccc-notify-reject, #ccc-reject-settings',
+    },
+    {
+      name: 'HubSpot',
+      detect: '#hs-eu-cookie-confirmation',
+      reject: '#hs-eu-decline-button',
+    },
+    {
+      name: 'Ketch',
+      detect: '#lanyard_root',
+      reject: 'button[aria-label="Reject All"], button[data-testid="banner-reject"]',
     },
     {
       name: 'Didomi',
@@ -96,9 +166,15 @@
   // Only text inside something that says it is a consent dialog is eligible for the fallback.
   var CONSENT_CONTAINER = new RegExp('cookie|consent|gdpr|cmp|privacy-(banner|notice)', 'i');
   var REJECT_TEXT = new RegExp(
-    '^(reject all|reject|decline all|decline|refuse all|refuse|' +
+    '^(reject all|reject( all)? cookies|reject|decline all|decline( all)? cookies|decline|' +
+    'refuse all|refuse|disagree( and close)?|do not (consent|accept|agree)|' +
     'only necessary|necessary only|only essential|essential only|' +
-    'use necessary cookies only|continue without accepting|deny all|deny)$',
+    'accept (only )?(necessary|essential)( cookies)?|use necessary cookies only|' +
+    'continue without (accepting|agreeing)|deny all|deny|' +
+    'alle ablehnen|ablehnen|nur notwendige( cookies)?|' +
+    'tout refuser|refuser|continuer sans accepter|' +
+    'rechazar todo|rechazar|rifiuta tutto|rifiuta|alles afwijzen|afwijzen|' +
+    'odrzuć wszystkie|odrzuć|recusar tudo|recusar|avvisa alla|neka alla)$',
     'i'
   );
 
@@ -121,12 +197,28 @@
     return false;
   }
 
+  /** Like clickFirst, but only a control whose own label says reject is clicked. */
+  function clickFirstRejecting(selector) {
+    var nodes = document.querySelectorAll(selector);
+    for (var i = 0; i < nodes.length; i++) {
+      var label = (nodes[i].innerText || nodes[i].textContent || '').trim();
+      if (visible(nodes[i]) && label.length <= 40 && REJECT_TEXT.test(label)) {
+        nodes[i].click();
+        return true;
+      }
+    }
+    return false;
+  }
+
   function tryKnownPlatforms() {
     for (var i = 0; i < PLATFORMS.length; i++) {
       var platform = PLATFORMS[i];
       try {
         if (!document.querySelector(platform.detect)) continue;
-        if (clickFirst(platform.reject)) return platform.name;
+        var clicked = platform.checkText
+          ? clickFirstRejecting(platform.reject)
+          : clickFirst(platform.reject);
+        if (clicked) return platform.name;
       } catch (ignored) {
         // A malformed selector on one platform must not stop the rest.
       }

@@ -116,18 +116,21 @@ class CosmeticFilter @Inject constructor(
     install(webView)
     configured[webView] = pageUrl
 
-    val host = pageUrl?.let(HostMatcher::hostOf)
-    val wanted = settings.blockAds && (host == null || !settings.isAllowlisted(host))
+    // Installed whenever blocking is on, whatever page the view shows right now: the script is
+    // document-start, so it must already be in place when the tab moves from an exempt site to
+    // a protected one. The exemption is honoured per document instead, in [respond].
+    val wanted = settings.blockAds
     val installed = handlers[webView]
     val engine = blocklist.engineOrNull
 
-    if (wanted && engine != null && (installed == null || installed.version != engine.version)) {
+    val version = engine?.let { scriptVersion(it) } ?: 0
+    if (wanted && engine != null && (installed == null || installed.version != version)) {
       installed?.let { runCatching { it.handler.remove() } }
       runCatching {
         WebViewCompat.addDocumentStartJavaScript(webView, scriptFor(engine), ALLOWED_ORIGINS)
       }.onFailure { Timber.w(it, "could not install cosmetic filtering") }
         .getOrNull()
-        ?.let { handlers[webView] = Installed(it, engine.version) }
+        ?.let { handlers[webView] = Installed(it, version) }
     } else if (!wanted && installed != null) {
       runCatching { installed.handler.remove() }
       handlers.remove(webView)
@@ -140,13 +143,22 @@ class CosmeticFilter @Inject constructor(
    * faster than an object literal of this size), then the injector. Nothing is left on the
    * page's global object, so a page cannot tell this browser from any other Chromium WebView.
    */
+  /** The script changes with the engine and with the sites the user has exempted. */
+  private fun scriptVersion(engine: BlockEngine): Int =
+    engine.version * 31 + settings.allowlistedHosts.sorted().hashCode()
+
   private fun scriptFor(engine: BlockEngine): String {
-    cachedScript?.let { if (it.first == engine.version) return it.second }
+    val version = scriptVersion(engine)
+    cachedScript?.let { if (it.first == version) return it.second }
     val table = JSONObject.quote(engine.cosmetics.scriptletTableJson())
     val name = JSONObject.quote(CHANNEL)
+    // Scriptlets run before the page can be asked anything, so the exemptions travel with the
+    // script; a change to them re-installs it (see [scriptVersion]).
+    val exempt = JSONObject.quote(JSONArray(settings.allowlistedHosts.sorted()).toString())
     val script = buildString(library.length + table.length + injector.length + 256) {
       append("(function () {\n")
       append("var DEBUG = ").append(BuildConfig.DEBUG).append(";\n")
+      append("var EXEMPT_HOSTS = JSON.parse(").append(exempt).append(");\n")
       append("var CHANNEL = null;\n")
       append("try { CHANNEL = window[").append(name).append("] || null; ")
       append("delete window[").append(name).append("]; } catch (e) {}\n")
@@ -155,7 +167,7 @@ class CosmeticFilter @Inject constructor(
       append(injector)
       append("\n})();\n")
     }
-    cachedScript = engine.version to script
+    cachedScript = version to script
     return script
   }
 

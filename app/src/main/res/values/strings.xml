@@ -63,8 +63,13 @@
   <string name="download_remove">Remove from list</string>
   <string name="download_cancel">Cancel</string>
   <string name="download_retry">Retry</string>
+  <string name="download_pause">Pause</string>
+  <string name="download_resume">Resume</string>
+  <string name="download_progress_of">%1$s of %2$s</string>
+  <string name="download_complete">Downloaded %1$s</string>
   <string name="share_file">Share file</string>
   <string name="no_app_for_file">No app can open this file</string>
+  <string name="no_app_for_link">No app on this device can open this link</string>
   <string name="download_failed">Could not download that file</string>
   <string name="apk_download_title">Download an Android app?</string>
   <string name="apk_download_message">This file installs an app on your phone. Only install apps from sources you trust.</string>
@@ -111,6 +116,9 @@
   <string name="burn_confirm">Close all tabs and delete history, cookies and cache?</string>
   <string name="burn_action">Clear</string>
   <string name="https_upgrade">Upgrade to HTTPS</string>
+  <string name="https_only">HTTPS-only mode</string>
+  <string name="https_only_summary">Refuses unencrypted pages and mixed content outright instead of falling back. Sites you excuse on the error screen stay allowed until you close Wren.</string>
+  <string name="https_only_blocked_page" translatable="false"><![CDATA[<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Blocked</title><style>body{font-family:sans-serif;margin:0;padding:48px 24px;background:#fbf7f1;color:#2b2320}h1{font-size:20px;margin:0 0 12px}p{line-height:1.5;color:#5a4e48}code{word-break:break-all}</style></head><body><h1>Insecure connection refused</h1><p>HTTPS-only mode is on, and <code>%1$s</code> was asked for over plain HTTP. Nothing was sent.</p><p>To allow this site for the rest of the session, open it from the address bar and choose to continue on its error screen, or turn HTTPS-only mode off in Settings.</p></body></html>]]></string>
   <string name="https_upgrade_summary">Try an encrypted connection first and fall back only if the site cannot serve one.</string>
   <string name="error_title">Can\'t reach this site</string>
   <string name="error_retry">Try again</string>
@@ -248,8 +256,8 @@
   <string name="tor">Tor</string>
   <string name="section_tor">Tor</string>
   <string name="tor_mode">Route through Tor</string>
-  <string name="tor_mode_summary">Sends every tab through three volunteer relays of the Tor network, so sites see a Tor exit address instead of yours. Tor pages keep their own cookies and storage, apart from your normal browsing, and nothing they visit is written to history. Each site gets its own circuit and pages see a UTC clock in English. Pages load slower, downloads pause, and sites without HTTPS are refused. Turning Tor off closes the pages opened while it was on. Wren is not the Tor Browser: sites can still tell browsers apart.</string>
-  <string name="tor_explainer">Every tab and every request the app makes leaves through three volunteer relays. Sites see a Tor exit address, not yours. Tor pages keep their own cookies and storage, apart from your normal browsing, nothing they visit is written to history, each site gets its own circuit, and pages see a UTC clock in English. Pages load slower, downloads pause, and sites without HTTPS are refused. Turning Tor off closes the pages opened while it was on. Wren is not the Tor Browser: sites can still tell browsers apart.</string>
+  <string name="tor_mode_summary">Sends every tab through three volunteer relays of the Tor network, so sites see a Tor exit address instead of yours. Tor pages keep their own cookies and storage, apart from your normal browsing, and nothing they visit is written to history. Each site gets its own circuit and pages see a UTC clock in English. Pages load slower, downloads run inside Wren through Tor, and sites without HTTPS are refused. Turning Tor off closes the pages opened while it was on. Wren is not the Tor Browser: sites can still tell browsers apart.</string>
+  <string name="tor_explainer">Every tab and every request the app makes leaves through three volunteer relays. Sites see a Tor exit address, not yours. Tor pages keep their own cookies and storage, apart from your normal browsing, nothing they visit is written to history, each site gets its own circuit, and pages see a UTC clock in English. Pages load slower, downloads run inside Wren through Tor, and sites without HTTPS are refused. Turning Tor off closes the pages opened while it was on. Wren is not the Tor Browser: sites can still tell browsers apart.</string>
   <string name="tor_on">Connected through the Tor network</string>
   <string name="tor_connecting">Connecting to Tor · %1$d%%</string>
   <string name="tor_stopping">Disconnecting from Tor</string>
@@ -270,7 +278,11 @@
   <string name="tor_external_app_open">Open</string>
   <string name="tor_new_identity_confirm">Close every tab, clear cookies, site data and history, and switch to new Tor circuits?</string>
   <string name="tor_verify">Check connection</string>
-  <string name="tor_downloads_off">Downloads pause while Tor is on</string>
+  <string name="private_tabs_unsupported">This device\'s WebView cannot keep a separate profile, so private tabs are unavailable</string>
+  <string name="http_auth_title">Sign in to %1$s</string>
+  <string name="http_auth_username">Username</string>
+  <string name="http_auth_password">Password</string>
+  <string name="http_auth_sign_in">Sign in</string>
   <string name="tor_unsupported">This device\'s WebView cannot route through a proxy, so Tor is unavailable</string>
   <string name="error_tor_connecting">Tor is still connecting. The page loads once the circuit is ready.</string>
   <string name="error_tor_plain_http">This site only works without HTTPS, which Tor mode does not carry.</string>

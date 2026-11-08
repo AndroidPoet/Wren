@@ -420,6 +420,22 @@
         android:textAppearance="@style/TextAppearance.Wren.Caption" />
 
       <com.google.android.material.switchmaterial.SwitchMaterial
+        android:id="@+id/httpsOnlySwitch"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="48dp"
+        android:text="@string/https_only"
+        android:textColor="@color/ink"
+        android:textSize="15sp" />
+
+      <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingBottom="10dp"
+        android:text="@string/https_only_summary"
+        android:textAppearance="@style/TextAppearance.Wren.Caption" />
+
+      <com.google.android.material.switchmaterial.SwitchMaterial
         android:id="@+id/httpsUpgradeSwitch"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

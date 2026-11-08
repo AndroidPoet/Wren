@@ -200,6 +200,11 @@ class SettingsActivity : AppCompatActivity() {
       write = { settings.trimReferrers = it },
     )
     bindSwitch(
+      view = binding.httpsOnlySwitch,
+      read = { settings.httpsOnly },
+      write = { settings.httpsOnly = it },
+    )
+    bindSwitch(
       view = binding.httpsUpgradeSwitch,
       read = { settings.httpsUpgrade },
       write = { settings.httpsUpgrade = it },

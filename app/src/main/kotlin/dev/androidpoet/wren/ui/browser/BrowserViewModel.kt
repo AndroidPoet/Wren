@@ -73,8 +73,11 @@ class BrowserViewModel @Inject constructor(
       } else {
         suggestionRepository.suggestions(
           query = text,
-          // While Tor is still starting, a lookup would leave from the real address.
-          includeRemote = settings.remoteSuggestions && !TorProxySelector.wouldLeakFor(settings),
+          // While Tor is still starting, a lookup would leave from the real address; from a
+          // private tab, what is being typed is nobody's business until it is submitted.
+          includeRemote = settings.remoteSuggestions &&
+            !TorProxySelector.wouldLeakFor(settings) &&
+            tabManager.activeTab()?.isPrivate != true,
           // A custom engine has no known autocomplete endpoint; the default one stands in.
           engine = if (settings.usingCustomSearch) SearchEngine.DEFAULT else settings.searchEngine,
           onError = { Timber.w("suggestion lookup failed: %s", it) },

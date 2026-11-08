@@ -29,15 +29,15 @@ import javax.inject.Singleton
 @Singleton
 class AppLock internal constructor(
   private val settings: SettingsStore,
-  private val authenticatorAvailable: (FragmentActivity) -> Boolean,
+  /** A [BiometricManager] `canAuthenticate` result code for the activity's device. */
+  private val authenticatorStatus: (FragmentActivity) -> Int,
 ) : DefaultLifecycleObserver {
 
   @Inject
   constructor(settings: SettingsStore) : this(
     settings,
     { activity ->
-      BiometricManager.from(activity)
-        .canAuthenticate(BIOMETRIC_WEAK or DEVICE_CREDENTIAL) == BiometricManager.BIOMETRIC_SUCCESS
+      BiometricManager.from(activity).canAuthenticate(BIOMETRIC_WEAK or DEVICE_CREDENTIAL)
     },
   )
 
@@ -71,7 +71,8 @@ class AppLock internal constructor(
     unlocked = false
   }
 
-  fun canAuthenticate(activity: FragmentActivity): Boolean = authenticatorAvailable(activity)
+  fun canAuthenticate(activity: FragmentActivity): Boolean =
+    authenticatorStatus(activity) == BiometricManager.BIOMETRIC_SUCCESS
 
   /**
    * Runs the gate if it is armed. [onLocked] fires first so the caller can hide its content;
@@ -91,13 +92,17 @@ class AppLock internal constructor(
       onUnlocked()
       return
     }
-    if (!canAuthenticate(activity)) {
+    if (authenticatorStatus(activity) == BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED) {
+      // The device has no screen lock any more: there is nothing left to ask for, and a lock
+      // that can never open is worse than one honestly reported as gone.
       settings.appLock = false
       shieldRecents(activity)
       onDisarmed()
       onUnlocked()
       return
     }
+    // Any other trouble - sensor busy, hardware unavailable, an unknown status - keeps the
+    // gate closed: the prompt is still shown and its own error path ends in [onFailed].
     onLocked()
     val prompt = BiometricPrompt(
       activity,

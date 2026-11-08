@@ -6,6 +6,8 @@
 
 package dev.androidpoet.wren
 
+import android.net.Uri
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
@@ -23,12 +25,64 @@ import org.robolectric.RobolectricTestRunner
 class WrenWebViewClientTest {
 
   private val finished = mutableListOf<String>()
+  private val handedOff = mutableListOf<String>()
+  private val rewritten = mutableListOf<String>()
   private val view = WebView(ApplicationProvider.getApplicationContext())
   private val client = WrenWebViewClient(
     onPageStarted = {},
     onPageFinished = { url, _ -> finished += url },
-    onExternalIntent = { false },
+    onExternalIntent = {
+      handedOff += it
+      true
+    },
+    onRewriteUrl = { url ->
+      rewritten += url
+      url.replace("http://", "https://")
+    },
   )
+
+  private fun request(url: String, mainFrame: Boolean, gesture: Boolean) =
+    object : WebResourceRequest {
+      override fun getUrl(): Uri = Uri.parse(url)
+      override fun isForMainFrame() = mainFrame
+      override fun isRedirect() = false
+      override fun hasGesture() = gesture
+      override fun getMethod() = "GET"
+      override fun getRequestHeaders(): Map<String, String> = emptyMap()
+    }
+
+  @Test
+  fun `only the document's own navigation is rewritten, never a frame's`() {
+    val frame = request("http://tracker.example/pixel", mainFrame = false, gesture = false)
+    assertThat(client.shouldOverrideUrlLoading(view, frame)).isFalse()
+    assertThat(rewritten).isEmpty()
+
+    val document = request("http://news.example/", mainFrame = true, gesture = true)
+    assertThat(client.shouldOverrideUrlLoading(view, document)).isTrue()
+    assertThat(rewritten).containsExactly("http://news.example/")
+  }
+
+  @Test
+  fun `a tapped app link leaves for the other app, an unprompted one is swallowed`() {
+    val tapped = request("whatsapp://send?text=hi", mainFrame = true, gesture = true)
+    assertThat(client.shouldOverrideUrlLoading(view, tapped)).isTrue()
+    assertThat(handedOff).containsExactly("whatsapp://send?text=hi")
+
+    val frame = request("market://details?id=x", mainFrame = false, gesture = false)
+    assertThat(client.shouldOverrideUrlLoading(view, frame)).isTrue()
+    val redirect = request("intent://scan/#Intent;end", mainFrame = true, gesture = false)
+    assertThat(client.shouldOverrideUrlLoading(view, redirect)).isTrue()
+    assertThat(handedOff).hasSize(1)
+  }
+
+  @Test
+  fun `a top frame steered to a script or data address is refused`() {
+    assertThat(client.shouldOverrideUrlLoading(view, request("javascript:void(0)", true, false)))
+      .isTrue()
+    assertThat(client.shouldOverrideUrlLoading(view, request("data:text/html,x", true, false)))
+      .isTrue()
+    assertThat(handedOff).isEmpty()
+  }
 
   @Test
   fun `a normal load finishes once, at the end, not at commit`() {

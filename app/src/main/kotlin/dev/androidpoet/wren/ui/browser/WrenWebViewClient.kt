@@ -8,6 +8,7 @@ package dev.androidpoet.wren.ui.browser
 
 import android.graphics.Bitmap
 import android.os.Build
+import android.webkit.HttpAuthHandler
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -30,6 +31,9 @@ class WrenWebViewClient(
   /** Returns a replacement address to load instead, or null to let the request proceed. */
   private val onRewriteUrl: (url: String) -> String? = { null },
   private val onMainFrameError: (url: String, errorCode: Int) -> Unit = { _, _ -> },
+  /** A server asked for HTTP credentials; the handler must be answered or cancelled. */
+  private val onHttpAuth: (handler: HttpAuthHandler, host: String, realm: String) -> Unit =
+    { handler, _, _ -> handler.cancel() },
   private val onFirstPaint: (url: String) -> Unit = {},
   /** Returns true once the dead [WebView] has been dealt with; false lets the app die with it. */
   private val onRendererGone: (view: WebView, didCrash: Boolean) -> Boolean = { _, _ -> false },
@@ -51,6 +55,15 @@ class WrenWebViewClient(
   override fun onPageCommitVisible(view: WebView, url: String) {
     super.onPageCommitVisible(view, url)
     onFirstPaint(url)
+  }
+
+  override fun onReceivedHttpAuthRequest(
+    view: WebView,
+    handler: HttpAuthHandler,
+    host: String,
+    realm: String,
+  ) {
+    onHttpAuth(handler, host, realm)
   }
 
   override fun onReceivedError(
@@ -76,8 +89,12 @@ class WrenWebViewClient(
     )
 
   private fun handleUrl(url: String, isMainFrame: Boolean, mayLeaveApp: Boolean): Boolean = when {
-    url.startsWith("http://") || url.startsWith("https://") -> rewrite(url)
-    UrlFormatter.isNonWebScheme(url) -> if (mayLeaveApp) onExternalIntent(url) else true
+    // Only the document's own navigation is rewritten: the replacement is loaded into the tab,
+    // and a frame steering the tab that way would be a navigation the page never authorised.
+    url.startsWith("http://") || url.startsWith("https://") -> isMainFrame && rewrite(url)
+    // Anything with a scheme the engine cannot render belongs to another app: a store link, a
+    // messenger, or the custom scheme a sign-in flow returns to.
+    UrlFormatter.isExternalScheme(url) -> if (mayLeaveApp) onExternalIntent(url) else true
     // A page navigating the top frame to data: or javascript: is a phishing shape, not a link.
     isMainFrame && UrlFormatter.isScriptOrDataUrl(url) -> true
     else -> false

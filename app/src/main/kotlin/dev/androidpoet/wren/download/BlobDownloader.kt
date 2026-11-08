@@ -102,7 +102,7 @@ class BlobDownloader @Inject constructor(
     val id = json.optString("id")
     when (json.optString("type")) {
       "chunk" -> onChunk(id, json.optString("data"))
-      "done" -> onDone(id, json.optString("mime"))
+      "done" -> onDone(id, json.optString("mime"), json.optString("name"))
       "error" -> abort(id, json.optString("reason"))
     }
   }
@@ -139,7 +139,7 @@ class BlobDownloader @Inject constructor(
     }.onFailure { abort(id, it.message.orEmpty()) }
   }
 
-  private fun onDone(id: String, mimeType: String) {
+  private fun onDone(id: String, mimeType: String, suggestedName: String) {
     val transfer = transfers.remove(id) ?: return
     scope.launch {
       runCatching {
@@ -151,7 +151,11 @@ class BlobDownloader @Inject constructor(
           mime = "application/octet-stream"
         }
         val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "bin"
-        val name = "download-" + System.currentTimeMillis() + "." + extension
+        // The page's own `download="…"` name when the link carried one, cleaned like any other.
+        val name = suggestedName.takeIf { it.isNotBlank() }
+          ?.let { DownloadNames.sanitize(it) }
+          ?.takeIf { it.isNotBlank() && it != "." }
+          ?: ("download-" + System.currentTimeMillis() + "." + extension)
         val uri = publish(transfer.file, name, mime) ?: error("could not publish")
         repository.record(
           Download(
@@ -205,7 +209,12 @@ class BlobDownloader @Inject constructor(
             var offset = 0;
             function next() {
               if (offset >= blob.size) {
-                post({ type: 'done', mime: blob.type || __MIME__ });
+                var name = '';
+                try {
+                  var anchor = document.querySelector('a[download][href="' + __URL__ + '"]');
+                  if (anchor) name = anchor.getAttribute('download') || '';
+                } catch (ignored) {}
+                post({ type: 'done', mime: blob.type || __MIME__, name: name });
                 return;
               }
               var reader = new FileReader();

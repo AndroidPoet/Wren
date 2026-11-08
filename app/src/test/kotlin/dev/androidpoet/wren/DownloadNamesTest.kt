@@ -9,7 +9,10 @@ package dev.androidpoet.wren
 import com.google.common.truth.Truth.assertThat
 import dev.androidpoet.wren.download.DownloadNames
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 
+@RunWith(RobolectricTestRunner::class)
 class DownloadNamesTest {
 
   @Test
@@ -41,5 +44,42 @@ class DownloadNamesTest {
 
     assertThat(name).hasLength(200)
     assertThat(name).endsWith(".gz")
+  }
+
+  @Test
+  fun `a name the server states is kept without a guessed extension`() {
+    assertThat(
+      DownloadNames.choose(
+        "https://github.com/x/releases/download/v1/SHA256SUMS",
+        "attachment; filename=SHA256SUMS",
+        "application/octet-stream",
+      ),
+    ).isEqualTo("SHA256SUMS")
+    assertThat(
+      DownloadNames.choose(
+        "https://a.com/dl?id=1",
+        "attachment; filename=\"report final.pdf\"",
+        null,
+      ),
+    ).isEqualTo("report final.pdf")
+    assertThat(
+      DownloadNames.choose(
+        "https://a.com/dl",
+        "attachment; filename=\"plain.txt\"; filename*=UTF-8''na%C3%AFve%20r%C3%A9sum%C3%A9.txt",
+        "text/plain",
+      ),
+    ).isEqualTo("naïve résumé.txt")
+  }
+
+  @Test
+  fun `without a stated name the address and type are guessed from`() {
+    assertThat(DownloadNames.choose("https://a.com/files/photo.JPG", null, "image/jpeg"))
+      .isEqualTo("photo.JPG")
+    assertThat(DownloadNames.choose("https://a.com/files/sums", "attachment", "text/plain"))
+      .isEqualTo("sums.txt")
+    assertThat(
+      DownloadNames.choose("https://a.com/x", "attachment; filename=\"../../etc/passwd\"", null),
+    )
+      .isEqualTo("_.._etc_passwd")
   }
 }

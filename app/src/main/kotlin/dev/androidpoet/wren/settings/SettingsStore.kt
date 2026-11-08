@@ -74,10 +74,19 @@ class SettingsStore @Inject constructor(
     get() = preferences.getBoolean(KEY_DO_NOT_TRACK, true)
     set(value) = preferences.edit { putBoolean(KEY_DO_NOT_TRACK, value) }
 
-  /** Wipes cookies, cache and history when the last browser task is dismissed. */
+  /** Wipes cookies and cache when the browser is left; bookmarks and history stay. */
   var clearOnExit: Boolean
     get() = preferences.getBoolean(KEY_CLEAR_ON_EXIT, false)
     set(value) = preferences.edit { putBoolean(KEY_CLEAR_ON_EXIT, value) }
+
+  /**
+   * Set when the browser goes to the background with [clearOnExit] on, cleared when it comes
+   * back. A cold start that finds it set knows the process died in between and finishes the
+   * clear that the exit never got to run.
+   */
+  var clearPending: Boolean
+    get() = preferences.getBoolean(KEY_CLEAR_PENDING, false)
+    set(value) = preferences.edit(commit = true) { putBoolean(KEY_CLEAR_PENDING, value) }
 
   var recordHistory: Boolean
     get() = preferences.getBoolean(KEY_RECORD_HISTORY, true)
@@ -214,6 +223,14 @@ class SettingsStore @Inject constructor(
     get() = preferences.getBoolean(KEY_HTTPS_UPGRADE, true)
     set(value) = preferences.edit { putBoolean(KEY_HTTPS_UPGRADE, value) }
 
+  /**
+   * Refuse plain-http documents and mixed content outright, instead of upgrading and falling
+   * back. A site the user has excused on the error page is the one exception, for the session.
+   */
+  var httpsOnly: Boolean
+    get() = preferences.getBoolean(KEY_HTTPS_ONLY, false)
+    set(value) = preferences.edit { putBoolean(KEY_HTTPS_ONLY, value) }
+
   /** Strip campaign and click identifiers from addresses before loading them. */
   var stripTrackingParameters: Boolean
     get() = preferences.getBoolean(KEY_STRIP_TRACKING, true)
@@ -278,9 +295,9 @@ class SettingsStore @Inject constructor(
     desktopHosts = updated
   }
 
-  private var allowlistedHosts: Set<String>
+  var allowlistedHosts: Set<String>
     get() = allowlistCached
-    set(value) {
+    private set(value) {
       allowlistCached = HashSet(value)
       preferences.edit { putStringSet(KEY_ALLOWLIST, value) }
     }
@@ -385,6 +402,8 @@ class SettingsStore @Inject constructor(
     private const val KEY_TRIM_REFERRERS = "trim_referrers"
     private const val KEY_HTTPS_UPGRADE = "https_upgrade"
     private const val KEY_STRIP_TRACKING = "strip_tracking"
+    private const val KEY_HTTPS_ONLY = "https_only"
+    private const val KEY_CLEAR_PENDING = "clear_pending"
     private const val KEY_BLOCK_ADS = "block_ads"
     private const val KEY_ALLOWLIST = "blocking_allowlist"
     private const val KEY_JS_OFF_HOSTS = "js_off_hosts"

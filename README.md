@@ -35,14 +35,18 @@
 - **Private tabs** on their own WebView profile: no history, cookies or cache written.
 - **Tor mode** through the Guardian Project's tor-android.
 - **App lock** using the device's own screen lock.
-- HTTPS upgrade, tracking parameters stripped from links, fingerprinting and WebRTC leak
-  protection, third-party cookies blocked, `DNT` and `Sec-GPC` sent, form data never saved,
-  location and camera/mic requests denied.
+- HTTPS upgrade and an HTTPS-only mode, tracking parameters stripped from links, bounce
+  redirectors and AMP cache links unwrapped, fingerprinting and WebRTC leak protection with
+  noise that is stable per site, third-party cookies blocked, Attribution Reporting off, `DNT`
+  and Global Privacy Control exposed to pages, form data never saved, location and camera/mic
+  requests denied.
 
 **Browsing**
 - DuckDuckGo by default; Brave, Startpage, Mojeek, Wikipedia and Google available. `!bangs` work
   in the address bar.
 - Tabs, history, bookmarks, downloads, reader mode, find in page, desktop mode and QR sharing.
+- Downloads go through the system download manager; in Tor mode they run inside Wren through
+  Tor, with a notification, pause and resume.
 
 ## What leaves your phone
 
@@ -74,10 +78,11 @@ engine. Before relying on it for anything sensitive, know the limits:
 - **Tor mode is not Tor Browser.** It sends every tab and every request the app makes through
   Tor, keeps Tor pages in a storage profile of their own that is thrown away when Tor is turned
   off, writes nothing they visit to history, gives each destination host its own circuit,
-  refuses plain HTTP, pauses downloads, removes WebRTC from pages, shows them a UTC clock and
-  answers in English. It does not make you look like other Tor users: fingerprint protection
-  adds noise that changes each time Wren starts rather than giving every user the same answers,
-  and the screen size and fonts stay visible. Tor Browser isolates circuits by the site you are
+  refuses plain HTTP, runs downloads itself through Tor, removes WebRTC from pages, shows them
+  a UTC clock and answers in English. It does not make you look like other Tor users:
+  fingerprint protection gives each site its own noise, the same for that site until you clear
+  browsing data or restart Wren, rather than giving every user the same answers, and the screen
+  size and fonts stay visible. Tor Browser isolates circuits by the site you are
   on; a WebView cannot, so Wren isolates them by the host being fetched. New identity closes
   every tab, deletes the Tor profile, moves the tunnel so no old connection survives, and asks
   Tor for new circuits. Web Workers do not see the clock and WebRTC shims; a page that measures
@@ -95,6 +100,10 @@ engine. Before relying on it for anything sensitive, know the limits:
   named.
 - **Safe Browsing talks to Google.** Short hashed prefixes of addresses go to Google through
   Android, except in Tor mode. There is no switch for it yet.
+- **The privacy signals are visible to scripts, not yet in headers.** Pages can read Global
+  Privacy Control and Do Not Track from JavaScript. Sending them as `Sec-GPC` and `DNT` request
+  headers needs a WebView that lets an app add a header to every request; Wren asks for that and
+  no shipping engine grants it yet, so a site that only reads the header does not see them.
 - **Nobody independent has audited Wren.** The source is public and reviews of it are
   welcome, but reading the source shows what Wren intends to do, not that it is safe against a
   determined adversary.

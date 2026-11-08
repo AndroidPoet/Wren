@@ -32,14 +32,28 @@ class PrivacyScripts @Inject constructor(
 ) {
 
   /**
-   * Regenerated per process. Farbling has to be stable while a page is open - a page comparing
-   * two reads of its own canvas must see the same answer - but must not survive a restart, or it
-   * would become the identifier it exists to prevent.
+   * Regenerated per process, and again whenever the user ends an identity: a burn, a new Tor
+   * identity. Farbling has to be stable while a page is open - a page comparing two reads of
+   * its own canvas must see the same answer - but must not outlive the session it belongs to,
+   * or it would become the identifier it exists to prevent.
    */
-  private val sessionSeed: Int = SecureRandom().nextInt()
+  private var sessionSeed: Int = SecureRandom().nextInt()
 
-  private val fingerprintScript: String by lazy {
-    read("fingerprint.js").replace("__SEED__", sessionSeed.toString())
+  private val fingerprintSource: String by lazy { read("fingerprint.js") }
+
+  private var fingerprintCache: Pair<Int, String>? = null
+
+  private val fingerprintScript: String
+    get() {
+      fingerprintCache?.let { if (it.first == sessionSeed) return it.second }
+      val script = fingerprintSource.replace("__SEED__", sessionSeed.toString())
+      fingerprintCache = sessionSeed to script
+      return script
+    }
+
+  /** Ends the current farbling identity. Call with no WebView alive, or follow with [updateFor]. */
+  fun rotateSeed() {
+    sessionSeed = SecureRandom().nextInt()
   }
 
   private val autoconsentScript: String by lazy { read("autoconsent.js") }
@@ -67,6 +81,7 @@ class PrivacyScripts @Inject constructor(
   private class Handlers {
     var tor: ScriptHandler? = null
     var fingerprint: ScriptHandler? = null
+    var fingerprintSeed: Int = 0
     var autoconsent: ScriptHandler? = null
     var referrer: ScriptHandler? = null
     var gpc: ScriptHandler? = null
@@ -84,9 +99,15 @@ class PrivacyScripts @Inject constructor(
     if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
     val installed = handlers.getOrPut(webView) { Handlers() }
 
+    if (installed.fingerprint != null && installed.fingerprintSeed != sessionSeed) {
+      // A rotated seed means a new script; the old one comes off first.
+      runCatching { installed.fingerprint?.remove() }
+      installed.fingerprint = null
+    }
     installed.fingerprint = sync(webView, installed.fingerprint, settings.blockFingerprinting) {
       fingerprintScript
     }
+    installed.fingerprintSeed = sessionSeed
     installed.autoconsent = sync(webView, installed.autoconsent, settings.answerCookiePopups) {
       autoconsentScript
     }

@@ -16,10 +16,18 @@ object DownloadHeaders {
    * alone, the same `strict-origin` policy its own requests follow: a download host should not
    * learn the full address, with its path and query, of the page that linked to it.
    */
-  fun referer(pageUrl: String?, trim: Boolean): String? {
+  fun referer(pageUrl: String?, trim: Boolean, targetUrl: String? = null): String? {
     if (pageUrl.isNullOrBlank()) return null
     if (!pageUrl.startsWith("http://", ignoreCase = true) &&
       !pageUrl.startsWith("https://", ignoreCase = true)
+    ) {
+      return null
+    }
+    // strict-origin sends nothing at all on a downgrade: an https page's address must not
+    // travel in the clear to an http download host.
+    if (trim && targetUrl != null &&
+      pageUrl.startsWith("https://", ignoreCase = true) &&
+      targetUrl.startsWith("http://", ignoreCase = true)
     ) {
       return null
     }

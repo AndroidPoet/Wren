@@ -46,6 +46,12 @@ object UrlFormatter {
 
   private val NON_WEB_SCHEMES = setOf("mailto", "tel", "sms", "intent", "market", "geo", "callto")
 
+  /** Schemes the engine itself renders or refuses; everything else is another app's. */
+  private val ENGINE_SCHEMES = setOf(
+    "http", "https", "about", "data", "javascript", "blob", "file", "content", "filesystem",
+    "ws", "wss", "chrome", "chrome-error", "chrome-native", "view-source",
+  )
+
   /** True for the only schemes another app may hand this browser to load. */
   fun isWebUrl(url: String): Boolean {
     val lower = url.trim().lowercase()
@@ -96,6 +102,22 @@ object UrlFormatter {
   }
 
   fun isNonWebScheme(url: String): Boolean = schemeOf(url) in NON_WEB_SCHEMES
+
+  /**
+   * True for an address a page may hand to another app: any scheme the engine does not render.
+   * `whatsapp://`, `spotify:` and the custom scheme a sign-in flow returns to all qualify.
+   */
+  fun isExternalScheme(url: String): Boolean {
+    val scheme = schemeOf(url) ?: return false
+    return scheme !in ENGINE_SCHEMES
+  }
+
+  /**
+   * True for an address the app itself may load into a tab. Stored addresses - imports, shared
+   * intents, search templates, suggestions - pass through here, so none of them can name a
+   * scheme a typed one cannot: an app-started `javascript:` load runs against the open page.
+   */
+  fun mayLoad(url: String): Boolean = isWebUrl(url) || url == NEW_TAB_URL
 
   /**
    * The host, minus a leading `www.`, for the compact omnibox label. Credentials are dropped:

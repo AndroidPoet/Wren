@@ -19,6 +19,7 @@ fun Download.asEntity(): DownloadEntity = DownloadEntity(
   status = status.name,
   localUri = localUri,
   createdAt = createdAt,
+  isPrivate = isPrivate,
 )
 
 fun DownloadEntity.asDomain(): Download = Download(
@@ -30,6 +31,7 @@ fun DownloadEntity.asDomain(): Download = Download(
   status = runCatching { DownloadStatus.valueOf(status) }.getOrDefault(DownloadStatus.FAILED),
   localUri = localUri,
   createdAt = createdAt,
+  isPrivate = isPrivate,
 )
 
 @JvmName("downloadEntityListAsDomain")

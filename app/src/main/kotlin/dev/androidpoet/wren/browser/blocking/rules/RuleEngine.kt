@@ -132,7 +132,9 @@ class RuleEngine private constructor(
       thirdParty,
       pageHost,
     ) ?: return withRedirect(block, request, typeMask, thirdParty, pageHost)
-    if (!alreadyBlocked || exception.isImportant) return null
+    if (exception.isImportant) return null
+    // An ordinary exception yields to any important block, not only to the one found first:
+    // `$important` is what a list author writes precisely to beat an `@@` elsewhere.
     for (rule in importantBlocks) {
       if (rule.appliesTo(typeMask, thirdParty, pageHost) &&
         rule.pattern.matches(request.url, request.hostStart, request.hostEnd)
@@ -391,7 +393,7 @@ class RequestContext(rawUrl: String) {
   }
 
   private companion object {
-    const val MAX_URL_LENGTH = 2048
+    const val MAX_URL_LENGTH = 8192
     const val MAX_TOKENS = 128
 
     fun needsLowercase(text: String): Boolean {

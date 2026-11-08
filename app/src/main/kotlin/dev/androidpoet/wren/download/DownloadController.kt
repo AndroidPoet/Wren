@@ -15,7 +15,6 @@ import android.content.IntentFilter
 import android.net.Uri
 import android.os.Environment
 import android.webkit.CookieManager
-import android.webkit.URLUtil
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import dev.androidpoet.wren.browser.PrivateProfile
@@ -27,9 +26,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.shareIn
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -53,16 +58,24 @@ class DownloadController @Inject constructor(
   private val repository: DownloadRepository,
   private val settings: SettingsStore,
   private val privateProfile: PrivateProfile,
+  private val inApp: InAppDownloader,
 ) {
-
-  /** Downloads started from a private tab, so a retry does not reach for the normal jar. */
-  private val privateIds = HashSet<Long>()
 
   private val downloadManager = application.getSystemService<DownloadManager>()
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
   private val _progress = MutableStateFlow<Map<Long, DownloadProgress>>(emptyMap())
-  val progress: StateFlow<Map<Long, DownloadProgress>> = _progress.asStateFlow()
+
+  /** Live progress of every running download, the system's and the app's own alike. */
+  val progress: StateFlow<Map<Long, DownloadProgress>> =
+    combine(_progress, inApp.progress) { system, own -> system + own }
+      .stateIn(scope, SharingStarted.Eagerly, emptyMap())
+
+  private val _completed = MutableSharedFlow<Download>(extraBufferCapacity = 8)
+
+  /** Fires once per finished download, for the "open" offer in the browser. */
+  val completed: SharedFlow<Download> = merge(_completed, inApp.completed)
+    .shareIn(scope, SharingStarted.Eagerly)
 
   private var pollJob: kotlinx.coroutines.Job? = null
 
@@ -83,8 +96,10 @@ class DownloadController @Inject constructor(
 
   /**
    * Queues a download and records it. Returns the id, or null when it could not be started.
-   * Refused outright under Tor: DownloadManager fetches from its own process, outside the
-   * proxy, and this is the one gate every caller passes through, retries included.
+   * The system DownloadManager carries the ordinary case: it already handles ranged resume,
+   * scoped storage and retries. It fetches from its own process, outside this one's proxy,
+   * so under Tor the app's own downloader takes over; it also takes `data:` addresses, which
+   * hold their bytes and have nothing to fetch.
    */
   fun enqueue(
     url: String,
@@ -93,11 +108,19 @@ class DownloadController @Inject constructor(
     mimeType: String?,
     pageUrl: String?,
     isPrivate: Boolean = false,
+    suggestedName: String? = null,
   ): Long? {
+    if (url.startsWith("data:", ignoreCase = true)) {
+      return inApp.saveDataUrl(url, isPrivate, suggestedName)
+    }
     if (!url.startsWith("http")) return null
-    if (settings.torMode) return null
+    if (settings.torMode) {
+      return inApp.start(
+        InAppDownloader.Request(url, userAgent, contentDisposition, mimeType, pageUrl, isPrivate),
+      )
+    }
     val manager = downloadManager ?: return null
-    val fileName = DownloadNames.sanitize(URLUtil.guessFileName(url, contentDisposition, mimeType))
+    val fileName = DownloadNames.choose(url, contentDisposition, mimeType)
 
     val request = DownloadManager.Request(Uri.parse(url)).apply {
       setMimeType(mimeType)
@@ -105,6 +128,7 @@ class DownloadController @Inject constructor(
       DownloadHeaders.referer(
         pageUrl,
         settings.trimReferrers,
+        targetUrl = url,
       )?.let { addRequestHeader("Referer", it) }
       // A private page's download carries the private jar's cookies, never the normal one's;
       // without a private jar it carries none.
@@ -121,7 +145,6 @@ class DownloadController @Inject constructor(
     val id = runCatching { manager.enqueue(request) }
       .onFailure { Timber.w(it, "download of %s could not be enqueued", url) }
       .getOrNull() ?: return null
-    if (isPrivate) privateIds += id
 
     scope.launch {
       repository.record(
@@ -134,6 +157,7 @@ class DownloadController @Inject constructor(
           status = DownloadStatus.RUNNING,
           localUri = null,
           createdAt = System.currentTimeMillis(),
+          isPrivate = isPrivate,
         ),
       )
       startPolling()
@@ -146,31 +170,49 @@ class DownloadController @Inject constructor(
     scope.launch {
       if (download.status == DownloadStatus.RUNNING || download.status == DownloadStatus.PAUSED) {
         // remove() also deletes the partial file, which is what cancelling should do.
-        runCatching { downloadManager?.remove(download.id) }
+        if (inApp.owns(download.id)) {
+          inApp.cancel(download.id)
+        } else {
+          runCatching { downloadManager?.remove(download.id) }
+        }
       }
       repository.remove(download.id)
       _progress.value = _progress.value - download.id
     }
   }
 
-  /** Re-queues a failed or cancelled download from its original address. */
-  /** Starts the download again. False when it could not be, which under Tor it never can. */
+  /**
+   * Starts a failed or cancelled download again from its original address. False when it
+   * could not be, which under Tor it never can. A private download stays private on retry,
+   * however long ago it was started: the record carries the flag, not this process's memory.
+   */
   fun retry(download: Download): Boolean {
-    if (settings.torMode) return false
     scope.launch { repository.remove(download.id) }
-    val wasPrivate = privateIds.remove(download.id)
+    if (download.url == "blob:" || download.url == "data:") return false
     return enqueue(
       download.url,
       null,
       null,
       download.mimeType.ifBlank { null },
       null,
-      isPrivate = wasPrivate,
+      isPrivate = download.isPrivate,
     ) != null
   }
 
   fun clearFinished() {
     scope.launch { repository.clearFinished() }
+  }
+
+  /** True for a download the user can pause and resume: only the app's own transfers. */
+  fun canPause(download: Download): Boolean = inApp.owns(download.id)
+
+  fun pause(download: Download) = inApp.pause(download.id)
+
+  fun resume(download: Download) = inApp.resume(download.id)
+
+  /** The private session is over: its downloads leave the list, as its history never entered. */
+  fun forgetPrivate() {
+    scope.launch { repository.clearPrivate() }
   }
 
   /** A content uri the system will let other apps read, for opening or sharing a finished file. */
@@ -241,6 +283,7 @@ class DownloadController @Inject constructor(
         DownloadManager.STATUS_SUCCESSFUL -> {
           val uri = runCatching { manager.getUriForDownloadedFile(id) }.getOrNull()
           repository.updateStatus(id, DownloadStatus.COMPLETE, uri?.toString(), total)
+          repository.get(id)?.let { _completed.tryEmit(it) }
         }
 
         DownloadManager.STATUS_FAILED ->

@@ -235,4 +235,19 @@ class EngineBuilderTest {
     assertThat(engine.hosts.matchesSuffixOf("chromium-or.example")).isTrue()
     assertThat(engine.hosts.matchesSuffixOf("always.example")).isTrue()
   }
+
+  @Test
+  fun `a badfilter also cancels a host that went into the host set`() {
+    val engine = EngineBuilder().addLines(
+      sequenceOf(
+        "||tracker.example^",
+        "||keep.example^",
+        "||tracker.example^\$badfilter",
+      ),
+    ).build(1)
+
+    assertThat(engine.hosts.matchesSuffixOf("tracker.example")).isFalse()
+    assertThat(engine.hosts.matchesSuffixOf("cdn.tracker.example")).isFalse()
+    assertThat(engine.hosts.matchesSuffixOf("keep.example")).isTrue()
+  }
 }

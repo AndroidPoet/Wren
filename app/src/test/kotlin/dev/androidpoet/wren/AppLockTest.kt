@@ -7,6 +7,7 @@
 package dev.androidpoet.wren
 
 import android.content.Context
+import androidx.biometric.BiometricManager
 import androidx.fragment.app.FragmentActivity
 import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
@@ -47,7 +48,9 @@ class AppLockTest {
   fun `lock off opens without a prompt`() {
     settings.appLock = false
 
-    val (locked, unlocked, disarmed) = gate(AppLock(settings) { true })
+    val (locked, unlocked, disarmed) = gate(
+      AppLock(settings) { BiometricManager.BIOMETRIC_SUCCESS },
+    )
 
     assertThat(locked).isFalse()
     assertThat(unlocked).isTrue()
@@ -58,7 +61,8 @@ class AppLockTest {
   fun `armed lock without an authenticator disarms itself and says so`() {
     settings.appLock = true
 
-    val (locked, unlocked, disarmed) = gate(AppLock(settings) { false })
+    val (locked, unlocked, disarmed) =
+      gate(AppLock(settings) { BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED })
 
     assertThat(locked).isFalse()
     assertThat(unlocked).isTrue()
@@ -70,9 +74,22 @@ class AppLockTest {
   fun `armed lock with an authenticator hides the content first`() {
     settings.appLock = true
 
-    val (locked, _, disarmed) = gate(AppLock(settings) { true })
+    val (locked, _, disarmed) = gate(AppLock(settings) { BiometricManager.BIOMETRIC_SUCCESS })
 
     assertThat(locked).isTrue()
+    assertThat(disarmed).isFalse()
+    assertThat(settings.appLock).isTrue()
+  }
+
+  @Test
+  fun `armed lock stays closed when the authenticator is only temporarily unavailable`() {
+    settings.appLock = true
+
+    val (locked, unlocked, disarmed) =
+      gate(AppLock(settings) { BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE })
+
+    assertThat(locked).isTrue()
+    assertThat(unlocked).isFalse()
     assertThat(disarmed).isFalse()
     assertThat(settings.appLock).isTrue()
   }

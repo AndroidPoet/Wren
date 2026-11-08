@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Copyright 2026 AndroidPoet
+
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:layout_width="match_parent"
+  android:layout_height="wrap_content"
+  android:orientation="vertical"
+  android:paddingStart="24dp"
+  android:paddingEnd="24dp"
+  android:paddingTop="8dp">
+
+  <EditText
+    android:id="@+id/authUsername"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:autofillHints="username"
+    android:hint="@string/http_auth_username"
+    android:importantForAutofill="no"
+    android:inputType="text"
+    android:singleLine="true" />
+
+  <EditText
+    android:id="@+id/authPassword"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:autofillHints="password"
+    android:hint="@string/http_auth_password"
+    android:importantForAutofill="no"
+    android:inputType="textPassword"
+    android:singleLine="true" />
+</LinearLayout>

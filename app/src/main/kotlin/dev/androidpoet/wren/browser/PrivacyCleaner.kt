@@ -17,8 +17,12 @@ import dev.androidpoet.wren.browser.blocking.HostMatcher
 import dev.androidpoet.wren.browser.favicon.FaviconStore
 import dev.androidpoet.wren.core.data.repository.HistoryRepository
 import dev.androidpoet.wren.settings.SettingsStore
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.resume
 
 /**
  * Single place that knows every store a page can write to, so "clear data" is actually complete.
@@ -47,7 +51,24 @@ class PrivacyCleaner @Inject constructor(
    * cookie is the old identity. Elsewhere the kept sites' cookies come back; their other
    * storage does not, because the engine's one complete wipe cannot spare an origin.
    */
-  fun clearSiteData(webView: WebView?) {
+  /**
+   * Returns once the engine reports the deletion done, so a caller can say "cleared" and
+   * open new pages knowing nothing of the old session is left to repopulate them. The engine
+   * is given [DELETION_TIMEOUT_MS]; a callback that never comes must not hang the UI.
+   */
+  suspend fun clearSiteData(webView: WebView?) {
+    withTimeoutOrNull(DELETION_TIMEOUT_MS) {
+      suspendCancellableCoroutine { continuation ->
+        clearSiteDataNow(webView) { if (continuation.isActive) continuation.resume(Unit) }
+      }
+    } ?: Timber.w("browsing data deletion did not report back in time")
+  }
+
+  /**
+   * Fire-and-forget form for the one place that cannot wait: an activity being destroyed.
+   * [onDone] runs when the engine has finished, if the process is still alive by then.
+   */
+  fun clearSiteDataNow(webView: WebView?, onDone: () -> Unit = {}) {
     val kept = if (settings.torMode) {
       emptySet()
     } else {
@@ -58,6 +79,7 @@ class PrivacyCleaner @Inject constructor(
     val restore = {
       saved.forEach { (url, cookie) -> cookies.setCookie(url, cookie) }
       cookies.flush()
+      onDone()
     }
     if (WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)) {
       // Cookies, cache, every storage API, service workers and their caches, in one call:
@@ -112,5 +134,9 @@ class PrivacyCleaner @Inject constructor(
         }
       }
     }
+  }
+
+  private companion object {
+    const val DELETION_TIMEOUT_MS = 5_000L
   }
 }

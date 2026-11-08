@@ -23,4 +23,7 @@ interface DownloadRepository {
   suspend fun remove(id: Long)
 
   suspend fun clearFinished()
+
+  /** Forgets every download a private tab started; the files themselves stay. */
+  suspend fun clearPrivate()
 }

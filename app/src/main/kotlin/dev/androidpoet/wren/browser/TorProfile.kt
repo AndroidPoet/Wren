@@ -44,6 +44,9 @@ class TorProfile @Inject constructor(@ApplicationContext private val context: Co
 
   private val name: String get() = "$PREFIX$generation"
 
+  /** The current identity's profile name; changes with every [rotate]. */
+  val identityName: String get() = name
+
   /** Binds a freshly created WebView to the current identity. Must run before its first load. */
   fun attach(webView: WebView): Boolean {
     if (!isSupported) return false

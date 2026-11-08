@@ -20,6 +20,21 @@
  */
 (function () {
   'use strict';
+  // A site the user has exempted gets neither scriptlets nor hiding, whatever page this view
+  // showed when the script was installed: the decision is made per document, here.
+  try {
+    if (typeof EXEMPT_HOSTS === 'object' && EXEMPT_HOSTS && EXEMPT_HOSTS.length) {
+      var here = location.hostname;
+      for (var e = 0; e < EXEMPT_HOSTS.length; e++) {
+        var exempt = EXEMPT_HOSTS[e];
+        if (here === exempt || (here.length > exempt.length &&
+            here.charAt(here.length - exempt.length - 1) === '.' &&
+            here.slice(-exempt.length) === exempt)) {
+          return;
+        }
+      }
+    }
+  } catch (ignored) {}
   try {
     if (typeof SCRIPTLET_TABLE === 'object' && typeof runScriptlets === 'function') {
       var ran = runScriptlets(SCRIPTLET_TABLE);
