@@ -346,6 +346,7 @@ class BrowserActivity :
     binding = ActivityBrowserBinding.inflate(layoutInflater)
     setContentView(binding.root)
     applyAppLock(appLock, binding.root)
+    setupTvCursor()
     applyAddressBarPosition()
     // The layout paints its own background everywhere; the window's is pure overdraw.
     window.setBackgroundDrawable(null)
@@ -1127,6 +1128,8 @@ class BrowserActivity :
       Timber.w("refused to load an address with a scheme the app never loads itself")
       return
     }
+    // On a TV the page is driven by the cursor, which takes over from the address bar now.
+    binding.cursor?.let { if (!it.isFocused) it.requestFocus() else it.show() }
     // Tor just switched on and the proxy is not in front of WebView yet: whatever asked for
     // this load (a shared link, a long press, a popup) waits for it rather than going direct.
     if (!torController.isNetworkReady) {
@@ -2004,6 +2007,7 @@ class BrowserActivity :
   }
 
   override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+    if (routeToTvCursor(event)) return true
     if (event.action == android.view.KeyEvent.ACTION_DOWN) {
       when {
         event.keyCode == android.view.KeyEvent.KEYCODE_F5 -> {
@@ -2528,7 +2532,8 @@ class BrowserActivity :
     speculativeLoader.cancel()
     updateChromeVisibility()
     binding.omnibox.clearFocus()
-    binding.root.requestFocus()
+    // On a TV focus goes back to the page's cursor; elsewhere the root takes it.
+    (binding.cursor ?: binding.root).requestFocus()
     binding.suggestionList.isGone = true
     getSystemService<InputMethodManager>()
       ?.hideSoftInputFromWindow(binding.omnibox.windowToken, 0)
@@ -2609,6 +2614,37 @@ class BrowserActivity :
     val navIndex = chrome.indexOfChild(navRow)
     chrome.addView(binding.progress, navIndex)
     chrome.addView(binding.topBar, navIndex + 1)
+  }
+
+  /**
+   * The D-pad belongs to the cursor while a page (or its fullscreen video) is what has focus,
+   * or nothing has, or only the root does (where focus lands on a cold start). The address bar, the find bar, the home screen's tiles and any other chrome
+   * view keep ordinary D-pad navigation.
+   */
+  private fun routeToTvCursor(event: KeyEvent): Boolean {
+    val cursor = binding.cursor ?: return false
+    if (isOmniboxFocused || binding.findBar.isVisible) return false
+    if (isHomeVisible && customView == null) return false
+    val focus = currentFocus
+    val onPage = focus == null || focus === cursor || focus === binding.root || focus is WebView ||
+      focus.isInside(binding.webViewContainer) || focus.isInside(binding.customViewContainer)
+    return onPage && cursor.dispatchKey(event)
+  }
+
+  private fun View.isInside(container: View): Boolean =
+    generateSequence(this) { it.parent as? View }.any { it === container }
+
+  /**
+   * Television: the layout carries a [dev.androidpoet.wren.ui.tv.CursorLayout] over the page,
+   * and the D-pad drives it. The page or the fullscreen video receives its presses; pushing it
+   * off the top of a page already at its top moves focus up into the address bar. Pull to
+   * refresh is off, because a cursor drag is a drag the layout would otherwise read as one.
+   */
+  private fun setupTvCursor() {
+    val cursor = binding.cursor ?: return
+    cursor.target = { customView ?: webView }
+    cursor.onExitTop = { binding.omnibox.requestFocus() }
+    binding.swipeRefresh.isEnabled = false
   }
 
   /** A private or Tor page must not appear in screenshots or the recents preview. */

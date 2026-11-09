@@ -18,6 +18,7 @@ import androidx.webkit.WebViewFeature
 import dev.androidpoet.wren.BuildConfig
 import dev.androidpoet.wren.browser.privacy.PrivacyHeaders
 import dev.androidpoet.wren.settings.SettingsStore
+import dev.androidpoet.wren.ui.tv.TvMode
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -68,6 +69,8 @@ class WebViewConfigurator @Inject constructor(
       // corner, and it is what Chrome does.
       useWideViewPort = true
       loadWithOverviewMode = true
+      // On a TV the D-pad cursor is the pointer; the page must not grab focus from it.
+      if (TvMode.isTv(webView.context)) setNeedInitialFocus(false)
       setSupportZoom(true)
       builtInZoomControls = true
       displayZoomControls = false
@@ -102,9 +105,9 @@ class WebViewConfigurator @Inject constructor(
         WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
       }
 
-      userAgentString = userAgentFor(webView, desktop = settings.desktopMode)
+      userAgentString = userAgentFor(webView, desktop = desktopWanted(webView))
     }
-    applyUserAgentMetadata(webView, desktop = settings.desktopMode)
+    applyUserAgentMetadata(webView, desktop = desktopWanted(webView))
 
     logSupportOnce()
     applyRenderingHints(webView)
@@ -274,13 +277,17 @@ class WebViewConfigurator @Inject constructor(
     // Tor Browser's "Safest" level: no script runs, whatever the site or the global switch says.
     webView.settings.javaScriptEnabled =
       settings.javaScriptEnabled && !settings.isJsDisabledFor(host) && !settings.torSafestActive
-    val desktop = settings.desktopMode || settings.isDesktopSite(host)
+    val desktop = desktopWanted(webView) || settings.isDesktopSite(host)
     val wanted = userAgentFor(webView, desktop)
     if (webView.settings.userAgentString != wanted) {
       webView.settings.userAgentString = wanted
       applyUserAgentMetadata(webView, desktop)
     }
   }
+
+  /** A TV is a desktop-sized screen with no touch: sites get their desktop layout there. */
+  private fun desktopWanted(webView: WebView): Boolean =
+    settings.desktopMode || TvMode.isTv(webView.context)
 
   /** Chrome's reduced user agent, mobile or desktop, on this device's engine version. */
   private fun userAgentFor(webView: WebView, desktop: Boolean): String {

@@ -128,6 +128,16 @@ If your safety depends on being anonymous, use [Tor Browser for
 Android](https://www.torproject.org/download/#android). Wren is for everyday browsing with
 trackers and ads out of the way.
 
+## Android TV
+
+Wren appears in the Android TV launcher and is driven by the remote. The D-pad moves a cursor
+over the page: a tap is a step, a held key accelerates, the centre key presses where the cursor
+points and a held centre key is a long press. At an edge the cursor scrolls the page; pushed off
+the top of a page that is already at its top it moves into the address bar, from where Down
+returns to the page. The chrome is one row at the top of the screen and sites get their desktop
+layout. Tor mode works the same as on a phone when the TV's WebView supports profiles (it fails
+closed, with no network, when it does not).
+
 ## Download
 
 Get the APK for your phone from [Releases](https://github.com/AndroidPoet/Wren/releases/latest):
