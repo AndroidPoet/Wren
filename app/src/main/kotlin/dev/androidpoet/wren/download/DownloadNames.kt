@@ -17,7 +17,8 @@ import java.net.URLDecoder
  */
 object DownloadNames {
 
-  private const val MAX_LENGTH = 200
+  /** In UTF-8 bytes: the file system, not the user, counts the name, and it stops at 255. */
+  private const val MAX_BYTES = 200
   private const val MAX_EXTENSION = 16
   private const val FALLBACK = "download"
 
@@ -61,12 +62,35 @@ object DownloadNames {
       .trim()
       .trim('.', ' ')
     if (cleaned.isEmpty()) return FALLBACK
-    if (cleaned.length <= MAX_LENGTH) return cleaned
-    val extension = cleaned.substringAfterLast('.', "").takeIf { it.length in 1..MAX_EXTENSION }
+    if (utf8Length(cleaned) <= MAX_BYTES) return cleaned
+    val extension = cleaned.substringAfterLast('.', "")
+      .takeIf { it.length in 1..MAX_EXTENSION && utf8Length(it) < MAX_BYTES / 2 }
     return if (extension == null) {
-      cleaned.take(MAX_LENGTH)
+      takeBytes(cleaned, MAX_BYTES)
     } else {
-      cleaned.take(MAX_LENGTH - extension.length - 1).trimEnd('.', ' ') + "." + extension
+      takeBytes(cleaned, MAX_BYTES - utf8Length(extension) - 1).trimEnd('.', ' ') + "." + extension
     }
+  }
+
+  private fun utf8Length(text: String): Int = text.toByteArray(Charsets.UTF_8).size
+
+  /** The longest prefix of whole code points that fits in [maxBytes] of UTF-8. */
+  private fun takeBytes(text: String, maxBytes: Int): String {
+    var bytes = 0
+    var end = 0
+    while (end < text.length) {
+      val codePoint = text.codePointAt(end)
+      val width = Character.charCount(codePoint)
+      val size = when {
+        codePoint < 0x80 -> 1
+        codePoint < 0x800 -> 2
+        codePoint < 0x10000 -> 3
+        else -> 4
+      }
+      if (bytes + size > maxBytes) break
+      bytes += size
+      end += width
+    }
+    return text.substring(0, end)
   }
 }

@@ -82,4 +82,14 @@ class DownloadNamesTest {
     )
       .isEqualTo("_.._etc_passwd")
   }
+
+  @Test
+  fun `long names are cut by bytes, not characters, and keep their extension`() {
+    val name = "\u6587".repeat(150) + ".pdf"
+    val chosen = DownloadNames.sanitize(name)
+    assertThat(chosen.toByteArray(Charsets.UTF_8).size).isAtMost(200)
+    assertThat(chosen).endsWith(".pdf")
+    assertThat(chosen.length).isGreaterThan(60)
+    assertThat(DownloadNames.sanitize("a".repeat(300)).length).isEqualTo(200)
+  }
 }

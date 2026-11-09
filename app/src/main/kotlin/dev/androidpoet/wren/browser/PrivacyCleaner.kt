@@ -6,6 +6,8 @@
 
 package dev.androidpoet.wren.browser
 
+import android.content.Context
+import android.os.Looper
 import android.webkit.CookieManager
 import android.webkit.WebStorage
 import android.webkit.WebView
@@ -13,6 +15,7 @@ import android.webkit.WebViewDatabase
 import androidx.webkit.CookieManagerCompat
 import androidx.webkit.WebStorageCompat
 import androidx.webkit.WebViewFeature
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.androidpoet.wren.browser.blocking.HostMatcher
 import dev.androidpoet.wren.browser.favicon.FaviconStore
 import dev.androidpoet.wren.core.data.repository.HistoryRepository
@@ -33,6 +36,7 @@ import kotlin.coroutines.resume
  */
 @Singleton
 class PrivacyCleaner @Inject constructor(
+  @ApplicationContext private val context: Context,
   private val historyRepository: HistoryRepository,
   private val settings: SettingsStore,
   private val faviconStore: FaviconStore,
@@ -90,13 +94,22 @@ class PrivacyCleaner @Inject constructor(
       cookies.removeAllCookies { restore() }
       clearStorageExcept(kept)
     }
-    webView?.apply {
+    // The cache and the per-view state need a WebView to speak for the profile. Without one
+    // - a clear owed from a run that ended without a graceful exit - a throwaway stands in,
+    // so the HTTP cache does not outlive the session it belongs to.
+    val view = webView ?: if (Looper.getMainLooper().isCurrentThread) {
+      runCatching { WebView(context) }.getOrNull()
+    } else {
+      null
+    }
+    view?.apply {
       clearCache(true)
       clearFormData()
       clearHistory()
       clearSslPreferences()
     }
-    webView?.context?.let { WebViewDatabase.getInstance(it).clearHttpAuthUsernamePassword() }
+    if (webView == null) view?.destroy()
+    WebViewDatabase.getInstance(context).clearHttpAuthUsernamePassword()
   }
 
   /**

@@ -21,4 +21,5 @@ data class DownloadEntity(
   val localUri: String?,
   val createdAt: Long,
   @ColumnInfo(defaultValue = "0") val isPrivate: Boolean = false,
+  @ColumnInfo(defaultValue = "0") val viaTor: Boolean = false,
 )

@@ -18,6 +18,7 @@ import dev.androidpoet.wren.R
 import dev.androidpoet.wren.browser.blocking.TrackerOwners
 import dev.androidpoet.wren.databinding.ItemTrackerGroupBinding
 import dev.androidpoet.wren.databinding.SheetSiteSecurityBinding
+import dev.androidpoet.wren.ui.inheritSecureFlag
 import java.text.DateFormat
 
 /** What the lock icon knows about the page currently loaded. */
@@ -65,6 +66,7 @@ class SiteSecuritySheet : BottomSheetDialogFragment() {
 
   override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
     super.onViewCreated(view, savedInstanceState)
+    inheritSecureFlag()
     val binding = requireNotNull(binding)
     val host = activity as? Host
     val info = host?.siteSecurityInfo()

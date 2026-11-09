@@ -9,6 +9,7 @@ package dev.androidpoet.wren.browser.blocking
 import android.app.Application
 import dev.androidpoet.wren.browser.blocking.rules.EngineBuilder
 import dev.androidpoet.wren.browser.tor.TorProxySelector
+import dev.androidpoet.wren.network.SafeHttp
 import dev.androidpoet.wren.settings.SettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,11 +19,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import okhttp3.Response
 import timber.log.Timber
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
-import java.net.HttpURLConnection
 import java.net.URL
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -38,7 +39,12 @@ class FilterListManager @Inject constructor(
   private val application: Application,
   private val blocklist: Blocklist,
   private val settings: SettingsStore,
+  http: SafeHttp,
 ) {
+  private val client = http.client.newBuilder()
+    .connectTimeout(FETCH_TIMEOUT_MS.toLong(), java.util.concurrent.TimeUnit.MILLISECONDS)
+    .readTimeout(FETCH_TIMEOUT_MS.toLong(), java.util.concurrent.TimeUnit.MILLISECONDS)
+    .build()
 
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
   private val rebuildLock = Mutex()
@@ -136,36 +142,36 @@ class FilterListManager @Inject constructor(
       val cached = cacheFile(id)
       var connection = open(id, listUrl, cached, whole)
       var hops = 0
-      // Redirects are followed by hand so each hop can be checked: HttpURLConnection would
+      // Redirects are followed by hand so each hop can be checked: an automatic follow would
       // happily land on a LAN address, and the list decides what the browser refuses to load.
-      while (connection.responseCode in ListUrlPolicy.REDIRECT_CODES) {
-        val location = connection.getHeaderField("Location")
-        val next = location?.let { URL(connection.url, it).toString() }
-        connection.disconnect()
+      while (connection.code in ListUrlPolicy.REDIRECT_CODES) {
+        val location = connection.header("Location")
+        val next = location?.let { URL(connection.request.url.toUrl(), it).toString() }
+        connection.close()
         check(++hops <= ListUrlPolicy.MAX_REDIRECTS) { "too many redirects" }
         check(next != null && ListUrlPolicy.acceptsRedirect(next)) { "redirect refused: $location" }
         connection = open(id, next, cached, whole)
       }
       try {
-        if (connection.responseCode == HttpURLConnection.HTTP_NOT_MODIFIED) {
+        if (connection.code == HTTP_NOT_MODIFIED) {
           settings.setFilterListUpdatedAt(id, System.currentTimeMillis())
           return@runCatching Fetched.UNCHANGED
         }
-        val code = connection.responseCode
-        check(code == HttpURLConnection.HTTP_OK) { "HTTP $code" }
+        val code = connection.code
+        check(code == HTTP_OK) { "HTTP $code" }
         val temp = File(cached.path + ".part")
         temp.outputStream().buffered().use { out ->
-          BoundedInputStream(connection.inputStream, MAX_BYTES).copyTo(out)
+          BoundedInputStream(connection.body.byteStream(), MAX_BYTES).copyTo(out)
         }
         check(temp.length() > MIN_BYTES) { "list too small: ${temp.length()} bytes" }
-        appendIncludes(temp, connection.url)
+        appendIncludes(temp, connection.request.url.toUrl())
         check(temp.renameTo(cached)) { "could not replace cached list" }
-        settings.setFilterListEtag(id, connection.getHeaderField("ETag"))
+        settings.setFilterListEtag(id, connection.header("ETag"))
         settings.setFilterListUpdatedAt(id, System.currentTimeMillis())
         Timber.i("filter list %s fetched: %d KB", id, cached.length() / 1024)
         Fetched.UPDATED
       } finally {
-        connection.disconnect()
+        connection.close()
       }
     }.onFailure { Timber.w(it, "filter list %s refresh failed", id) }.getOrDefault(Fetched.FAILED)
   }
@@ -197,29 +203,32 @@ class FilterListManager @Inject constructor(
           val connection =
             open(FilterListCatalog.CUSTOM_ID, target.toString(), File(""), whole = true)
           try {
-            val code = connection.responseCode
-            check(code == HttpURLConnection.HTTP_OK) { "HTTP $code" }
+            val code = connection.code
+            check(code == HTTP_OK) { "HTTP $code" }
             out.write("\n! --- included: $name ---\n".toByteArray())
-            BoundedInputStream(connection.inputStream, MAX_BYTES).copyTo(out)
+            BoundedInputStream(connection.body.byteStream(), MAX_BYTES).copyTo(out)
           } finally {
-            connection.disconnect()
+            connection.close()
           }
         }.onFailure { Timber.w(it, "include %s of %s failed", name, listUrl) }
       }
     }
   }
 
-  private fun open(id: String, url: String, cached: File, whole: Boolean): HttpURLConnection {
-    val connection = URL(url).openConnection() as HttpURLConnection
-    connection.connectTimeout = FETCH_TIMEOUT_MS
-    connection.readTimeout = FETCH_TIMEOUT_MS
-    connection.instanceFollowRedirects = false
-    if (cached.exists() && !whole) {
-      settings.filterListEtag(id)?.let { connection.setRequestProperty("If-None-Match", it) }
-      connection.ifModifiedSince = cached.lastModified()
-    }
-    return connection
+  private fun open(id: String, url: String, cached: File, whole: Boolean): Response {
+    val request = okhttp3.Request.Builder().url(url).apply {
+      if (cached.exists() && !whole) {
+        settings.filterListEtag(id)?.let { header("If-None-Match", it) }
+        header("If-Modified-Since", httpDate(cached.lastModified()))
+      }
+    }.build()
+    return client.newCall(request).execute()
   }
+
+  private fun httpDate(millis: Long): String =
+    java.text.SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss 'GMT'", java.util.Locale.US)
+      .apply { timeZone = java.util.TimeZone.getTimeZone("GMT") }
+      .format(java.util.Date(millis))
 
   /**
    * Compiles the enabled lists from disk into a new engine and installs it. Until every list
@@ -292,6 +301,8 @@ class FilterListManager @Inject constructor(
     const val LIST_FORMAT = 2
     const val REFRESH_START_DELAY_MS = 20_000L
     const val FETCH_TIMEOUT_MS = 20_000
+    const val HTTP_OK = 200
+    const val HTTP_NOT_MODIFIED = 304
     const val MAX_BYTES = 16L * 1024 * 1024
     const val MIN_BYTES = 256L
   }

@@ -127,6 +127,8 @@ class Blocklist @Inject constructor(
   /** Builds the bundled set now, on the caller's background thread, so no page request pays. */
   fun preload() {
     bundled
+    // The party check needs the suffix list; it is small and loads alongside the host set.
+    PublicSuffixes.load(application.assets)
   }
 
   fun isBlocked(host: String): Boolean = engine.hosts.matchesSuffixOf(host)

@@ -105,12 +105,21 @@
   }
 
   // --- Canvas ------------------------------------------------------------------------
+  // Every byte of the image folded into one word: cheap, and any flipped bit changes it.
+  function contentHash(data) {
+    var h = 2166136261;
+    for (var i = 0; i < data.length; i++) h = Math.imul(h ^ data[i], 16777619);
+    return h >>> 0;
+  }
+
   // A handful of pixels per read get one low bit flipped: invisible, and enough to change any
-  // hash of the image. Which pixels depends only on the seed and the read's geometry.
+  // hash of the image. Which pixels depends on the seed, the read's geometry and the image
+  // itself: a mask that depended on geometry alone could be read off a blank canvas of the
+  // same size and subtracted from the real one.
   function perturbPixels(data, salt) {
     var pixels = data.length >> 2;
     if (pixels < 1) return;
-    var noise = new Noise(salt ^ pixels);
+    var noise = new Noise(mix(salt ^ pixels, contentHash(data)));
     var touches = Math.max(1, Math.min(48, pixels >> 9));
     for (var i = 0; i < touches; i++) {
       var index = ((Math.floor(noise.next() * pixels) << 2) + Math.floor(noise.next() * 3)) >>> 0;

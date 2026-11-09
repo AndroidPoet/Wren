@@ -62,6 +62,10 @@ class WrenWebChromeClient(
     resultMsg: Message,
   ): Boolean {
     val transportView = WebView(view.context)
+    // The transport only exists to learn the address. It must never fetch anything itself: a
+    // form posted into a popup never reaches shouldOverrideUrlLoading, and would otherwise
+    // load here, outside the opener's profile and cookie jar.
+    transportView.settings.blockNetworkLoads = true
     var done = false
     val finish = {
       if (!done) {

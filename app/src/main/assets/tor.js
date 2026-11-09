@@ -105,6 +105,19 @@
   var NativeDate = Date;
   var LOCAL_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
   function localIso(value) { return typeof value === 'string' && LOCAL_ISO.test(value); }
+  // What the native Date would see: an object is coerced first, so a toString() that yields a
+  // zone-less ISO string is caught like the string itself would be.
+  function primitive(value, hint) {
+    if (value === null || (typeof value !== 'object' && typeof value !== 'function')) return value;
+    try {
+      if (hint === 'string') return String(value);
+      var v = typeof value.valueOf === 'function' ? value.valueOf() : value;
+      if (v === null || (typeof v !== 'object' && typeof v !== 'function')) return v;
+      return String(value);
+    } catch (ignored) {
+      return value;
+    }
+  }
   function utcArgs(args) {
     var parts = Array.prototype.slice.call(args);
     while (parts.length < 7) parts.push(parts.length === 2 ? 1 : 0);
@@ -113,13 +126,16 @@
   function WrenDate(single) {
     if (!new.target) return String(new NativeDate());
     var args = arguments.length === 0 ? [] :
-      arguments.length === 1 ? [localIso(single) ? single + 'Z' : single] : [utcArgs(arguments)];
+      arguments.length === 1 ? [(function (p) { return localIso(p) ? p + 'Z' : p; })(primitive(single))] : [utcArgs(arguments)];
     return Reflect.construct(NativeDate, args, new.target);
   }
   WrenDate.prototype = NativeDate.prototype;
   WrenDate.UTC = NativeDate.UTC;
   WrenDate.now = NativeDate.now;
-  WrenDate.parse = function (value) { return NativeDate.parse(localIso(value) ? value + 'Z' : value); };
+  WrenDate.parse = function (value) {
+    var p = primitive(value, 'string');
+    return NativeDate.parse(localIso(p) ? p + 'Z' : p);
+  };
   try {
     Object.defineProperty(WrenDate, 'name', { value: 'Date', configurable: true });
     Object.defineProperty(WrenDate, 'length', { value: 7, configurable: true });

@@ -156,7 +156,14 @@ fun FragmentActivity.applyAppLock(appLock: AppLock, content: View) {
       }
 
       override fun onPause(owner: LifecycleOwner) {
-        if (appLock.isArmed) content.visibility = View.INVISIBLE
+        if (appLock.isArmed) {
+          content.visibility = View.INVISIBLE
+          // Sheets and dialogs are windows of their own above the hidden content; the lock
+          // has to cover them too, and the simplest cover is their absence.
+          supportFragmentManager.fragments
+            .filterIsInstance<androidx.fragment.app.DialogFragment>()
+            .forEach { it.dismissAllowingStateLoss() }
+        }
       }
     },
   )

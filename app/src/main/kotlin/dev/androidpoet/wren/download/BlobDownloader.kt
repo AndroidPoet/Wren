@@ -47,6 +47,7 @@ class BlobDownloader @Inject constructor(
     val file: File,
     val stream: OutputStream,
     val apkAllowed: Boolean,
+    val isPrivate: Boolean,
     var bytes: Long = 0L,
   )
 
@@ -111,14 +112,26 @@ class BlobDownloader @Inject constructor(
    * [apkAllowed] is whether the user already confirmed an app download for this URL: the type
    * the page's script reports afterwards may not upgrade a file to an app package on its own.
    */
-  fun download(webView: WebView, blobUrl: String, mimeType: String?, apkAllowed: Boolean) {
+  /**
+   * Asked before a blob the page named late turns out to be an app. The first function
+   * publishes it, the second drops it; without a listener the file is dropped.
+   */
+  var confirmAppFile: ((publish: () -> Unit, drop: () -> Unit) -> Unit)? = null
+
+  fun download(
+    webView: WebView,
+    blobUrl: String,
+    mimeType: String?,
+    apkAllowed: Boolean,
+    isPrivate: Boolean,
+  ) {
     if (!isSupported) {
       Timber.w("blob downloads need a WebView with message listeners")
       return
     }
     val id = UUID.randomUUID().toString()
     val file = File(application.cacheDir, "blob-" + id)
-    transfers[id] = Transfer(file, file.outputStream().buffered(), apkAllowed)
+    transfers[id] = Transfer(file, file.outputStream().buffered(), apkAllowed, isPrivate)
     val script = READER_SCRIPT
       .replace("__ID__", id)
       .replace("__NAME__", JSONObject.quote(BRIDGE_NAME))
@@ -156,6 +169,13 @@ class BlobDownloader @Inject constructor(
           ?.let { DownloadNames.sanitize(it) }
           ?.takeIf { it.isNotBlank() && it != "." }
           ?: ("download-" + System.currentTimeMillis() + "." + extension)
+        if (!transfer.apkAllowed && AndroidAppFile.isAppName(name)) {
+          // The link's late name says app where the blob's type did not; ask, as for any app.
+          val confirm = confirmAppFile ?: error("app file refused")
+          val proceed = kotlinx.coroutines.CompletableDeferred<Boolean>()
+          confirm({ proceed.complete(true) }, { proceed.complete(false) })
+          if (!proceed.await()) error("app file refused")
+        }
         val uri = publish(transfer.file, name, mime) ?: error("could not publish")
         repository.record(
           Download(
@@ -168,6 +188,7 @@ class BlobDownloader @Inject constructor(
             status = DownloadStatus.COMPLETE,
             localUri = uri,
             createdAt = System.currentTimeMillis(),
+            isPrivate = transfer.isPrivate,
           ),
         )
         Timber.d("blob saved: %s (%d bytes)", name, transfer.bytes)

@@ -8,6 +8,7 @@ package dev.androidpoet.wren.ui.browser
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.SearchManager
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -58,6 +59,7 @@ import androidx.webkit.WebViewCompat
 import com.google.android.material.snackbar.Snackbar
 import dagger.hilt.android.AndroidEntryPoint
 import dev.androidpoet.wren.R
+import dev.androidpoet.wren.WrenApp
 import dev.androidpoet.wren.browser.AppLock
 import dev.androidpoet.wren.browser.BrowserTab
 import dev.androidpoet.wren.browser.FileChooserUris
@@ -85,6 +87,7 @@ import dev.androidpoet.wren.browser.privacy.HttpsUpgrader
 import dev.androidpoet.wren.browser.privacy.LinkCleaner
 import dev.androidpoet.wren.browser.privacy.LinkUnwrapper
 import dev.androidpoet.wren.browser.privacy.PrivacyScripts
+import dev.androidpoet.wren.browser.tor.BridgeMode
 import dev.androidpoet.wren.browser.tor.TorController
 import dev.androidpoet.wren.browser.tor.TorState
 import dev.androidpoet.wren.browser.tor.TorStatus
@@ -185,6 +188,9 @@ class BrowserActivity :
 
   @Inject
   lateinit var blobDownloader: BlobDownloader
+
+  @Inject
+  lateinit var inAppDownloader: dev.androidpoet.wren.download.InAppDownloader
 
   @Inject
   lateinit var sessionRepository: dev.androidpoet.wren.core.data.repository.SessionRepository
@@ -346,9 +352,12 @@ class BrowserActivity :
     binding.torPill.setOnClickListener { TorSheet.show(supportFragmentManager) }
     observeState()
     registerBackHandling()
+    val freshProcess = (application as WrenApp).takeFirstBrowserCreate()
     if (savedInstanceState == null) warnIfWebViewStale()
 
-    if (savedInstanceState == null) {
+    // A cold start, or the first screen of a new process: saved state from a process the system
+    // killed must not bring back its private and Tor profiles or skip the clear it owed.
+    if (savedInstanceState == null || freshProcess) {
       endPrivateSession()
       torProfile.destroyAll()
       if (settings.clearPending) {
@@ -362,11 +371,19 @@ class BrowserActivity :
     torController.onBeforeRouteChange = { toTor ->
       if (toTor) retireAllWebViews() else discardAllWebViews()
     }
+    // A blob or data: file whose late-arriving name says "app" gets the same second look.
+    val askAboutApp: (() -> Unit, () -> Unit) -> Unit = { publish, drop ->
+      runOnUiThread { if (isFinishing || isDestroyed) drop() else confirmAppFile(publish, drop) }
+    }
+    blobDownloader.confirmAppFile = askAboutApp
+    inAppDownloader.confirmAppFile = askAboutApp
     pagesOnTor = settings.torMode
     if (pagesOnTor) torProfile.enterEnglish()
     whenNetworkReady {
       attachWebView(viewModel.tabManager.ensureTab())
-      handleIntent(intent, isColdStart = true)
+      // The intent that launched a process the system later killed comes back with its saved
+      // state; opening it again would reload a page the user may have left on purpose.
+      handleIntent(intent, isColdStart = true, replayed = savedInstanceState != null)
     }
   }
 
@@ -390,13 +407,32 @@ class BrowserActivity :
     handleIntent(intent, isColdStart = false)
   }
 
-  private fun handleIntent(intent: Intent?, isColdStart: Boolean) {
+  private fun handleIntent(intent: Intent?, isColdStart: Boolean, replayed: Boolean = false) {
     // The intent filter only constrains implicit intents; an explicit one can carry any scheme,
     // and javascript: or file: handed in from another app must never reach a tab.
-    val url = intent?.dataString?.takeIf { UrlFormatter.isWebUrl(it) }
-      ?: intent?.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { UrlFormatter.isProbablyUrl(it) }
+    val url = if (replayed) {
+      null
+    } else {
+      intent?.dataString?.takeIf { UrlFormatter.isWebUrl(it) }
+        ?: intent?.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { UrlFormatter.isProbablyUrl(it) }
+        // A search asked for by another app, or shared text that is not an address: searched,
+        // through the same resolution as the omnibox.
+        ?: intent?.takeIf { it.action == Intent.ACTION_WEB_SEARCH }
+          ?.getStringExtra(SearchManager.QUERY)?.trim()?.takeIf { it.isNotEmpty() }
+        ?: intent?.takeIf { it.action == Intent.ACTION_SEND }
+          ?.getStringExtra(Intent.EXTRA_TEXT)?.trim()?.takeIf { it.isNotEmpty() }
+    }
     when {
-      url != null && isColdStart -> loadUrl(viewModel.resolve(url))
+      // The saved session comes back first; the link lands in a tab of its own on top of it,
+      // or in the empty new tab when there was nothing to bring back.
+      url != null && isColdStart -> restoreSessionIfEmpty {
+        val only = viewModel.tabManager.activeTab()?.takeIf { viewModel.tabManager.size == 1 }
+        if (only != null && only.url == UrlFormatter.NEW_TAB_URL) {
+          loadUrl(viewModel.resolve(url))
+        } else {
+          openTab(viewModel.resolve(url), isPrivate = false)
+        }
+      }
       // Shared text arrives schemeless; handed over raw it resolves against the current page.
       url != null -> openTab(viewModel.resolve(url), isPrivate = false)
       isColdStart -> {
@@ -1620,6 +1656,9 @@ class BrowserActivity :
       .setMessage(R.string.tor_new_identity_confirm)
       .setPositiveButton(R.string.tor_new_identity) { _, _ ->
         lifecycleScope.launch {
+          // Pages first: a timer in an old page firing after the circuits changed would tie
+          // the new identity to the old one.
+          discardAllWebViews()
           val rotated = torController.newIdentity()
           clearBrowsingData(
             if (rotated) R.string.tor_new_identity_done else R.string.tor_new_identity_failed,
@@ -1631,6 +1670,17 @@ class BrowserActivity :
   }
 
   override fun onTorVerify() = openTab(TOR_CHECK_URL, isPrivate = false)
+
+  override fun torBridgeMode(): BridgeMode = settings.torBridgeMode
+
+  override fun torCustomBridges(): String = settings.torCustomBridges
+
+  override fun onTorBridgesChanged(mode: BridgeMode, customLines: String) {
+    if (mode == settings.torBridgeMode && customLines == settings.torCustomBridges) return
+    settings.torBridgeMode = mode
+    settings.torCustomBridges = customLines
+    torController.applyBridges()
+  }
 
   // endregion
 
@@ -1834,7 +1884,8 @@ class BrowserActivity :
   private fun translateCurrentPage() {
     val url = viewModel.tabManager.activeTab()?.let(::shownUrlOf) ?: return
     if (url == UrlFormatter.NEW_TAB_URL) return
-    val language = resources.configuration.locales[0].language
+    // Under Tor the pages speak en-US; the device language would say more than the page does.
+    val language = if (settings.torMode) "en" else resources.configuration.locales[0].language
     val translated = "https://translate.google.com/translate?sl=auto&tl=" +
       language + "&u=" + java.net.URLEncoder.encode(url, "UTF-8")
     loadUrl(translated)
@@ -1941,17 +1992,25 @@ class BrowserActivity :
   }
 
   /** On a fresh process, the current session's pages come back instead of an empty browser. */
-  private fun restoreSessionIfEmpty() {
-    if (settings.torMode) return
-    if (viewModel.tabManager.size > 1) return
-    if (viewModel.tabManager.activeTab()?.url != UrlFormatter.NEW_TAB_URL) return
+  private fun restoreSessionIfEmpty(onDone: () -> Unit = {}) {
+    if (settings.torMode ||
+      viewModel.tabManager.size > 1 ||
+      viewModel.tabManager.activeTab()?.url != UrlFormatter.NEW_TAB_URL
+    ) {
+      onDone()
+      return
+    }
     lifecycleScope.launch {
-      val session = sessionRepository.get(settings.currentSession) ?: return@launch
-      if (session.tabs.isEmpty()) return@launch
+      val session = sessionRepository.get(settings.currentSession)
+      if (session == null || session.tabs.isEmpty()) {
+        onDone()
+        return@launch
+      }
       discardAllWebViews()
       endPrivateSession()
       viewModel.tabManager.replaceAll(session.tabs.map { it.url to it.title })
       restoreActiveTab()
+      onDone()
     }
   }
 
@@ -2174,11 +2233,16 @@ class BrowserActivity :
       start()
       return
     }
+    confirmAppFile(start)
+  }
+
+  private fun confirmAppFile(start: () -> Unit, cancel: () -> Unit = {}) {
     AlertDialog.Builder(this)
       .setTitle(R.string.apk_download_title)
       .setMessage(R.string.apk_download_message)
       .setPositiveButton(R.string.apk_download_confirm) { _, _ -> start() }
-      .setNegativeButton(android.R.string.cancel, null)
+      .setNegativeButton(android.R.string.cancel) { _, _ -> cancel() }
+      .setOnCancelListener { cancel() }
       .show()
   }
 
@@ -2198,6 +2262,7 @@ class BrowserActivity :
           url,
           mimeType,
           apkAllowed = AndroidAppFile.matches(url, contentDisposition, mimeType),
+          isPrivate = viewModel.tabManager.tab(tabId)?.isPrivate == true,
         )
         toast(R.string.download_started)
       }
@@ -2207,7 +2272,25 @@ class BrowserActivity :
       // The address carries no name; only the page knows what its `download="…"` link said.
       source.evaluateJavascript(DATA_NAME_SCRIPT.replace("__URL__", JSONObject.quote(url))) {
         val name = runCatching { JSONObject("{\"n\":$it}").getString("n") }.getOrNull()
-        saveDownload(tabId, url, userAgent, contentDisposition, mimeType, name)
+        val apkAllowed = AndroidAppFile.matches(url, contentDisposition, mimeType)
+        if (!apkAllowed && name != null && AndroidAppFile.isAppName(name)) {
+          // The name, not the address, says app: the same second look as for any app file.
+          confirmAppFile(
+            start = {
+              saveDownload(
+                tabId,
+                url,
+                userAgent,
+                contentDisposition,
+                mimeType,
+                name,
+                apkAllowed = true,
+              )
+            },
+          )
+        } else {
+          saveDownload(tabId, url, userAgent, contentDisposition, mimeType, name, apkAllowed)
+        }
       }
       return
     }
@@ -2221,6 +2304,7 @@ class BrowserActivity :
     contentDisposition: String,
     mimeType: String,
     suggestedName: String?,
+    apkAllowed: Boolean = false,
   ) {
     val tab = viewModel.tabManager.tab(tabId)
     withDownloadsAccess {
@@ -2232,6 +2316,8 @@ class BrowserActivity :
         pageUrl = tab?.let(::shownUrlOf),
         isPrivate = tab?.isPrivate == true,
         suggestedName = suggestedName,
+        // Reaching here with an app address means the user confirmed it (confirmIfAndroidApp).
+        apkAllowed = apkAllowed || AndroidAppFile.matches(url, contentDisposition, mimeType),
       )
       toast(if (id != null) R.string.download_started else R.string.download_failed)
     }

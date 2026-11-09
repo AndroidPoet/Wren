@@ -42,4 +42,46 @@ class AndroidAppFileTest {
     assertThat(AndroidAppFile.matches("https://example.com/apk-guide.html", null, "text/html"))
       .isFalse()
   }
+
+  @Test
+  fun `a late file name can say app on its own`() {
+    for (name in listOf("update.apk", "Update.APK", "bundle.apks", "pack.xapk", "app.aab")) {
+      assertThat(AndroidAppFile.isAppName(name)).isTrue()
+    }
+    for (name in listOf("notes.pdf", "apk.txt", "archive.zip", "x.apk.png")) {
+      assertThat(AndroidAppFile.isAppName(name)).isFalse()
+    }
+  }
+
+  @Test
+  fun `the saved name decides, however the server spelled it`() {
+    assertThat(
+      AndroidAppFile.matches(
+        "https://x.example/get",
+        "inline; filename=\"x.apk\"",
+        "application/octet-stream",
+      ),
+    ).isTrue()
+    assertThat(
+      AndroidAppFile.matches(
+        "https://x.example/get",
+        "attachment; filename*=UTF-8''x.apk",
+        "application/octet-stream",
+      ),
+    ).isTrue()
+    assertThat(
+      AndroidAppFile.matches(
+        "https://x.example/get",
+        "attachment; filename=\"x.apk\"",
+        "text/plain",
+      ),
+    ).isTrue()
+    assertThat(
+      AndroidAppFile.matches(
+        "https://x.example/get.apk",
+        "attachment; filename=\"notes.txt\"",
+        "text/plain",
+      ),
+    ).isFalse()
+  }
 }

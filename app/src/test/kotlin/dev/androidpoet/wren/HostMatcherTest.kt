@@ -8,6 +8,7 @@ package dev.androidpoet.wren
 
 import com.google.common.truth.Truth.assertThat
 import dev.androidpoet.wren.browser.blocking.HostMatcher
+import dev.androidpoet.wren.browser.blocking.PublicSuffixes
 import org.junit.Test
 
 /**
@@ -76,5 +77,26 @@ class HostMatcherTest {
     // A two-letter TLD with an ordinary second label keeps the usual two-label rule.
     assertThat(HostMatcher.registrableDomain("www.example.de")).isEqualTo("example.de")
     assertThat(HostMatcher.registrableDomain("co.uk")).isEqualTo("co.uk")
+  }
+
+  @Test
+  fun `with the suffix list, tenants of a shared suffix are third parties`() {
+    PublicSuffixes.load(java.io.File("src/main/assets/public_suffixes.txt").inputStream())
+    try {
+      assertThat(HostMatcher.isSameParty("tracker.github.io", "victim.github.io")).isFalse()
+      assertThat(HostMatcher.isSameParty("a.victim.github.io", "victim.github.io")).isTrue()
+      assertThat(HostMatcher.registrableDomain("victim.github.io")).isEqualTo("victim.github.io")
+      assertThat(HostMatcher.registrableDomain("www.bbc.co.uk")).isEqualTo("bbc.co.uk")
+      assertThat(HostMatcher.registrableDomain("foo.blogspot.com")).isEqualTo("foo.blogspot.com")
+      // Wildcard and exception rules: *.ck, !www.ck.
+      assertThat(HostMatcher.registrableDomain("a.b.ck")).isEqualTo("a.b.ck")
+      assertThat(HostMatcher.registrableDomain("x.www.ck")).isEqualTo("www.ck")
+      // An unknown suffix keeps the two-label answer; a bare suffix is only itself.
+      assertThat(HostMatcher.registrableDomain("a.b.nosuchtld")).isEqualTo("b.nosuchtld")
+      assertThat(HostMatcher.registrableDomain("github.io")).isEqualTo("github.io")
+      assertThat(HostMatcher.isSameParty("github.io", "victim.github.io")).isFalse()
+    } finally {
+      PublicSuffixes.unloadForTests()
+    }
   }
 }

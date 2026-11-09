@@ -26,4 +26,24 @@ object DeferredProxySelector : ProxySelector() {
   }
 
   private fun current(): ProxySelector? = getDefault()?.takeUnless { it === this }
+
+  private val clients = java.util.concurrent.CopyOnWriteArrayList<okhttp3.OkHttpClient>()
+
+  /** Clients whose open connections must not outlive a change of route. */
+  fun track(client: okhttp3.OkHttpClient) {
+    clients += client
+  }
+
+  /**
+   * The process route changed (Tor turned on or off). OkHttp reuses a pooled connection for
+   * the same host without asking the selector again, so a socket opened direct before Tor
+   * came up would carry the next request too: every pooled connection goes, and so does
+   * every call in flight.
+   */
+  fun routeChanged() {
+    for (client in clients) {
+      client.dispatcher.cancelAll()
+      client.connectionPool.evictAll()
+    }
+  }
 }

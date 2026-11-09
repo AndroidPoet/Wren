@@ -20,7 +20,10 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
 import androidx.webkit.WebViewFeature
+import dev.androidpoet.wren.BuildConfig
+import dev.androidpoet.wren.core.network.DeferredProxySelector
 import dev.androidpoet.wren.settings.SettingsStore
+import dev.androidpoet.wren.ui.tor.TorSheet
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -33,10 +36,11 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import net.freehaven.tor.control.TorControlCommands
 import org.torproject.jni.TorService
 import timber.log.Timber
-import java.net.InetAddress
+import java.io.File
 import java.net.ProxySelector
 import java.net.ServerSocket
 import java.util.concurrent.Executor
@@ -185,7 +189,13 @@ class TorController @Inject constructor(
     }
     _state.value = TorState(TorStatus.STARTING)
     scope.launch {
-      val ports = withContext(Dispatchers.IO) { ensurePorts().also(::writeTorrc) }
+      val bridges = withContext(Dispatchers.IO) { runCatching { bridgePlan() } }
+        .getOrElse { problem ->
+          fail(problem.message ?: "bridges could not be configured")
+          return@launch
+        }
+      val ports =
+        withContext(Dispatchers.IO) { ensurePorts().also { writeTorrc(it, bridges.torrc) } }
       if (_state.value.status != TorStatus.STARTING) return@launch
       installProxy(ports.http)
       registerReceiver()
@@ -196,16 +206,67 @@ class TorController @Inject constructor(
         fail("could not bind the Tor service")
         return@launch
       }
+      bridges.transportPlugin?.let(::armTransports)
       pollBootstrap()
+    }
+  }
+
+  /**
+   * Hands Tor the pluggable-transport plugin over the control port, then lets it reach the
+   * network. See [Bridges.torrcOptions] for why this is not a torrc line. Until the control
+   * socket is up there is nothing to talk to, so this waits for it, bounded.
+   */
+  private fun armTransports(plugin: String) {
+    scope.launch {
+      val control = withTimeoutOrNull(CONTROL_WAIT_MS) {
+        while (_state.value.status == TorStatus.STARTING) {
+          service?.torControlConnection?.let { return@withTimeoutOrNull it }
+          delay(POLL_INTERVAL_MS)
+        }
+        null
+      }
+      if (_state.value.status != TorStatus.STARTING) return@launch
+      if (control == null) {
+        fail("Tor's control port did not come up")
+        return@launch
+      }
+      val armed = withContext(Dispatchers.IO) {
+        runCatching {
+          control.setConf(listOf("ClientTransportPlugin $plugin"))
+          control.setConf("DisableNetwork", "0")
+        }.onFailure { Timber.w(it, "bridge transport could not be set") }.isSuccess
+      }
+      if (!armed && _state.value.status == TorStatus.STARTING) fail("bridge transport refused")
     }
   }
 
   private fun stop() {
     if (_state.value.status == TorStatus.OFF) return
     pendingStart = false
+    shutDown(sealed = false)
+  }
+
+  /**
+   * The bridge choice changed. Tor reads bridges only at start, so a running client is taken
+   * down and brought back; the mode stays on throughout, so the gap is sealed with a dead end
+   * rather than opened to the real address. Off, nothing happens until Tor is next turned on.
+   */
+  fun applyBridges() {
+    when (_state.value.status) {
+      TorStatus.OFF -> if (settings.torMode) start()
+      TorStatus.FAILED -> start()
+      TorStatus.STOPPING -> pendingStart = settings.torMode
+      TorStatus.STARTING, TorStatus.ON -> {
+        pendingStart = true
+        shutDown(sealed = true)
+      }
+    }
+  }
+
+  private fun shutDown(sealed: Boolean) {
     pollJob?.cancel()
     _state.update { TorState(TorStatus.STOPPING, proxyInstalled = it.proxyInstalled) }
-    clearProxy()
+    if (sealed) installProxy(DEAD_END_PORT) else clearProxy()
     stopBroadcastsSeen = 0
     unbind()
     application.stopService(Intent(application, TorService::class.java))
@@ -249,9 +310,10 @@ class TorController @Inject constructor(
     pollJob?.cancel()
     unbind()
     _state.update { it.copy(status = TorStatus.FAILED, error = message) }
-    // The mode is still on, so nothing may leave direct. If Tor died before its proxy was in
-    // front of WebView, a dead end goes there instead, until the user turns the mode off.
-    if (settings.torMode && !_state.value.proxyInstalled) {
+    // The mode is still on, so nothing may leave direct. A dead end goes in front of WebView
+    // until the user turns the mode off - even when the tunnel port was already the proxy: a
+    // port Tor no longer holds is one any other app on the device may bind next.
+    if (settings.torMode) {
       if (sealing) {
         // The override itself is what failed. The mode stays on and the network stays closed:
         // no load runs until the proxy fronts WebView, which it now never will, so the user
@@ -294,10 +356,12 @@ class TorController @Inject constructor(
     }.onFailure { fail("proxy override failed: ${it.message}") }
     if (systemProxySelector == null) systemProxySelector = ProxySelector.getDefault()
     ProxySelector.setDefault(TorProxySelector(port))
+    DeferredProxySelector.routeChanged()
   }
 
   private fun clearProxy() {
     ProxySelector.setDefault(systemProxySelector)
+    DeferredProxySelector.routeChanged()
     runCatching {
       ProxyController.getInstance().clearProxyOverride(mainExecutor) {
         _state.update { it.copy(proxyInstalled = false) }
@@ -345,29 +409,65 @@ class TorController @Inject constructor(
    * strongest isolation the tunnel port can offer, at the cost of more circuit builds on a
    * page's first load.
    */
-  private fun writeTorrc(ports: Ports) {
+  private fun writeTorrc(ports: Ports, bridgeOptions: String) {
     TorService.getTorrc(application).writeText(
       """
       SOCKSPort 127.0.0.1:${ports.socks} IsolateDestAddr
       HTTPTunnelPort 127.0.0.1:${ports.http} IsolateDestAddr
       ClientOnly 1
       AvoidDiskWrites 1
-      """.trimIndent() + "\n",
+      """.trimIndent() + "\n" + bridgeOptions + debugLog(),
     )
   }
 
-  private fun freePort(): Int =
-    ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { it.localPort }
+  /** Debug builds keep Tor's own log in the cache directory; release builds log nowhere. */
+  private fun debugLog(): String = if (BuildConfig.DEBUG) {
+    "Log notice file ${File(application.cacheDir, "tor.log").absolutePath}\n"
+  } else {
+    ""
+  }
+
+  private class BridgePlan(val torrc: String, val transportPlugin: String?)
+
+  /**
+   * The chosen bridges as torrc lines plus the transport plugin to set once Tor is up, or
+   * neither. Built-in lines come from the bundled list, custom ones are parsed again here:
+   * nothing reaches Tor that did not pass [Bridges.parse]. Transports run through the bundled
+   * lyrebird binary, which the installer places in the native-library directory; an install
+   * without it cannot use them.
+   */
+  private fun bridgePlan(): BridgePlan {
+    val mode = settings.torBridgeMode
+    val lines = when (mode) {
+      BridgeMode.NONE -> return BridgePlan("", null)
+      BridgeMode.CUSTOM -> Bridges.parseAll(settings.torCustomBridges)
+      else -> Bridges.builtIn(application.assets, mode)
+    }
+    val binary = File(application.applicationInfo.nativeLibraryDir, LYREBIRD_LIBRARY)
+    val plugin = Bridges.transportPlugin(lines, binary.absolutePath)
+      // The plugin logs next to Tor's state in debug builds only: bridge addresses are in it.
+      ?.let { if (BuildConfig.DEBUG) "$it -enableLogging -logLevel INFO" else it }
+    if (plugin != null) {
+      check(binary.isFile && (binary.canExecute() || binary.setExecutable(true, false))) {
+        TorSheet.TRANSPORT_MISSING
+      }
+    }
+    return BridgePlan(Bridges.torrcOptions(lines), plugin)
+  }
+
+  private fun freePort(): Int = ServerSocket(0, 1, TorProxySelector.LOOPBACK).use { it.localPort }
 
   private fun isFree(port: Int): Boolean = runCatching {
-    ServerSocket(port, 1, InetAddress.getLoopbackAddress()).close()
+    ServerSocket(port, 1, TorProxySelector.LOOPBACK).close()
   }.isSuccess
 
   private companion object {
     /** Nothing listens here; a proxy pointed at it refuses every connection. */
     const val DEAD_END_PORT = 1
+    const val LYREBIRD_LIBRARY = "liblyrebird.so"
     const val BOOTSTRAP_PHASE = "status/bootstrap-phase"
     const val POLL_INTERVAL_MS = 500L
+    const val CONTROL_WAIT_MS = 20_000L
     const val STOP_TIMEOUT_MS = 4000L
   }
 }

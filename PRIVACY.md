@@ -44,7 +44,9 @@ or your phone maker. The engine's version, security patches and internal isolati
 Wren's control. Tor mode routes all of Wren's traffic through Tor, keeps Tor pages in their own
 storage profile that is deleted when Tor is turned off or a new identity is requested, records
 no history for them, gives each host its own circuit, runs downloads through Tor, removes
-WebRTC, shows pages a UTC clock and answers in English, but it does not make you
+WebRTC, shows pages a UTC clock and answers in English, and can reach Tor through obfs4,
+Snowflake or meek bridges where Tor is blocked (Snowflake and meek look up their front domain
+through the phone's DNS first, as Tor Browser does), but it does not make you
 indistinguishable from other users the way Tor Browser does: fingerprint noise is stable per
 site for the session rather than the same for every user. One lookup escapes it: a page's DNS prefetch hint is resolved by the engine through
 the phone's DNS rather than through Tor, and no app can turn that off; Tor over a VPN or a

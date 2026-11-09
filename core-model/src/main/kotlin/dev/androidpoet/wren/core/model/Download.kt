@@ -24,4 +24,6 @@ data class Download(
   val localUri: String?,
   val createdAt: Long,
   val isPrivate: Boolean = false,
+  /** Fetched through Tor: it may only continue, or be retried, while Tor is on. */
+  val viaTor: Boolean = false,
 )

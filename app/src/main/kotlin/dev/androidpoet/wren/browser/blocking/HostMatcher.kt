@@ -72,9 +72,10 @@ object HostMatcher {
   }
 
   /**
-   * A rough registrable domain, used only to decide whether a request is first-party. It does not
-   * carry the full public suffix list, but it does know the `co.uk` / `com.au` shape: without
-   * that, every `.co.uk` tracker would count as first-party on every `.co.uk` site.
+   * The registrable domain, used to decide whether a request is first-party. It comes from
+   * the Public Suffix List once that is loaded ([PublicSuffixes]); before that, a guess that
+   * knows the `co.uk` / `com.au` shape, so no `.co.uk` tracker counts as first-party on every
+   * `.co.uk` site.
    */
   fun registrableDomain(host: String): String {
     val start = registrableDomainStart(host)
@@ -83,6 +84,7 @@ object HostMatcher {
 
   /** Where the registrable domain begins in [host]; the same answer as [registrableDomain]. */
   private fun registrableDomainStart(host: String): Int {
+    PublicSuffixes.registrableDomainStart(host)?.let { return it }
     val dot1 = host.lastIndexOf('.')
     if (dot1 < 0) return 0
     val dot2 = host.lastIndexOf('.', dot1 - 1)

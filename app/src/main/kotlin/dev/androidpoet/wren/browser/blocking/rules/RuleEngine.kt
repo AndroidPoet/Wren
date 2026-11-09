@@ -339,18 +339,8 @@ class PageRules(val blocks: Array<FilterRule>, val exceptions: Array<FilterRule>
 
 /** A request address prepared once for however many rules look at it. */
 class RequestContext(rawUrl: String) {
-  val url: String = run {
-    val bounded = if (rawUrl.length > MAX_URL_LENGTH) {
-      rawUrl.substring(
-        0,
-        MAX_URL_LENGTH,
-      )
-    } else {
-      rawUrl
-    }
-    // Most addresses are already lowercase; a copy is only paid for when there is a capital.
-    if (needsLowercase(bounded)) bounded.lowercase() else bounded
-  }
+  /** The address, lowercased, bounded, and with the host's trailing dots dropped. */
+  val url: String
   val hostStart: Int
   val hostEnd: Int
 
@@ -363,38 +353,56 @@ class RequestContext(rawUrl: String) {
   val tokenCount: Int
 
   init {
-    val scheme = url.indexOf("://")
+    val bounded = if (rawUrl.length > MAX_URL_LENGTH) {
+      rawUrl.substring(
+        0,
+        MAX_URL_LENGTH,
+      )
+    } else {
+      rawUrl
+    }
+    // Most addresses are already lowercase; a copy is only paid for when there is a capital.
+    var text = if (needsLowercase(bounded)) bounded.lowercase() else bounded
+    val scheme = text.indexOf("://")
     var start = if (scheme < 0) 0 else scheme + 3
-    var authorityEnd = url.length
-    for (i in start until url.length) {
-      val c = url[i]
+    var authorityEnd = text.length
+    for (i in start until text.length) {
+      val c = text[i]
       if (c == '/' || c == '?' || c == '#') {
         authorityEnd = i
         break
       }
     }
     if (authorityEnd > start) {
-      val at = url.lastIndexOf('@', authorityEnd - 1)
+      val at = text.lastIndexOf('@', authorityEnd - 1)
       if (at >= start) start = at + 1
     }
     var end = authorityEnd
     for (i in start until authorityEnd) {
-      if (url[i] == ':') {
+      if (text[i] == ':') {
         end = i
         break
       }
     }
+    var trimmed = end
+    while (trimmed > start && text[trimmed - 1] == '.') trimmed--
+    if (trimmed < end && scheme >= 0) {
+      // `tracker.example.` names the same host as `tracker.example`; rules are matched against
+      // the address, so the address has to say so too, or the dot would end every match.
+      text = text.substring(0, trimmed) + text.substring(end)
+      end = trimmed
+    }
+    url = text
     hostStart = start
     hostEnd = end
-    var trimmed = end
-    while (trimmed > start && url[trimmed - 1] == '.') trimmed--
-    host = if (scheme < 0 || trimmed <= start) "" else url.substring(start, trimmed)
+    host = if (scheme < 0 || trimmed <= start) "" else text.substring(start, trimmed)
     tokenCount = Tokeniser.tokenise(url, tokens, tokenStarts)
   }
 
   private companion object {
-    const val MAX_URL_LENGTH = 8192
-    const val MAX_TOKENS = 128
+    // Generous: a rule for the path or query must still see them behind a long prefix.
+    const val MAX_URL_LENGTH = 32768
+    const val MAX_TOKENS = 512
 
     fun needsLowercase(text: String): Boolean {
       for (c in text) if (c in 'A'..'Z' || c.code > 127) return true

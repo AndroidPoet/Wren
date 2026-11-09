@@ -65,7 +65,16 @@ var runScriptlets = (function () {
 
   var swallowing = false;
   // A nameless mark on a request the page must not see through; no string a page can look for.
+  // Which XHRs were matched lives in a map the page cannot reach: a property on the request
+  // object, even a Symbol, is listed by getOwnPropertySymbols and can be deleted before send().
+  var blockedXhr = typeof WeakMap === 'function' ? new WeakMap() : null;
   var BLOCKED = typeof Symbol === 'function' ? Symbol() : '__' + MAGIC;
+  function markBlocked(xhr, value) {
+    if (blockedXhr) blockedXhr.set(xhr, value); else xhr[BLOCKED] = value;
+  }
+  function isBlocked(xhr) {
+    return blockedXhr ? blockedXhr.get(xhr) === true : xhr[BLOCKED] === true;
+  }
   function swallowMagicErrors() {
     if (swallowing) return;
     swallowing = true;
@@ -445,11 +454,11 @@ var runScriptlets = (function () {
     var open = XMLHttpRequest.prototype.open;
     var send = XMLHttpRequest.prototype.send;
     XMLHttpRequest.prototype.open = function (method, url) {
-      this[BLOCKED] = propsMatch(String(url), method, props);
+      markBlocked(this, propsMatch(String(url), method, props));
       return open.apply(this, arguments);
     };
     XMLHttpRequest.prototype.send = function () {
-      if (this[BLOCKED]) { fakeXhr(this); return; }
+      if (isBlocked(this)) { fakeXhr(this); return; }
       return send.apply(this, arguments);
     };
   };

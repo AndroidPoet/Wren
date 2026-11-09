@@ -16,9 +16,12 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import dev.androidpoet.wren.R
+import dev.androidpoet.wren.browser.tor.BridgeMode
+import dev.androidpoet.wren.browser.tor.Bridges
 import dev.androidpoet.wren.browser.tor.TorState
 import dev.androidpoet.wren.browser.tor.TorStatus
 import dev.androidpoet.wren.databinding.SheetTorBinding
+import dev.androidpoet.wren.ui.inheritSecureFlag
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
@@ -31,6 +34,9 @@ class TorSheet : BottomSheetDialogFragment() {
     fun onTorSetEnabled(enabled: Boolean)
     fun onTorNewIdentity()
     fun onTorVerify()
+    fun torBridgeMode(): BridgeMode
+    fun torCustomBridges(): String
+    fun onTorBridgesChanged(mode: BridgeMode, customLines: String)
   }
 
   private var binding: SheetTorBinding? = null
@@ -45,6 +51,7 @@ class TorSheet : BottomSheetDialogFragment() {
 
   override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
     super.onViewCreated(view, savedInstanceState)
+    inheritSecureFlag()
     val binding = requireNotNull(binding)
     val host = activity as? Host
     if (host == null) {
@@ -63,6 +70,17 @@ class TorSheet : BottomSheetDialogFragment() {
       host.onTorVerify()
       dismiss()
     }
+    renderBridges(binding, host)
+    binding.torBridges.setOnClickListener {
+      BridgesDialog.show(
+        requireContext(),
+        host.torBridgeMode(),
+        host.torCustomBridges(),
+      ) { mode, lines ->
+        host.onTorBridgesChanged(mode, lines)
+        this.binding?.let { renderBridges(it, host) }
+      }
+    }
     viewLifecycleOwner.lifecycleScope.launch {
       viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
         host.torState().collect { render(binding, it, host.isTorEnabled()) }
@@ -75,13 +93,34 @@ class TorSheet : BottomSheetDialogFragment() {
       TorStatus.ON -> getString(R.string.tor_on)
       TorStatus.STARTING -> getString(R.string.tor_connecting, state.progress)
       TorStatus.STOPPING -> getString(R.string.tor_stopping)
-      TorStatus.FAILED -> getString(R.string.tor_failed)
+      TorStatus.FAILED -> state.error?.takeIf { it.startsWith(TRANSPORT_MISSING) }
+        ?.let { getString(R.string.tor_bridge_transport_missing) }
+        ?: getString(
+          if ((activity as? Host)?.torBridgeMode() == BridgeMode.NONE) {
+            R.string.tor_failed_try_bridge
+          } else {
+            R.string.tor_failed
+          },
+        )
       TorStatus.OFF -> getString(R.string.tor_off)
     }
     binding.torStatusIcon.alpha = if (state.isOn) 1f else DIM_ALPHA
     binding.torNewIdentity.isEnabled = state.isOn
     binding.torVerify.isEnabled = state.isOn
     if (binding.torSwitch.isChecked != enabled) binding.torSwitch.isChecked = enabled
+  }
+
+  private fun renderBridges(binding: SheetTorBinding, host: Host) {
+    binding.torBridges.text = when (host.torBridgeMode()) {
+      BridgeMode.NONE -> getString(R.string.tor_bridge_status_none)
+      BridgeMode.OBFS4 -> getString(R.string.tor_bridge_status_obfs4)
+      BridgeMode.SNOWFLAKE -> getString(R.string.tor_bridge_status_snowflake)
+      BridgeMode.MEEK -> getString(R.string.tor_bridge_status_meek)
+      BridgeMode.CUSTOM -> getString(
+        R.string.tor_bridge_status_custom,
+        runCatching { Bridges.parseAll(host.torCustomBridges()).size }.getOrDefault(0),
+      )
+    }
   }
 
   override fun onDestroyView() {
@@ -92,6 +131,7 @@ class TorSheet : BottomSheetDialogFragment() {
   companion object {
     private const val TAG = "TorSheet"
     private const val DIM_ALPHA = 0.45f
+    const val TRANSPORT_MISSING = "bridge transport missing"
 
     fun show(fragmentManager: FragmentManager) {
       if (fragmentManager.findFragmentByTag(TAG) != null) return

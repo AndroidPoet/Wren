@@ -42,6 +42,17 @@ class WrenApp : Application() {
   @Inject
   lateinit var torController: TorController
 
+  /**
+   * True until the browser screen's first creation in this process. A screen recreated after
+   * the process was killed arrives with saved state, like one recreated for a rotation, but
+   * unlike that one it owes everything a cold start owes: the exit clean-up, fresh private and
+   * Tor profiles, and no replay of the intent that launched the dead process.
+   */
+  @Volatile var firstBrowserCreate: Boolean = true
+    private set
+
+  fun takeFirstBrowserCreate(): Boolean = firstBrowserCreate.also { firstBrowserCreate = false }
+
   override fun onCreate() {
     super.onCreate()
     // Applied before the first activity inflates, so there is no flash of the wrong theme.

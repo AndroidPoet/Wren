@@ -25,6 +25,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import dev.androidpoet.wren.databinding.SheetTabsBinding
 import dev.androidpoet.wren.ui.browser.BrowserActivity
 import dev.androidpoet.wren.ui.browser.BrowserViewModel
+import dev.androidpoet.wren.ui.inheritSecureFlag
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -84,6 +85,8 @@ class TabsSheet : BottomSheetDialogFragment() {
           viewModel.tabManager.snapshots.collectLatest { tabs ->
             adapter.activeTabId = viewModel.tabManager.activeTabId.value
             adapter.submitList(tabs)
+            // Private tabs' thumbnails are on this sheet whichever tab is active.
+            inheritSecureFlag(force = tabs.any { it.isPrivate })
           }
         }
         launch {

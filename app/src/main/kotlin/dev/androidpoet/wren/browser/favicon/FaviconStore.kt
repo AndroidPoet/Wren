@@ -13,13 +13,12 @@ import androidx.collection.LruCache
 import dev.androidpoet.wren.browser.blocking.HostMatcher
 import dev.androidpoet.wren.core.network.Dispatcher
 import dev.androidpoet.wren.core.network.WrenAppDispatchers
+import dev.androidpoet.wren.network.SafeHttp
 import dev.androidpoet.wren.settings.SettingsStore
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -42,7 +41,14 @@ class FaviconStore @Inject constructor(
   private val application: Application,
   private val settings: SettingsStore,
   @Dispatcher(WrenAppDispatchers.IO) private val ioDispatcher: CoroutineDispatcher,
+  http: SafeHttp,
 ) {
+  // Icons may sit behind a redirect; one that changes scheme is refused with the rest.
+  private val client = http.client.newBuilder()
+    .followRedirects(true)
+    .connectTimeout(TIMEOUT_MS.toLong(), java.util.concurrent.TimeUnit.MILLISECONDS)
+    .readTimeout(TIMEOUT_MS.toLong(), java.util.concurrent.TimeUnit.MILLISECONDS)
+    .build()
 
   private val memory = LruCache<String, Bitmap>(MEMORY_ENTRIES)
 
@@ -129,20 +135,15 @@ class FaviconStore @Inject constructor(
   }
 
   private fun download(url: String): Bitmap? {
-    val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-      connectTimeout = TIMEOUT_MS
-      readTimeout = TIMEOUT_MS
-      instanceFollowRedirects = true
+    val request = okhttp3.Request.Builder().url(url)
       // The icon is for us, not for the page; send nothing that identifies the user.
-      setRequestProperty("User-Agent", "Mozilla/5.0 (compatible)")
-      setRequestProperty("Accept", "image/png,image/*")
-    }
-    return try {
-      if (connection.responseCode != HttpURLConnection.HTTP_OK) return null
-      if (connection.contentLength > MAX_BYTES) return null
-      connection.inputStream.use(BitmapFactory::decodeStream)
-    } finally {
-      connection.disconnect()
+      .header("User-Agent", "Mozilla/5.0 (compatible)")
+      .header("Accept", "image/png,image/*")
+      .build()
+    return client.newCall(request).execute().use { response ->
+      if (response.code != HTTP_OK) return null
+      if (response.body.contentLength() > MAX_BYTES) return null
+      response.body.byteStream().use(BitmapFactory::decodeStream)
     }
   }
 
@@ -164,6 +165,7 @@ class FaviconStore @Inject constructor(
     const val MAX_PIXELS = 128
     const val MAX_BYTES = 512 * 1024
     const val TIMEOUT_MS = 4000
+    const val HTTP_OK = 200
 
     /**
      * Ordered by how likely the result is to be a real bitmap. `favicon.ico` is last because

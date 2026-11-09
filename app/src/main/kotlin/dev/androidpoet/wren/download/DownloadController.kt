@@ -109,14 +109,24 @@ class DownloadController @Inject constructor(
     pageUrl: String?,
     isPrivate: Boolean = false,
     suggestedName: String? = null,
+    apkAllowed: Boolean = false,
   ): Long? {
     if (url.startsWith("data:", ignoreCase = true)) {
-      return inApp.saveDataUrl(url, isPrivate, suggestedName)
+      return inApp.saveDataUrl(url, isPrivate, suggestedName, apkAllowed)
     }
     if (!url.startsWith("http")) return null
     if (settings.torMode) {
       return inApp.start(
-        InAppDownloader.Request(url, userAgent, contentDisposition, mimeType, pageUrl, isPrivate),
+        InAppDownloader.Request(
+          url,
+          userAgent,
+          contentDisposition,
+          mimeType,
+          pageUrl,
+          isPrivate,
+          viaTor = true,
+          apkAllowed = apkAllowed,
+        ),
       )
     }
     val manager = downloadManager ?: return null
@@ -187,8 +197,11 @@ class DownloadController @Inject constructor(
    * however long ago it was started: the record carries the flag, not this process's memory.
    */
   fun retry(download: Download): Boolean {
-    scope.launch { repository.remove(download.id) }
     if (download.url == "blob:" || download.url == "data:") return false
+    // A Tor download retried with Tor off would ask the same server for the same file from
+    // the real address; it waits for Tor instead.
+    if (!routeFor(download)) return false
+    scope.launch { repository.remove(download.id) }
     return enqueue(
       download.url,
       null,
@@ -208,7 +221,11 @@ class DownloadController @Inject constructor(
 
   fun pause(download: Download) = inApp.pause(download.id)
 
-  fun resume(download: Download) = inApp.resume(download.id)
+  /** False when the download cannot continue now, see [routeFor]; it stays paused. */
+  fun resume(download: Download): Boolean = inApp.resume(download.id)
+
+  /** Whether [download] may use the network right now: a Tor download only while Tor is on. */
+  fun routeFor(download: Download): Boolean = !download.viaTor || settings.torMode
 
   /** The private session is over: its downloads leave the list, as its history never entered. */
   fun forgetPrivate() {

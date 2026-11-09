@@ -23,7 +23,7 @@ import java.net.URI
 class TorProxySelector(port: Int) : ProxySelector() {
 
   private val proxies = listOf(
-    Proxy(Proxy.Type.HTTP, InetSocketAddress(InetAddress.getLoopbackAddress(), port)),
+    Proxy(Proxy.Type.HTTP, InetSocketAddress(LOOPBACK, port)),
   )
 
   override fun select(uri: URI?): List<Proxy> = proxies
@@ -31,6 +31,13 @@ class TorProxySelector(port: Int) : ProxySelector() {
   override fun connectFailed(uri: URI?, sa: SocketAddress?, ioe: IOException?) = Unit
 
   companion object {
+    /**
+     * Tor listens on 127.0.0.1. Android's `InetAddress.getLoopbackAddress()` is `::1`, where
+     * nothing listens: a client that then gave up on the proxy, as the platform's
+     * HttpURLConnection does, went on to connect directly.
+     */
+    val LOOPBACK: InetAddress = InetAddress.getByAddress("127.0.0.1", byteArrayOf(127, 0, 0, 1))
+
     /**
      * Whether a connection opened right now would leave from the real address: Tor mode is
      * on, but the tunnel is not yet the process proxy. That window is Tor's own start-up,

@@ -33,7 +33,8 @@
 - **Clear everything**: one tap closes every tab and deletes history, cookies and cache, with an
   optional wipe on exit.
 - **Private tabs** on their own WebView profile: no history, cookies or cache written.
-- **Tor mode** through the Guardian Project's tor-android.
+- **Tor mode** through the Guardian Project's tor-android, with obfs4, Snowflake and meek bridges
+  (Tor Browser's built-in ones, or your own lines) for networks that block Tor.
 - **App lock** using the device's own screen lock.
 - HTTPS upgrade and an HTTPS-only mode, tracking parameters stripped from links, bounce
   redirectors and AMP cache links unwrapped, fingerprinting and WebRTC leak protection with
@@ -86,7 +87,13 @@ engine. Before relying on it for anything sensitive, know the limits:
   on; a WebView cannot, so Wren isolates them by the host being fetched. New identity closes
   every tab, deletes the Tor profile, moves the tunnel so no old connection survives, and asks
   Tor for new circuits. Web Workers do not see the clock and WebRTC shims; a page that measures
-  the time zone inside a worker learns it.
+  the time zone inside a worker learns it. If Tor fails to connect, Wren points every tab at a
+  closed port rather than falling back to the open network. Bridges run through Lyrebird,
+  Tor Browser's pluggable-transport binary; Snowflake and meek need an ordinary DNS lookup of
+  their front domain before the first byte goes through Tor, as in Tor Browser. Downloads,
+  site icons and filter-list updates use a client of Wren's own that refuses, under Tor, any
+  connection that is not the tunnel: Android's built-in HTTP client silently falls back to a
+  direct connection when a proxy fails, so it is not used anywhere.
 - **One DNS lookup escapes Tor.** When a page asks the engine to look up a host ahead of time
   (`<link rel="dns-prefetch">`), Chromium's WebView resolves it through the phone's DNS, not
   through the proxy, and offers apps no switch for it. A page can use that to learn which

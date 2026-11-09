@@ -35,6 +35,7 @@ internal object NetworkModule {
       .cookieJar(okhttp3.CookieJar.NO_COOKIES)
       .proxySelector(DeferredProxySelector)
       .build()
+      .also(DeferredProxySelector::track)
   }
 
   @Provides

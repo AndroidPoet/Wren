@@ -20,6 +20,7 @@ fun Download.asEntity(): DownloadEntity = DownloadEntity(
   localUri = localUri,
   createdAt = createdAt,
   isPrivate = isPrivate,
+  viaTor = viaTor,
 )
 
 fun DownloadEntity.asDomain(): Download = Download(
@@ -32,6 +33,7 @@ fun DownloadEntity.asDomain(): Download = Download(
   localUri = localUri,
   createdAt = createdAt,
   isPrivate = isPrivate,
+  viaTor = viaTor,
 )
 
 @JvmName("downloadEntityListAsDomain")

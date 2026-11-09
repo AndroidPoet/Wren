@@ -8,6 +8,7 @@ package dev.androidpoet.wren.settings
 
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import dev.androidpoet.wren.browser.tor.BridgeMode
 import dev.androidpoet.wren.core.model.SearchEngine
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -203,6 +204,18 @@ class SettingsStore @Inject constructor(
     get() = preferences.getInt(KEY_TOR_HTTP_PORT, 0)
     set(value) = preferences.edit { putInt(KEY_TOR_HTTP_PORT, value) }
 
+  /** How Tor reaches its first relay where plain Tor is blocked; [BridgeMode.NONE] by default. */
+  var torBridgeMode: BridgeMode
+    get() = preferences.getString(KEY_TOR_BRIDGE_MODE, null)
+      ?.let { name -> BridgeMode.entries.firstOrNull { it.name == name } }
+      ?: BridgeMode.NONE
+    set(value) = preferences.edit { putString(KEY_TOR_BRIDGE_MODE, value.name) }
+
+  /** The user's own bridge lines, kept as pasted; validated again before they reach torrc. */
+  var torCustomBridges: String
+    get() = preferences.getString(KEY_TOR_CUSTOM_BRIDGES, "").orEmpty()
+    set(value) = preferences.edit { putString(KEY_TOR_CUSTOM_BRIDGES, value) }
+
   /** Answer cookie consent pop-ups with the most private option and hide them. */
   var answerCookiePopups: Boolean
     get() = preferences.getBoolean(KEY_COOKIE_POPUPS, true)
@@ -397,6 +410,8 @@ class SettingsStore @Inject constructor(
     private const val KEY_TOR_MODE = "tor_mode"
     private const val KEY_TOR_SOCKS_PORT = "tor_socks_port"
     private const val KEY_TOR_HTTP_PORT = "tor_http_port"
+    private const val KEY_TOR_BRIDGE_MODE = "tor_bridge_mode"
+    private const val KEY_TOR_CUSTOM_BRIDGES = "tor_custom_bridges"
     private const val KEY_COOKIE_POPUPS = "cookie_popups"
     private const val KEY_FINGERPRINTING = "block_fingerprinting"
     private const val KEY_TRIM_REFERRERS = "trim_referrers"

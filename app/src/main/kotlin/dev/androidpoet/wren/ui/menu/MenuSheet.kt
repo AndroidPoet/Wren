@@ -22,6 +22,7 @@ import dev.androidpoet.wren.R
 import dev.androidpoet.wren.databinding.ItemMenuSectionBinding
 import dev.androidpoet.wren.databinding.ItemMenuTileBinding
 import dev.androidpoet.wren.databinding.SheetMenuBinding
+import dev.androidpoet.wren.ui.inheritSecureFlag
 
 /** Everything the overflow menu can do, in the order the sheet lays it out. */
 enum class MenuAction(
@@ -89,6 +90,7 @@ class MenuSheet : BottomSheetDialogFragment() {
 
   override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
     super.onViewCreated(view, savedInstanceState)
+    inheritSecureFlag()
     val host = activity as? Host
     if (host == null) {
       dismiss()

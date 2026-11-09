@@ -28,6 +28,18 @@ class UrlPatternTest {
   }
 
   @Test
+  fun `a trailing dot on the host is the same host`() {
+    assertThat(matches("||tracker.example^", "https://tracker.example./x.js")).isTrue()
+    assertThat(matches("||tracker.example^", "https://tracker.example.:443/x.js")).isTrue()
+    val request = RequestContext("https://Tracker.Example../x?y=1")
+    assertThat(request.host).isEqualTo("tracker.example")
+    assertThat(request.url).isEqualTo("https://tracker.example/x?y=1")
+    assertThat(
+      request.url.substring(request.hostStart, request.hostEnd),
+    ).isEqualTo("tracker.example")
+  }
+
+  @Test
   fun `host anchor needs a label boundary`() {
     assertThat(matches("||example.com/ad", "https://sub.example.com/ad.js")).isTrue()
     assertThat(matches("||example.com/ad", "https://example.com/ad.js")).isTrue()

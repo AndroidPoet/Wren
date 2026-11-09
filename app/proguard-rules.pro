@@ -18,3 +18,6 @@
 # Keep line numbers for readable crash reports.
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
+
+# tor-lyrebird's Kotlin wrapper references the excluded Arti client; only its binary is used.
+-dontwarn io.github.androidpoet.tor.**

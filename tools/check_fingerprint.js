@@ -116,6 +116,21 @@ function check(name, ok) { checks.push([name, ok]); }
   const c = makeWorld(778, 'https://site-a.example', 'https://tracker.example');
   check('newSeedChangesAnswer', canvasOf(c).toDataURL() !== ca.toDataURL());
 }
+{
+  // Calibration attack: read a blank canvas of the same size to learn the noise mask, then
+  // subtract it from the real read. The mask must depend on the image, so this recovers
+  // nothing.
+  const win = makeWorld(777, 'https://site-a.example', 'https://site-a.example');
+  const blank = canvasOf(win);
+  blank._pixels = new Uint8ClampedArray(64 * 64 * 4);
+  const mask = blank.getContext('2d').getImageData(0, 0, 64, 64).data;
+  const real = canvasOf(win);
+  const noisy = real.getContext('2d').getImageData(0, 0, 64, 64).data;
+  const raw = Array.from(real._pixels);
+  const recovered = Array.from(noisy, (v, i) => v ^ mask[i]);
+  check('knownCanvasCannotRecoverNativeFingerprint', recovered.join() !== raw.join());
+  check('maskDependsOnImage', Array.from(noisy, (v, i) => v ^ raw[i]).join() !== Array.from(mask).join());
+}
 
 let failed = 0;
 for (const [name, ok] of checks) {

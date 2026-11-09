@@ -82,6 +82,12 @@ android {
     }
   }
 
+  packaging {
+    // Tor starts lyrebird as a process, and Android only executes files the installer placed
+    // in the app's native-library directory: that needs the libraries extracted at install.
+    jniLibs.useLegacyPackaging = true
+  }
+
   buildTypes {
     getByName("release") {
       isMinifyEnabled = true
@@ -134,6 +140,10 @@ dependencies {
   // onion routing
   implementation(libs.tor.android)
   implementation(libs.jtorctl)
+  implementation(libs.tor.lyrebird) {
+    // The artifact's Kotlin API needs the Arti client; Wren wants only the bundled binary.
+    exclude(group = "io.github.androidpoet", module = "tor")
+  }
   implementation(libs.androidx.localbroadcast)
 
   // native playback for media lifted out of the page

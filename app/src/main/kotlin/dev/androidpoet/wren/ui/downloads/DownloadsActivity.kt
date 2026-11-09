@@ -23,6 +23,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import dev.androidpoet.wren.R
 import dev.androidpoet.wren.browser.AppLock
 import dev.androidpoet.wren.browser.applyAppLock
+import dev.androidpoet.wren.core.model.Download
 import dev.androidpoet.wren.core.model.DownloadStatus
 import dev.androidpoet.wren.databinding.ActivityDownloadsBinding
 import dev.androidpoet.wren.download.DownloadController
@@ -126,10 +127,12 @@ class DownloadsActivity : AppCompatActivity() {
         ACTION_OPEN -> open(row)
         ACTION_SHARE -> share(row)
         ACTION_RETRY -> if (!viewModel.retry(row.download)) {
-          Toast.makeText(this, R.string.download_failed, Toast.LENGTH_SHORT).show()
+          Toast.makeText(this, failureMessage(row.download), Toast.LENGTH_SHORT).show()
         }
         ACTION_PAUSE -> controller.pause(row.download)
-        ACTION_RESUME -> controller.resume(row.download)
+        ACTION_RESUME -> if (!controller.resume(row.download)) {
+          Toast.makeText(this, failureMessage(row.download), Toast.LENGTH_SHORT).show()
+        }
         ACTION_CANCEL, ACTION_REMOVE -> viewModel.dismiss(row.download)
         else -> return@setOnMenuItemClickListener false
       }
@@ -137,6 +140,9 @@ class DownloadsActivity : AppCompatActivity() {
     }
     popup.show()
   }
+
+  private fun failureMessage(download: Download): Int =
+    if (!controller.routeFor(download)) R.string.download_needs_tor else R.string.download_failed
 
   private companion object {
     const val ACTION_OPEN = 1
