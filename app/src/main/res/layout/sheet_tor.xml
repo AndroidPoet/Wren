@@ -66,6 +66,21 @@
       android:textColor="@color/ink"
       android:textSize="15sp" />
 
+    <com.google.android.material.switchmaterial.SwitchMaterial
+      android:id="@+id/torSafestSwitch"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:minHeight="48dp"
+      android:text="@string/tor_safest"
+      android:textColor="@color/ink"
+      android:textSize="15sp" />
+
+    <TextView
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:text="@string/tor_safest_summary"
+      android:textAppearance="@style/TextAppearance.Wren.Caption" />
+
     <LinearLayout
       android:layout_width="match_parent"
       android:layout_height="wrap_content"

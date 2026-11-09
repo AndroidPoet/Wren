@@ -34,6 +34,8 @@ class TorSheet : BottomSheetDialogFragment() {
     fun onTorSetEnabled(enabled: Boolean)
     fun onTorNewIdentity()
     fun onTorVerify()
+    fun isTorSafest(): Boolean
+    fun onTorSafestChanged(enabled: Boolean)
     fun torBridgeMode(): BridgeMode
     fun torCustomBridges(): String
     fun onTorBridgesChanged(mode: BridgeMode, customLines: String)
@@ -61,6 +63,10 @@ class TorSheet : BottomSheetDialogFragment() {
     binding.torSwitch.isChecked = host.isTorEnabled()
     binding.torSwitch.setOnCheckedChangeListener { _, checked ->
       if (checked != host.isTorEnabled()) host.onTorSetEnabled(checked)
+    }
+    binding.torSafestSwitch.isChecked = host.isTorSafest()
+    binding.torSafestSwitch.setOnCheckedChangeListener { _, checked ->
+      host.onTorSafestChanged(checked)
     }
     binding.torNewIdentity.setOnClickListener {
       host.onTorNewIdentity()
@@ -107,6 +113,7 @@ class TorSheet : BottomSheetDialogFragment() {
     binding.torStatusIcon.alpha = if (state.isOn) 1f else DIM_ALPHA
     binding.torNewIdentity.isEnabled = state.isOn
     binding.torVerify.isEnabled = state.isOn
+    binding.torSafestSwitch.isEnabled = enabled
     if (binding.torSwitch.isChecked != enabled) binding.torSwitch.isChecked = enabled
   }
 

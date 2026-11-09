@@ -211,6 +211,17 @@ class SettingsStore @Inject constructor(
       ?: BridgeMode.NONE
     set(value) = preferences.edit { putString(KEY_TOR_BRIDGE_MODE, value.name) }
 
+  /**
+   * Tor Browser's "Safest" security level for Tor pages: JavaScript off everywhere and web
+   * fonts blocked. Off by default, since most of the web stops working at this level.
+   */
+  var torSafest: Boolean
+    get() = preferences.getBoolean(KEY_TOR_SAFEST, false)
+    set(value) = preferences.edit { putBoolean(KEY_TOR_SAFEST, value) }
+
+  /** True while pages are on Tor and the user asked for the Safest level. */
+  val torSafestActive: Boolean get() = torMode && torSafest
+
   /** The user's own bridge lines, kept as pasted; validated again before they reach torrc. */
   var torCustomBridges: String
     get() = preferences.getString(KEY_TOR_CUSTOM_BRIDGES, "").orEmpty()
@@ -412,6 +423,7 @@ class SettingsStore @Inject constructor(
     private const val KEY_TOR_HTTP_PORT = "tor_http_port"
     private const val KEY_TOR_BRIDGE_MODE = "tor_bridge_mode"
     private const val KEY_TOR_CUSTOM_BRIDGES = "tor_custom_bridges"
+    private const val KEY_TOR_SAFEST = "tor_safest"
     private const val KEY_COOKIE_POPUPS = "cookie_popups"
     private const val KEY_FINGERPRINTING = "block_fingerprinting"
     private const val KEY_TRIM_REFERRERS = "trim_referrers"

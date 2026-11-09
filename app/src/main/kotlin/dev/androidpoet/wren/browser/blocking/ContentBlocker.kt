@@ -36,10 +36,14 @@ class ContentBlocker @Inject constructor(
   fun intercept(request: WebResourceRequest, pageUrl: String): WebResourceResponse? {
     // Never touch the document itself: blocking it would break navigation rather than an ad.
     if (request.isForMainFrame) return null
-    if (!settings.blockAds) return null
-
     val url = request.url?.toString() ?: return null
     val context = RequestContext(url)
+    // Safest under Tor: a web font is a download the page controls and a probe of what the
+    // device renders, and Tor Browser refuses them at this level. Decided before the ad-block
+    // switch, which the user may have off.
+    if (settings.torSafestActive && isFont(context.url, request)) return BLOCKED_RESPONSE()
+    if (!settings.blockAds) return null
+
     val requestHost = context.host
     if (requestHost.isEmpty()) return null
     val rules = blocklist.rules
@@ -100,6 +104,10 @@ class ContentBlocker @Inject constructor(
       rules = rules.pageRulesFor(host),
     ).also { recentPages.set(nextSlot.getAndIncrement() and (PAGE_CACHE_SLOTS - 1), it) }
   }
+
+  private fun isFont(url: String, request: WebResourceRequest): Boolean =
+    RequestType.extensionMask(url) == RequestType.FONT ||
+      request.requestHeaders?.get("Sec-Fetch-Dest") == "font"
 
   private fun acceptHeaderOf(request: WebResourceRequest): String? {
     val headers = request.requestHeaders ?: return null

@@ -73,13 +73,17 @@ class PrivacyScripts @Inject constructor(
     """.trimIndent()
   }
 
-  /** WebRTC removed and the clock moved to UTC; see the asset. */
+  /** The clock moved to UTC and coarsened, the screen reported as the viewport; see the asset. */
   private val torScript: String by lazy { read("tor.js") }
+
+  /** WebRTC, motion sensors and device lists removed, for private and Tor pages; see the asset. */
+  private val privateScript: String by lazy { read("private.js") }
 
   private val gpcScript: String by lazy { read("gpc.js") }
 
   private class Handlers {
     var tor: ScriptHandler? = null
+    var private: ScriptHandler? = null
     var fingerprint: ScriptHandler? = null
     var fingerprintSeed: Int = 0
     var autoconsent: ScriptHandler? = null
@@ -94,8 +98,8 @@ class PrivacyScripts @Inject constructor(
     autoconsentScript
   }
 
-  /** Brings the installed scripts in line with the current settings. */
-  fun updateFor(webView: WebView) {
+  /** Brings the installed scripts in line with the current settings and the tab's privacy. */
+  fun updateFor(webView: WebView, isPrivate: Boolean) {
     if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
     val installed = handlers.getOrPut(webView) { Handlers() }
 
@@ -118,6 +122,9 @@ class PrivacyScripts @Inject constructor(
     ) { referrerScript }
     installed.gpc = sync(webView, installed.gpc, settings.sendDoNotTrack) { gpcScript }
     installed.tor = sync(webView, installed.tor, settings.torMode) { torScript }
+    installed.private = sync(webView, installed.private, isPrivate || settings.torMode) {
+      privateScript
+    }
   }
 
   private fun sync(

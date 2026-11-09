@@ -257,8 +257,8 @@
   <string name="tor">Tor</string>
   <string name="section_tor">Tor</string>
   <string name="tor_mode">Route through Tor</string>
-  <string name="tor_mode_summary">Sends every tab through three volunteer relays of the Tor network, so sites see a Tor exit address instead of yours. Tor pages keep their own cookies and storage, apart from your normal browsing, and nothing they visit is written to history. Each site gets its own circuit and pages see a UTC clock in English. Pages load slower, downloads run inside Wren through Tor, and sites without HTTPS are refused. Where Tor is blocked, a bridge can get through. Turning Tor off closes the pages opened while it was on. Wren is not the Tor Browser: sites can still tell browsers apart.</string>
-  <string name="tor_explainer">Every tab and every request the app makes leaves through three volunteer relays. Sites see a Tor exit address, not yours. Tor pages keep their own cookies and storage, apart from your normal browsing, nothing they visit is written to history, each site gets its own circuit, and pages see a UTC clock in English. Pages load slower, downloads run inside Wren through Tor, and sites without HTTPS are refused. Where Tor is blocked, a bridge can get through. Turning Tor off closes the pages opened while it was on. Wren is not the Tor Browser: sites can still tell browsers apart.</string>
+  <string name="tor_mode_summary">Sends every tab through three volunteer relays of the Tor network, so sites see a Tor exit address instead of yours. Tor pages keep their own cookies and storage, apart from your normal browsing, and nothing they visit is written to history. Each site gets its own circuit and pages see a UTC clock in English, a coarse timer and a screen rounded to even sizes, and third-party cookies, WebRTC and the motion sensors are off. Pages load slower, downloads run inside Wren through Tor, and sites without HTTPS are refused. Where Tor is blocked, a bridge can get through. Turning Tor off closes the pages opened while it was on. Wren is not the Tor Browser: sites can still tell browsers apart.</string>
+  <string name="tor_explainer">Every tab and every request the app makes leaves through three volunteer relays. Sites see a Tor exit address, not yours. Tor pages keep their own cookies and storage, apart from your normal browsing, nothing they visit is written to history, each site gets its own circuit, and pages see a UTC clock in English, a coarse timer and a screen rounded to even sizes, and third-party cookies, WebRTC and the motion sensors are off. Pages load slower, downloads run inside Wren through Tor, and sites without HTTPS are refused. Where Tor is blocked, a bridge can get through. Turning Tor off closes the pages opened while it was on. Wren is not the Tor Browser: sites can still tell browsers apart.</string>
   <string name="tor_on">Connected through the Tor network</string>
   <string name="tor_connecting">Connecting to Tor · %1$d%%</string>
   <string name="tor_stopping">Disconnecting from Tor</string>
@@ -279,6 +279,8 @@
   <string name="tor_external_app_open">Open</string>
   <string name="tor_new_identity_confirm">Close every tab, clear cookies, site data and history, and switch to new Tor circuits?</string>
   <string name="tor_verify">Check connection</string>
+  <string name="tor_safest">Safest</string>
+  <string name="tor_safest_summary">Tor Browser\'s strictest level: JavaScript off and web fonts blocked on every Tor page. Many sites stop working; the ones that do reveal the least.</string>
   <string name="tor_bridges">Bridges</string>
   <string name="tor_bridges_title">Use a bridge</string>
   <string name="tor_bridges_explainer">Where Tor itself is blocked, a bridge is an unlisted first relay reached through traffic disguised as something else. Pick the kind your network lets through; the built-in bridges are the ones Tor Browser ships. Tor restarts when this changes.</string>

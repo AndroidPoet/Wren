@@ -1,0 +1,2 @@
+Tor: pages are letterboxed to 100 px steps and report the screen as their own viewport; clocks (Date, performance.now, event and animation timestamps) are coarsened to 100 ms as in Tor Browser; third-party cookies are forced off; WebRTC, the motion and orientation sensors and media device lists are removed from Tor and private pages; the keyboard is asked not to learn from anything typed into a Tor or private page or into the address bar.
+Tor: a Safest switch on the Tor sheet, Tor Browser's strictest level: JavaScript off and web fonts blocked on every Tor page.

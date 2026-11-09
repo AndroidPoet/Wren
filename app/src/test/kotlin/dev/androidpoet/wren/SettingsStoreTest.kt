@@ -59,4 +59,15 @@ class SettingsStoreTest {
     settings.searchEngine = SearchEngine.MOJEEK
     assertThat(settings.searchEngine).isEqualTo(SearchEngine.MOJEEK)
   }
+
+  @Test
+  fun `safest is off by default and only active while pages are on Tor`() {
+    val settings = store()
+
+    assertThat(settings.torSafest).isFalse()
+    settings.torSafest = true
+    assertThat(settings.torSafestActive).isFalse()
+    settings.torMode = true
+    assertThat(settings.torSafestActive).isTrue()
+  }
 }

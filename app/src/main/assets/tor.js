@@ -5,22 +5,23 @@
  */
 
 /**
- * What a page must not learn while Tor is on.
+ * What a page must not learn while Tor is on. WebRTC and the sensors are handled by private.js,
+ * which runs on Tor pages too.
  *
- * WebRTC negotiates its own UDP sockets past any proxy and hands the page the real address, so
- * it is removed outright. The clock is moved to UTC the way Tor Browser does: the time zone is
- * one of the strongest signals of where a user is, and it leaks through Date and Intl with no
- * network request at all. Every method that formats a Date in local time is redirected to UTC;
- * the instant itself is untouched, so timers, timestamps and comparisons behave normally.
+ * The clock is moved to UTC the way Tor Browser does: the time zone is one of the strongest
+ * signals of where a user is, and it leaks through Date and Intl with no network request at
+ * all. Every method that formats a Date in local time is redirected to UTC; the instant itself
+ * is untouched, so timers, timestamps and comparisons behave normally. Clocks are then
+ * coarsened to 100 ms, Tor Browser's precision: a fine timer measures how long this device
+ * takes to paint, decode or compute, which names the hardware. The screen is reported as the
+ * page's own viewport, whose size the letterboxed WebView has already rounded off.
  */
 (function () {
   'use strict';
 
-  ['RTCPeerConnection', 'webkitRTCPeerConnection', 'RTCDataChannel'].forEach(function (name) {
-    try {
-      Object.defineProperty(window, name, { value: undefined, writable: false, configurable: false });
-    } catch (ignored) {}
-  });
+  // Tor Browser's reduced timer precision. Applied to every clock a page can read.
+  var PRECISION_MS = 100;
+  function coarse(ms) { return Math.floor(ms / PRECISION_MS) * PRECISION_MS; }
 
   var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -124,14 +125,14 @@
     return NativeDate.UTC.apply(NativeDate, parts);
   }
   function WrenDate(single) {
-    if (!new.target) return String(new NativeDate());
-    var args = arguments.length === 0 ? [] :
+    if (!new.target) return String(new NativeDate(coarse(NativeDate.now())));
+    var args = arguments.length === 0 ? [coarse(NativeDate.now())] :
       arguments.length === 1 ? [(function (p) { return localIso(p) ? p + 'Z' : p; })(primitive(single))] : [utcArgs(arguments)];
     return Reflect.construct(NativeDate, args, new.target);
   }
   WrenDate.prototype = NativeDate.prototype;
   WrenDate.UTC = NativeDate.UTC;
-  WrenDate.now = NativeDate.now;
+  WrenDate.now = function () { return coarse(NativeDate.now()); };
   WrenDate.parse = function (value) {
     var p = primitive(value, 'string');
     return NativeDate.parse(localIso(p) ? p + 'Z' : p);
@@ -158,4 +159,50 @@
   if (window.SpeechSynthesis && SpeechSynthesis.prototype.getVoices) {
     replace(SpeechSynthesis.prototype, 'getVoices', function () { return []; });
   }
+
+  // The monotonic clocks: performance.now(), event timestamps and animation-frame timestamps
+  // all read the same clock and all come back on the 100 ms grid.
+  if (window.Performance && Performance.prototype.now) {
+    var nativeNow = Performance.prototype.now;
+    replace(Performance.prototype, 'now', function () { return coarse(nativeNow.call(this)); });
+  }
+  if (window.Event) {
+    var nativeStamp = Object.getOwnPropertyDescriptor(Event.prototype, 'timeStamp');
+    if (nativeStamp && nativeStamp.get) {
+      try {
+        Object.defineProperty(Event.prototype, 'timeStamp', {
+          get: function () { return coarse(nativeStamp.get.call(this)); }, configurable: true
+        });
+      } catch (ignored) {}
+    }
+  }
+  if (typeof window.requestAnimationFrame === 'function') {
+    var nativeFrame = window.requestAnimationFrame;
+    replace(window, 'requestAnimationFrame', function (callback) {
+      return nativeFrame.call(window, function (timestamp) { return callback(coarse(timestamp)); });
+    });
+  }
+
+  // The screen is the viewport. The WebView under this page is letterboxed to 100 px steps, so
+  // innerWidth and innerHeight are already round numbers; everything that would describe the
+  // real display or the page's place on it answers with those or with zero, as Tor Browser does.
+  function viewport(name) {
+    return function () { return window[name]; };
+  }
+  function expose(owner, name, get) {
+    try { Object.defineProperty(owner, name, { get: get, configurable: true }); } catch (ignored) {}
+  }
+  if (window.screen) {
+    expose(screen, 'width', viewport('innerWidth'));
+    expose(screen, 'height', viewport('innerHeight'));
+    expose(screen, 'availWidth', viewport('innerWidth'));
+    expose(screen, 'availHeight', viewport('innerHeight'));
+    expose(screen, 'availLeft', function () { return 0; });
+    expose(screen, 'availTop', function () { return 0; });
+  }
+  expose(window, 'outerWidth', viewport('innerWidth'));
+  expose(window, 'outerHeight', viewport('innerHeight'));
+  ['screenX', 'screenY', 'screenLeft', 'screenTop'].forEach(function (name) {
+    expose(window, name, function () { return 0; });
+  });
 })();

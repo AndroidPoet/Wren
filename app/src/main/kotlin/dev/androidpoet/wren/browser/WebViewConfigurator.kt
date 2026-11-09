@@ -235,17 +235,17 @@ class WebViewConfigurator @Inject constructor(
       torProfile.isAttached(webView) -> torProfile.cookieManager()
       else -> null
     }
+    // Under Tor the user's choice does not apply: a third-party cookie is the one identifier
+    // that follows a Tor session from site to site, which is what the route exists to prevent.
+    val thirdParty = !settings.blockThirdPartyCookies && !settings.torMode
     if (jar != null) {
       jar.setAcceptCookie(true)
-      jar.setAcceptThirdPartyCookies(webView, !settings.blockThirdPartyCookies)
+      jar.setAcceptThirdPartyCookies(webView, thirdParty)
       return
     }
     // The default jar is shared by every normal tab, so only the per-view setting is touched
     // here; a process-wide switch flipped from one tab would reach the others' requests.
-    CookieManager.getInstance().setAcceptThirdPartyCookies(
-      webView,
-      !isPrivate && !settings.blockThirdPartyCookies,
-    )
+    CookieManager.getInstance().setAcceptThirdPartyCookies(webView, !isPrivate && thirdParty)
   }
 
   /**
@@ -270,8 +270,9 @@ class WebViewConfigurator @Inject constructor(
    */
   @SuppressLint("SetJavaScriptEnabled")
   fun applyForHost(webView: WebView, host: String) {
+    // Tor Browser's "Safest" level: no script runs, whatever the site or the global switch says.
     webView.settings.javaScriptEnabled =
-      settings.javaScriptEnabled && !settings.isJsDisabledFor(host)
+      settings.javaScriptEnabled && !settings.isJsDisabledFor(host) && !settings.torSafestActive
     val desktop = settings.desktopMode || settings.isDesktopSite(host)
     val wanted = userAgentFor(webView, desktop)
     if (webView.settings.userAgentString != wanted) {

@@ -3,7 +3,7 @@ package dev.androidpoet.wren
 object Configuration {
   const val majorVersion = 1
   const val minorVersion = 0
-  const val patchVersion = 6
+  const val patchVersion = 7
   const val versionName = "$majorVersion.$minorVersion.$patchVersion"
-  const val versionCode = 7
+  const val versionCode = 8
 }

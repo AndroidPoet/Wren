@@ -32,7 +32,8 @@
 **Privacy**
 - **Clear everything**: one tap closes every tab and deletes history, cookies and cache, with an
   optional wipe on exit.
-- **Private tabs** on their own WebView profile: no history, cookies or cache written.
+- **Private tabs** on their own WebView profile: no history, cookies or cache written; WebRTC,
+  motion sensors and device lists removed; keyboard learning off.
 - **Tor mode** through the Guardian Project's tor-android, with obfs4, Snowflake and meek bridges
   (Tor Browser's built-in ones, or your own lines) for networks that block Tor.
 - **App lock** using the device's own screen lock.
@@ -79,11 +80,14 @@ engine. Before relying on it for anything sensitive, know the limits:
 - **Tor mode is not Tor Browser.** It sends every tab and every request the app makes through
   Tor, keeps Tor pages in a storage profile of their own that is thrown away when Tor is turned
   off, writes nothing they visit to history, gives each destination host its own circuit,
-  refuses plain HTTP, runs downloads itself through Tor, removes WebRTC from pages, shows them
-  a UTC clock and answers in English. It does not make you look like other Tor users:
-  fingerprint protection gives each site its own noise, the same for that site until you clear
-  browsing data or restart Wren, rather than giving every user the same answers, and the screen
-  size and fonts stay visible. Tor Browser isolates circuits by the site you are
+  refuses plain HTTP, runs downloads itself through Tor, removes WebRTC and the motion sensors
+  from pages, forces third-party cookies off, shows pages a UTC clock on a 100 ms grid and
+  answers in English, letterboxes every page to 100 px steps and reports the screen as that
+  viewport, and asks the keyboard not to learn from what is typed. A Safest switch on the Tor
+  sheet turns JavaScript off and blocks web fonts on every Tor page. It does not make you look
+  like other Tor users: fingerprint protection gives each site its own noise, the same for that
+  site until you clear browsing data or restart Wren, rather than giving every user the same
+  answers, and the fonts installed on the phone stay visible. Tor Browser isolates circuits by the site you are
   on; a WebView cannot, so Wren isolates them by the host being fetched. New identity closes
   every tab, deletes the Tor profile, moves the tunnel so no old connection survives, and asks
   Tor for new circuits. Web Workers do not see the clock and WebRTC shims; a page that measures

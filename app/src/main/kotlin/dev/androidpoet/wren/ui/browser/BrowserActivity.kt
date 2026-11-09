@@ -38,6 +38,7 @@ import android.webkit.WebView
 import android.webkit.WebView.HitTestResult
 import android.webkit.WebViewClient
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
@@ -75,6 +76,7 @@ import dev.androidpoet.wren.browser.TorProfile
 import dev.androidpoet.wren.browser.UrlFormatter
 import dev.androidpoet.wren.browser.WebViewConfigurator
 import dev.androidpoet.wren.browser.WebViewFreshness
+import dev.androidpoet.wren.browser.WrenWebView
 import dev.androidpoet.wren.browser.applyAppLock
 import dev.androidpoet.wren.browser.blocking.BlockStats
 import dev.androidpoet.wren.browser.blocking.ContentBlocker
@@ -84,6 +86,7 @@ import dev.androidpoet.wren.browser.blocking.HostMatcher
 import dev.androidpoet.wren.browser.blocking.ServiceWorkerBlocker
 import dev.androidpoet.wren.browser.favicon.FaviconStore
 import dev.androidpoet.wren.browser.privacy.HttpsUpgrader
+import dev.androidpoet.wren.browser.privacy.Letterbox
 import dev.androidpoet.wren.browser.privacy.LinkCleaner
 import dev.androidpoet.wren.browser.privacy.LinkUnwrapper
 import dev.androidpoet.wren.browser.privacy.PrivacyScripts
@@ -173,6 +176,9 @@ class BrowserActivity :
 
   /** Whether the live pages belong to the Tor profile; they must follow the mode. */
   private var pagesOnTor = false
+
+  /** Rounds Tor pages to 100 px steps; see [Letterbox]. */
+  private lateinit var letterbox: Letterbox
 
   @Inject
   lateinit var filterListManager: FilterListManager
@@ -371,6 +377,7 @@ class BrowserActivity :
     torController.onBeforeRouteChange = { toTor ->
       if (toTor) retireAllWebViews() else discardAllWebViews()
     }
+    letterbox = Letterbox(binding.webViewContainer) { settings.torMode }
     // A blob or data: file whose late-arriving name says "app" gets the same second look.
     val askAboutApp: (() -> Unit, () -> Unit) -> Unit = { publish, drop ->
       runOnUiThread { if (isFinishing || isDestroyed) drop() else confirmAppFile(publish, drop) }
@@ -468,6 +475,7 @@ class BrowserActivity :
     val view = liveWebViews[tab.id] ?: createWebView(tab).also { created ->
       liveWebViews[tab.id] = created
       binding.webViewContainer.addView(created)
+      letterbox.apply()
       evictSurplusWebViews()
     }
     // Re-inserting marks it most recently used; the eviction order is this map's order.
@@ -485,14 +493,17 @@ class BrowserActivity :
     tab?.url?.let(HostMatcher::hostOf)?.let { host -> configurator.applyForHost(view, host) }
   }
 
-  private fun createWebView(tab: BrowserTab): WebView = WebView(this).also { created ->
+  private fun createWebView(tab: BrowserTab): WebView = WrenWebView(
+    this,
+    incognitoKeyboard = tab.isPrivate || settings.torMode,
+  ).also { created ->
     val tabId = tab.id
     if (tab.isPrivate && privateProfile.attach(created)) {
       privateProfile.serviceWorkerController()?.let(serviceWorkerBlocker::install)
     } else if (settings.torMode && torProfile.attach(created)) {
       torProfile.serviceWorkerController()?.let(serviceWorkerBlocker::install)
     }
-    created.layoutParams = ViewGroup.LayoutParams(
+    created.layoutParams = FrameLayout.LayoutParams(
       ViewGroup.LayoutParams.MATCH_PARENT,
       ViewGroup.LayoutParams.MATCH_PARENT,
     )
@@ -544,7 +555,7 @@ class BrowserActivity :
     blobDownloader.install(created)
     speculativeLoader.warmUpRenderer()
     cosmeticFilter.updateFor(created, tab.url)
-    privacyScripts.updateFor(created)
+    privacyScripts.updateFor(created, tab.isPrivate)
     installLongPressMenu(created)
   }
 
@@ -1671,6 +1682,18 @@ class BrowserActivity :
 
   override fun onTorVerify() = openTab(TOR_CHECK_URL, isPrivate = false)
 
+  override fun isTorSafest(): Boolean = settings.torSafest
+
+  /** Safest changes what runs on every open page, so each one is re-read and reloaded. */
+  override fun onTorSafestChanged(enabled: Boolean) {
+    if (settings.torSafest == enabled) return
+    settings.torSafest = enabled
+    liveWebViews.forEach { (id, view) ->
+      applySiteSettings(view, viewModel.tabManager.tab(id))
+      view.reload()
+    }
+  }
+
   override fun torBridgeMode(): BridgeMode = settings.torBridgeMode
 
   override fun torCustomBridges(): String = settings.torCustomBridges
@@ -2620,8 +2643,9 @@ class BrowserActivity :
     webView?.let { view ->
       applySiteSettings(view, viewModel.tabManager.activeTab())
       cosmeticFilter.updateFor(view, viewModel.tabManager.activeTab()?.url)
-      privacyScripts.updateFor(view)
+      privacyScripts.updateFor(view, viewModel.tabManager.activeTab()?.isPrivate == true)
     }
+    letterbox.apply()
   }
 
   override fun onDestroy() {
