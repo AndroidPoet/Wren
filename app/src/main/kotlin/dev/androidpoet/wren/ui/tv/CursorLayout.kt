@@ -250,6 +250,22 @@ class CursorLayout @JvmOverloads constructor(
     return true
   }
 
+  /**
+   * Presses a point of the page, given in the page view's own pixels, the way a finger would.
+   * The cursor goes there first, so what was pressed can be seen.
+   */
+  fun tapPage(x: Float, y: Float) {
+    val page = target() ?: return
+    val mine = IntArray(2).also(::getLocationInWindow)
+    val theirs = IntArray(2).also(page::getLocationInWindow)
+    cursorX = (x + theirs[0] - mine[0]).coerceIn(0f, width.toFloat())
+    cursorY = (y + theirs[1] - mine[1]).coerceIn(pageTop(page), height.toFloat())
+    wake()
+    pressDownTime = SystemClock.uptimeMillis()
+    sendTouch(MotionEvent.ACTION_DOWN)
+    sendTouch(MotionEvent.ACTION_UP)
+  }
+
   /** A finger at the cursor, in the target's own coordinates. */
   private fun sendTouch(action: Int) {
     val page = target() ?: return

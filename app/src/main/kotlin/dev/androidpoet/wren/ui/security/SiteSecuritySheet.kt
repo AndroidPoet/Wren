@@ -19,6 +19,7 @@ import dev.androidpoet.wren.browser.blocking.TrackerOwners
 import dev.androidpoet.wren.databinding.ItemTrackerGroupBinding
 import dev.androidpoet.wren.databinding.SheetSiteSecurityBinding
 import dev.androidpoet.wren.ui.inheritSecureFlag
+import dev.androidpoet.wren.ui.tv.TvMode
 import java.text.DateFormat
 
 /** What the lock icon knows about the page currently loaded. */
@@ -63,6 +64,11 @@ class SiteSecuritySheet : BottomSheetDialogFragment() {
   ): View = SheetSiteSecurityBinding.inflate(inflater, container, false)
     .also { binding = it }
     .root
+
+  override fun onStart() {
+    super.onStart()
+    TvMode.expandSheet(this)
+  }
 
   override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
     super.onViewCreated(view, savedInstanceState)

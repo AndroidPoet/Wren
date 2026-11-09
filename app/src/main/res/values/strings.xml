@@ -325,4 +325,5 @@
 
   <!-- Renderer recovery -->
   <string name="page_crashed">The page stopped responding and was reloaded</string>
+  <string name="voice_search">Search by voice</string>
 </resources>

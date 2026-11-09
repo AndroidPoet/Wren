@@ -22,6 +22,7 @@ import dev.androidpoet.wren.browser.tor.TorState
 import dev.androidpoet.wren.browser.tor.TorStatus
 import dev.androidpoet.wren.databinding.SheetTorBinding
 import dev.androidpoet.wren.ui.inheritSecureFlag
+import dev.androidpoet.wren.ui.tv.TvMode
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
@@ -50,6 +51,11 @@ class TorSheet : BottomSheetDialogFragment() {
   ): View = SheetTorBinding.inflate(inflater, container, false)
     .also { binding = it }
     .root
+
+  override fun onStart() {
+    super.onStart()
+    TvMode.expandSheet(this)
+  }
 
   override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
     super.onViewCreated(view, savedInstanceState)

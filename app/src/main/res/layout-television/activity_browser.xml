@@ -34,6 +34,7 @@
       android:paddingBottom="8dp">
       <ImageView
         android:id="@+id/backButton"
+        android:foreground="@drawable/fg_tv_focus"
         android:focusable="true"
         android:nextFocusDown="@id/cursor"
         style="@style/Widget.Wren.IconButton"
@@ -42,6 +43,7 @@
 
       <ImageView
         android:id="@+id/forwardButton"
+        android:foreground="@drawable/fg_tv_focus"
         android:focusable="true"
         android:nextFocusDown="@id/cursor"
         style="@style/Widget.Wren.IconButton"
@@ -50,6 +52,7 @@
 
       <ImageView
         android:id="@+id/homeButton"
+        android:foreground="@drawable/fg_tv_focus"
         android:focusable="true"
         android:nextFocusDown="@id/cursor"
         style="@style/Widget.Wren.IconButton"
@@ -58,6 +61,7 @@
 
       <TextView
         android:id="@+id/torPill"
+        android:foreground="@drawable/fg_tv_focus"
         android:layout_width="wrap_content"
         android:layout_height="32dp"
         android:layout_marginEnd="6dp"
@@ -87,6 +91,7 @@
 
         <ImageView
           android:id="@+id/securityIcon"
+          android:foreground="@drawable/fg_tv_focus"
           android:layout_width="18dp"
           android:layout_height="18dp"
           android:contentDescription="@string/page_security"
@@ -112,6 +117,7 @@
 
         <ImageView
           android:id="@+id/omniboxAction"
+          android:foreground="@drawable/fg_tv_focus"
           android:layout_width="36dp"
           android:layout_height="36dp"
           android:background="?attr/selectableItemBackgroundBorderless"
@@ -120,8 +126,19 @@
           android:src="@drawable/ic_refresh" />
       </LinearLayout>
 
+      <ImageView
+        android:id="@+id/voiceButton"
+        android:focusable="true"
+        android:nextFocusDown="@id/cursor"
+        android:foreground="@drawable/fg_tv_focus"
+        style="@style/Widget.Wren.IconButton"
+        android:contentDescription="@string/voice_search"
+        android:src="@drawable/ic_mic"
+        android:visibility="gone" />
+
       <TextView
         android:id="@+id/tabsButton"
+        android:foreground="@drawable/fg_tv_focus"
         android:focusable="true"
         android:nextFocusDown="@id/cursor"
         android:layout_width="28dp"
@@ -138,6 +155,7 @@
 
       <ImageView
         android:id="@+id/burnButton"
+        android:foreground="@drawable/fg_tv_focus"
         android:focusable="true"
         android:nextFocusDown="@id/cursor"
         style="@style/Widget.Wren.IconButton"
@@ -146,6 +164,7 @@
 
       <ImageView
         android:id="@+id/menuButton"
+        android:foreground="@drawable/fg_tv_focus"
         android:focusable="true"
         android:nextFocusDown="@id/cursor"
         style="@style/Widget.Wren.IconButton"

@@ -1,6 +1,6 @@
 # Wren privacy policy
 
-Last updated: 7 November 2026
+Last updated: 9 November 2026
 
 Wren is an Android web browser made by AndroidPoet. It has no account, no analytics, no ads and
 no servers of its own. Nothing about you or your browsing is sent to us, because there is nowhere
@@ -74,6 +74,11 @@ Browser for Android.
 
 Wren does not request access to your location, camera, microphone, contacts or files, and it
 refuses those requests from websites.
+
+On Android TV the voice search button starts the TV's own speech recogniser, a separate app with
+its own microphone permission and its own privacy policy. What you say goes to that app, not to
+Wren and not through Tor; Wren receives the recognised text and loads it as a search or an
+address. The button is absent in Tor mode and in private tabs.
 
 ## Children
 

@@ -28,6 +28,10 @@
 
   <!-- A browser has to be able to hand off links it cannot render itself. -->
   <queries>
+    <!-- The TV toolbar offers voice search only when the device has a speech recogniser. -->
+    <intent>
+      <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+    </intent>
     <intent>
       <action android:name="android.intent.action.VIEW" />
       <data android:scheme="mailto" />

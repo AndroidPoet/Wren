@@ -19,6 +19,7 @@ import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.speech.RecognizerIntent
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.TextUtils
@@ -118,6 +119,7 @@ import dev.androidpoet.wren.ui.showSecure
 import dev.androidpoet.wren.ui.tabs.TabThumbnails
 import dev.androidpoet.wren.ui.tabs.TabsSheet
 import dev.androidpoet.wren.ui.tor.TorSheet
+import dev.androidpoet.wren.ui.tv.TvMediaKeys
 import dev.androidpoet.wren.ui.useLightSystemBarIcons
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -228,6 +230,7 @@ class BrowserActivity :
   private var isOmniboxFocused = false
   private var isHomeVisible = false
   private var isTvHomeFocusSettled = false
+  private var omniboxTextAtFocus = ""
 
   private var lastTorStatus: TorStatus? = null
 
@@ -310,6 +313,19 @@ class BrowserActivity :
     }
     fileChooserCallback?.onReceiveValue(uris)
     fileChooserCallback = null
+  }
+
+  /** A TV has no keyboard worth typing on, so the remote can speak a search instead. */
+  private val voiceSearchLauncher = registerForActivityResult(
+    ActivityResultContracts.StartActivityForResult(),
+  ) { result ->
+    val spoken = result.data
+      ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+      ?.firstOrNull()
+      ?.trim()
+    if (result.resultCode == RESULT_OK && !spoken.isNullOrEmpty()) {
+      loadUrl(viewModel.resolve(spoken))
+    }
   }
 
   /** What the user asked to save, held while Android 9 and older ask them for storage access. */
@@ -1324,6 +1340,7 @@ class BrowserActivity :
       if (hasFocus) {
         if (url != UrlFormatter.NEW_TAB_URL) omnibox.setText(url)
         omnibox.selectAll()
+        omniboxTextAtFocus = omnibox.text.toString()
         viewModel.onQueryChanged(omnibox.text.toString())
       } else {
         viewModel.onQueryChanged("")
@@ -1657,6 +1674,7 @@ class BrowserActivity :
 
   private fun renderTor(state: TorState) = with(binding.torPill) {
     isVisible = settings.torMode
+    renderVoiceButton()
     text = when (state.status) {
       TorStatus.STARTING -> getString(R.string.tor_pill_connecting, state.progress)
       TorStatus.FAILED -> getString(R.string.tor_pill_failed)
@@ -2043,7 +2061,9 @@ class BrowserActivity :
   }
 
   override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
-    if (routeToTvCursor(event)) return true
+    if (routeToTvCursor(event) || handleTvMediaKey(event) || leaveUntouchedOmnibox(event)) {
+      return true
+    }
     if (event.action == android.view.KeyEvent.ACTION_DOWN) {
       when {
         event.keyCode == android.view.KeyEvent.KEYCODE_F5 -> {
@@ -2647,7 +2667,8 @@ class BrowserActivity :
    * inset continues to work untouched.
    */
   private fun applyAddressBarPosition() {
-    appliedBottomBar = settings.bottomAddressBar
+    // A TV has one bar and it stays at the top: nobody reaches for a television with a thumb.
+    appliedBottomBar = settings.bottomAddressBar && binding.cursor == null
     if (!appliedBottomBar) return
     val chrome = binding.browserChrome
     val navRow = binding.backButton.parent as android.view.View
@@ -2660,8 +2681,9 @@ class BrowserActivity :
 
   /**
    * The D-pad belongs to the cursor while a page (or its fullscreen video) is what has focus,
-   * or nothing has, or only the root does (where focus lands on a cold start). The address bar, the find bar, the home screen's tiles and any other chrome
-   * view keep ordinary D-pad navigation.
+   * or nothing has, or only the root does (where focus lands on a cold start). The address bar,
+   * the find bar, the home screen's tiles and any other chrome view keep ordinary D-pad
+   * navigation.
    */
   private fun routeToTvCursor(event: KeyEvent): Boolean {
     val cursor = binding.cursor ?: return false
@@ -2692,6 +2714,68 @@ class BrowserActivity :
     cursor.target = { customView ?: webView }
     cursor.onExitTop = { binding.omnibox.requestFocus() }
     binding.swipeRefresh.isEnabled = false
+    binding.voiceButton?.setOnClickListener { startVoiceSearch() }
+    renderVoiceButton()
+  }
+
+  /**
+   * Speech is recognised by whatever recogniser the TV ships: outside this app, and outside Tor.
+   * The button is offered only where that cannot surprise, so never under Tor, never in a private
+   * tab, and not at all on a device without a recogniser.
+   */
+  private fun renderVoiceButton() {
+    val button = binding.voiceButton ?: return
+    val isPrivate = viewModel.tabManager.activeTab()?.isPrivate == true
+    button.isVisible = !settings.torMode && !isPrivate &&
+      voiceSearchIntent().resolveActivity(packageManager) != null
+  }
+
+  private fun startVoiceSearch() {
+    try {
+      voiceSearchLauncher.launch(voiceSearchIntent())
+    } catch (_: ActivityNotFoundException) {
+      binding.voiceButton?.isVisible = false
+    }
+  }
+
+  private fun voiceSearchIntent(): Intent =
+    Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(
+      RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+      RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH,
+    )
+
+  /**
+   * On a TV the address bar is one stop in the row until something is typed into it: Left and
+   * Right move on to the neighbouring buttons instead of walking the caret through the address.
+   */
+  private fun leaveUntouchedOmnibox(event: KeyEvent): Boolean {
+    if (binding.cursor == null || !isOmniboxFocused) return false
+    val direction = when (event.keyCode) {
+      KeyEvent.KEYCODE_DPAD_LEFT -> View.FOCUS_LEFT
+      KeyEvent.KEYCODE_DPAD_RIGHT -> View.FOCUS_RIGHT
+      else -> return false
+    }
+    if (binding.omnibox.text.toString() != omniboxTextAtFocus) return false
+    if (event.action == KeyEvent.ACTION_DOWN) binding.omnibox.focusSearch(direction)?.requestFocus()
+    return true
+  }
+
+  /** A remote's transport keys drive the page's video, which has no other way to hear them. */
+  private fun handleTvMediaKey(event: KeyEvent): Boolean {
+    if (binding.cursor == null || isHomeVisible) return false
+    val script = TvMediaKeys.scriptFor(event.keyCode) ?: return false
+    val view = webView
+    if (view != null && event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+      view.evaluateJavascript(script) { answer ->
+        // A video that has never played needs a press, not a script: see TvMediaKeys.
+        val (x, y) = TvMediaKeys.tapPoint(answer) ?: return@evaluateJavascript
+
+        @Suppress("DEPRECATION")
+        val scale = view.scale
+        if (webView === view) binding.cursor?.tapPage(x * scale, y * scale)
+      }
+    }
+    return true
   }
 
   /** A private or Tor page must not appear in screenshots or the recents preview. */
@@ -2716,6 +2800,7 @@ class BrowserActivity :
     )
     omnibox.setHint(if (isPrivate) R.string.search_privately else R.string.search_or_type_url)
     renderShieldPill(isPrivate)
+    renderVoiceButton()
   }
 
   private fun renderShieldPill(isPrivate: Boolean) = with(binding.home.homeShieldPill) {
@@ -2770,7 +2855,7 @@ class BrowserActivity :
     super.onResume()
     applyWindowPreferences()
     applySecureFlag()
-    if (appliedBottomBar != settings.bottomAddressBar) recreate()
+    if (appliedBottomBar != (settings.bottomAddressBar && binding.cursor == null)) recreate()
     liveWebViews.values.forEach { it.onResume() }
     // Settings is a separate activity, so anything changed there lands on the live WebView here.
     webView?.let { view ->

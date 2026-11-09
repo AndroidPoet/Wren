@@ -23,6 +23,7 @@ import dev.androidpoet.wren.databinding.ItemMenuSectionBinding
 import dev.androidpoet.wren.databinding.ItemMenuTileBinding
 import dev.androidpoet.wren.databinding.SheetMenuBinding
 import dev.androidpoet.wren.ui.inheritSecureFlag
+import dev.androidpoet.wren.ui.tv.TvMode
 
 /** Everything the overflow menu can do, in the order the sheet lays it out. */
 enum class MenuAction(
@@ -87,6 +88,11 @@ class MenuSheet : BottomSheetDialogFragment() {
   ): View = SheetMenuBinding.inflate(inflater, container, false)
     .also { binding = it }
     .root
+
+  override fun onStart() {
+    super.onStart()
+    TvMode.expandSheet(this)
+  }
 
   override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
     super.onViewCreated(view, savedInstanceState)

@@ -15,6 +15,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
 import dev.androidpoet.wren.R
@@ -27,6 +28,7 @@ import dev.androidpoet.wren.core.model.SearchEngine
 import dev.androidpoet.wren.databinding.ActivitySettingsBinding
 import dev.androidpoet.wren.settings.SettingsStore
 import dev.androidpoet.wren.ui.padForSystemBars
+import dev.androidpoet.wren.ui.tv.TvMode
 import dev.androidpoet.wren.ui.useLightSystemBarIcons
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -94,6 +96,10 @@ class SettingsActivity : AppCompatActivity() {
 
     renderSearchEngine()
     binding.searchEngineRow.setOnClickListener { chooseSearchEngine() }
+    // The TV layout has one bar, at the top, so there is nothing for this switch to move.
+    val hasTouchLayout = !TvMode.isTv(this)
+    binding.bottomBarSwitch.isVisible = hasTouchLayout
+    binding.bottomBarSummary.isVisible = hasTouchLayout
     bindSwitch(
       view = binding.bottomBarSwitch,
       read = { settings.bottomAddressBar },

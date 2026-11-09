@@ -145,6 +145,14 @@ one row at the top of the screen and sites get their desktop layout. Tor mode wo
 on a phone when the TV's WebView supports profiles (it fails closed, with no network, when it
 does not).
 
+The microphone button in that row searches by voice. The listening is done by the TV's own speech
+recogniser, a separate app, so Wren itself still asks for no microphone permission; because that
+app is outside Wren and outside Tor, the button is absent in Tor mode and in private tabs, and on
+a TV that has no recogniser. The remote's Play, Pause, Fast-forward and Rewind keys act on the
+page's video: the fullscreen one, else the one that is playing, else the largest. A player inside
+a frame from another site cannot be reached that way, so press it with the cursor. Menus and
+sheets open at full height, and in the tab switcher Up from a tab reaches its close button.
+
 ## Download
 
 Get the APK for your phone from [Releases](https://github.com/AndroidPoet/Wren/releases/latest):

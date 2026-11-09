@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180">
+  <!-- Copyright 2026 AndroidPoet. SPDX-License-Identifier: GPL-3.0-or-later -->
+  <rect width="320" height="180" fill="#F4F1EA"/>
+  <g transform="translate(30,42) scale(1.5) translate(-18,-24)"><path d="M22,83.5Q55,78.5 88,81.5" stroke="#5E4A36" stroke-width="3.4" stroke-linecap="round" fill="none"/><path d="M53,72.5L51.5,81M60.5,72.5L61,80.5" stroke="#1E1B17" stroke-width="2" stroke-linecap="round"/><path fill="#5E4A36" d="M75,38.9Q80,39.9 84.8,42.1Q80,43.7 75,44.5Z"/><path fill="#A8482A" d="M76.5,41.5C76.5,36.5 72.5,33 67,33C61,33 57,36.5 54.5,40.5C52,43.5 49,45 45.5,44C42,42.5 38,37.5 35,31C34,29 31,29 31,32C31,39.5 34,47.5 39.5,52.5C39,65.5 46,74.5 57,74.5C69,74.5 79,67.5 79,57.5C79,50 77.5,46 76.5,41.5Z"/><path fill="#7A3118" d="M46,53.5C51,48 61,49.5 64.5,57.5C66.5,63 63,68 57,68C50,68 44.5,61.5 46,53.5Z"/><path d="M61.5,38Q67,35.5 73,37.5" stroke="#F1D9C4" stroke-width="1.6" stroke-linecap="round" fill="none"/><path fill="#1E1B17" d="M65.7,41.3a2.3,2.3 0 1,0 4.6,0a2.3,2.3 0 1,0 -4.6,0"/></g>
+  <text x="148" y="109" font-family="Georgia" font-weight="bold" font-size="50" fill="#1E1B17">Wren</text>
+</svg>
