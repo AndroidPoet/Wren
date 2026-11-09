@@ -153,7 +153,8 @@ class SpeculativeLoader internal constructor(
     lastWarmedOrigin = origin
     Timber.d("warming origin %s", origin)
     val host = origin.removePrefix("https://")
-    executor.execute { runCatching { resolve(host) } }
+    // Checked again on the executor: Tor may have come on while the lookup waited its turn.
+    executor.execute { if (allowed) runCatching { resolve(host) } }
     val profile = profile ?: return
     if (WebViewFeature.isFeatureSupported(WebViewFeature.PRECONNECT)) {
       runCatching { profile.preconnect(origin) }
@@ -187,6 +188,7 @@ class SpeculativeLoader internal constructor(
     // saving the DNS round trip - often the slowest single step before the first byte.
     if (host.isNotEmpty()) {
       executor.execute {
+        if (!allowed) return@execute
         runCatching { resolve(host) }
           .onSuccess { Timber.d("dns prewarmed %s", host) }
       }

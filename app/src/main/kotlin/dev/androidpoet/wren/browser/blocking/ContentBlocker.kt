@@ -141,6 +141,9 @@ class ContentBlocker @Inject constructor(
       ByteArrayInputStream(blocklist.resourceBytes(resource)),
     )
 
+  /** The answer for a request that must not leave: an empty body, no network. */
+  fun blocked(): WebResourceResponse = BLOCKED_RESPONSE()
+
   private companion object {
     const val PAGE_CACHE_SLOTS = 4
     val NO_STORE = mapOf("Cache-Control" to "no-store")

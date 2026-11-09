@@ -112,6 +112,7 @@ import dev.androidpoet.wren.ui.padForSystemBars
 import dev.androidpoet.wren.ui.security.SiteSecurityInfo
 import dev.androidpoet.wren.ui.security.SiteSecuritySheet
 import dev.androidpoet.wren.ui.settings.SettingsActivity
+import dev.androidpoet.wren.ui.showSecure
 import dev.androidpoet.wren.ui.tabs.TabThumbnails
 import dev.androidpoet.wren.ui.tabs.TabsSheet
 import dev.androidpoet.wren.ui.tor.TorSheet
@@ -499,9 +500,19 @@ class BrowserActivity :
   ).also { created ->
     val tabId = tab.id
     if (tab.isPrivate && privateProfile.attach(created)) {
-      privateProfile.serviceWorkerController()?.let(serviceWorkerBlocker::install)
-    } else if (settings.torMode && torProfile.attach(created)) {
-      torProfile.serviceWorkerController()?.let(serviceWorkerBlocker::install)
+      privateProfile.serviceWorkerController()?.let { serviceWorkerBlocker.install(it) { true } }
+    } else if (settings.torMode) {
+      if (torProfile.attach(created)) {
+        // A worker of this profile that outlives the route is answered with a block.
+        torProfile.serviceWorkerController()?.let {
+          serviceWorkerBlocker.install(it) { settings.torMode }
+        }
+      } else {
+        // Without its own profile the page would run on the clear-net jar over Tor, joining the
+        // two identities. It gets no network instead.
+        created.settings.blockNetworkLoads = true
+        toast(R.string.tor_profile_unavailable)
+      }
     }
     created.layoutParams = FrameLayout.LayoutParams(
       ViewGroup.LayoutParams.MATCH_PARENT,
@@ -682,7 +693,7 @@ class BrowserActivity :
       .setItems(actions.map { getString(it.first) }.toTypedArray()) { _, which ->
         actions[which].second()
       }
-      .show()
+      .showSecure()
   }
 
   /**
@@ -708,7 +719,7 @@ class BrowserActivity :
         runCatching { startActivity(market) }.recoverCatching { startActivity(web) }
       }
       .setNegativeButton(R.string.webview_stale_later, null)
-      .show()
+      .showSecure()
   }
 
   private fun downloadUrl(url: String) {
@@ -754,7 +765,7 @@ class BrowserActivity :
         applyRenderingMode()
         dialog.dismiss()
       }
-      .show()
+      .showSecure()
   }
 
   private fun savePageOffline() {
@@ -785,10 +796,14 @@ class BrowserActivity :
     }
     val view = webView ?: return
     val state = tab.state
-    when {
-      state != null && view.restoreState(state) != null -> renderHome(tab.url)
-      tab.url != UrlFormatter.NEW_TAB_URL -> loadUrl(tab.url)
-      else -> renderHome(UrlFormatter.NEW_TAB_URL)
+    // Restoring saved state fetches the page, so it waits for the route like a typed address.
+    whenNetworkReady {
+      if (webView !== view) return@whenNetworkReady
+      when {
+        state != null && view.restoreState(state) != null -> renderHome(tab.url)
+        tab.url != UrlFormatter.NEW_TAB_URL -> loadUrl(tab.url)
+        else -> renderHome(UrlFormatter.NEW_TAB_URL)
+      }
     }
     val shown = tab.committedUrl ?: tab.url
     renderOmnibox(shown)
@@ -905,6 +920,7 @@ class BrowserActivity :
   private fun endPrivateSession() {
     privateProfile.destroy()
     downloadController.forgetPrivate()
+    privacyScripts.rotateSeed(PrivacyScripts.Mode.PRIVATE)
   }
 
   /** Save-Data follows the network: on for metered connections, off the moment Wi-Fi returns. */
@@ -994,7 +1010,7 @@ class BrowserActivity :
       }
       .setNegativeButton(android.R.string.cancel) { _, _ -> handler.cancel() }
       .setOnCancelListener { handler.cancel() }
-      .show()
+      .showSecure()
   }
 
   /** The user has seen the warning and chosen the unencrypted page anyway. */
@@ -1462,7 +1478,7 @@ class BrowserActivity :
           renderSearchEngineChip()
         }
       }
-      .show()
+      .showSecure()
   }
 
   /** The home page stands in for the WebView whenever the tab has nowhere to be. */
@@ -1498,7 +1514,7 @@ class BrowserActivity :
         toast(R.string.shortcut_added)
       }
       .setNegativeButton(android.R.string.cancel, null)
-      .show()
+      .showSecure()
   }
 
   private fun setUpSuggestions() = with(binding.suggestionList) {
@@ -1612,16 +1628,24 @@ class BrowserActivity :
     if (onTor == pagesOnTor) return
     pagesOnTor = onTor
     if (onTor) {
-      retireAllWebViews()
-      // Private tabs come back on a Tor-scoped private profile, not the clear-net one.
+      // The pages opened over the open network close rather than reload over Tor: the same
+      // address fetched on both routes joins the Tor session to the one the ISP watched. A
+      // system download or blob spool started direct would likewise keep going; both stop.
+      discardAllWebViews()
       endPrivateSession()
+      downloadController.stopDirectDownloads()
+      blobDownloader.cancelAll()
+      privacyScripts.rotateSeed(PrivacyScripts.Mode.TOR)
       torProfile.enterEnglish()
+      viewModel.tabManager.closeAll()
       whenNetworkReady { restoreActiveTab() }
+      toast(R.string.tor_on_pages_closed)
     } else {
       discardAllWebViews()
       endPrivateSession()
       torProfile.leaveEnglish()
       torProfile.rotate()
+      privacyScripts.rotateSeed(PrivacyScripts.Mode.TOR)
       viewModel.tabManager.closeAll()
       restoreActiveTab()
       toast(R.string.tor_off_pages_closed)
@@ -1639,7 +1663,7 @@ class BrowserActivity :
         .setMessage(R.string.tor_off_confirm)
         .setPositiveButton(R.string.tor_off_action) { _, _ -> torController.setEnabled(false) }
         .setNegativeButton(android.R.string.cancel, null)
-        .show()
+        .showSecure()
       return
     }
     torController.setEnabled(enabled)
@@ -1673,11 +1697,12 @@ class BrowserActivity :
           val rotated = torController.newIdentity()
           clearBrowsingData(
             if (rotated) R.string.tor_new_identity_done else R.string.tor_new_identity_failed,
+            torIdentityOnly = true,
           )
         }
       }
       .setNegativeButton(android.R.string.cancel, null)
-      .show()
+      .showSecure()
   }
 
   override fun onTorVerify() = openTab(TOR_CHECK_URL, isPrivate = false)
@@ -1932,7 +1957,7 @@ class BrowserActivity :
       .setItems(labels.toTypedArray()) { _, which ->
         view.goBackOrForward(which - list.currentIndex)
       }
-      .show()
+      .showSecure()
     return true
   }
 
@@ -2054,7 +2079,7 @@ class BrowserActivity :
             switchSession(sessions[which].name)
           }
         }
-        .show()
+        .showSecure()
     }
   }
 
@@ -2076,7 +2101,7 @@ class BrowserActivity :
         if (name.isNotEmpty()) startFreshSession(name)
       }
       .setNegativeButton(android.R.string.cancel, null)
-      .show()
+      .showSecure()
   }
 
   /** A new session begins empty: the old one is saved, the slate is clean. */
@@ -2126,7 +2151,7 @@ class BrowserActivity :
         }
       }
       .setNegativeButton(android.R.string.cancel, null)
-      .show()
+      .showSecure()
   }
 
   private fun showQrCode() {
@@ -2143,7 +2168,7 @@ class BrowserActivity :
       .setTitle(UrlFormatter.prettyHost(url))
       .setView(image)
       .setPositiveButton(android.R.string.ok, null)
-      .show()
+      .showSecure()
   }
 
   private fun shareCurrentPage() {
@@ -2168,17 +2193,30 @@ class BrowserActivity :
       .setMessage(R.string.burn_confirm)
       .setPositiveButton(R.string.burn_action) { _, _ -> clearBrowsingData() }
       .setNegativeButton(android.R.string.cancel, null)
-      .show()
+      .showSecure()
   }
 
-  private fun clearBrowsingData(doneMessage: Int = R.string.browsing_data_cleared) {
+  /**
+   * [torIdentityOnly] is the Tor sheet's new identity: the Tor profile, its pages and its
+   * fingerprint seed go, and the clear-net profile, which the Tor pages never touched, stays.
+   */
+  private fun clearBrowsingData(
+    doneMessage: Int = R.string.browsing_data_cleared,
+    torIdentityOnly: Boolean = false,
+  ) {
     lifecycleScope.launch {
-      privacyCleaner.clearAll(webView, includeHistory = true)
+      if (!torIdentityOnly) privacyCleaner.clearAll(webView, includeHistory = true)
       // Every page goes, private ones first so their profile can be deleted underneath them.
       discardAllWebViews()
       endPrivateSession()
       // A fresh fingerprint seed: the canvas hash must not survive the identity it belonged to.
-      privacyScripts.rotateSeed()
+      if (torIdentityOnly) {
+        privacyScripts.rotateSeed(
+          PrivacyScripts.Mode.TOR,
+        )
+      } else {
+        privacyScripts.rotateSeed()
+      }
       if (settings.torMode) torProfile.rotate()
       viewModel.tabManager.closeAll()
       restoreActiveTab()
@@ -2266,7 +2304,7 @@ class BrowserActivity :
       .setPositiveButton(R.string.apk_download_confirm) { _, _ -> start() }
       .setNegativeButton(android.R.string.cancel) { _, _ -> cancel() }
       .setOnCancelListener { cancel() }
-      .show()
+      .showSecure()
   }
 
   private fun startDownload(
@@ -2392,7 +2430,7 @@ class BrowserActivity :
         .setMessage(R.string.tor_external_app_message)
         .setPositiveButton(R.string.tor_external_app_open) { _, _ -> launchExternal(intent, url) }
         .setNegativeButton(android.R.string.cancel, null)
-        .show()
+        .showSecure()
       return true
     }
     return launchExternal(intent, url)

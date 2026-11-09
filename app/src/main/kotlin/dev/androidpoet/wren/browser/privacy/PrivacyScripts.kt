@@ -14,6 +14,7 @@ import androidx.webkit.WebViewFeature
 import dev.androidpoet.wren.settings.SettingsStore
 import timber.log.Timber
 import java.security.SecureRandom
+import java.util.EnumMap
 import java.util.WeakHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -37,23 +38,38 @@ class PrivacyScripts @Inject constructor(
    * its own canvas must see the same answer - but must not outlive the session it belongs to,
    * or it would become the identifier it exists to prevent.
    */
-  private var sessionSeed: Int = SecureRandom().nextInt()
+  /**
+   * One seed per kind of page. A shared seed would give the same site the same canvas in a
+   * normal tab, a private tab and a Tor tab, which is a join between the three identities.
+   */
+  enum class Mode { NORMAL, PRIVATE, TOR }
+
+  private val seeds = EnumMap<Mode, Int>(Mode::class.java).apply {
+    Mode.entries.forEach { put(it, SecureRandom().nextInt()) }
+  }
+
+  private fun seedOf(mode: Mode): Int = seeds.getValue(mode)
 
   private val fingerprintSource: String by lazy { read("fingerprint.js") }
 
-  private var fingerprintCache: Pair<Int, String>? = null
+  private val fingerprintCache = EnumMap<Mode, Pair<Int, String>>(Mode::class.java)
 
-  private val fingerprintScript: String
-    get() {
-      fingerprintCache?.let { if (it.first == sessionSeed) return it.second }
-      val script = fingerprintSource.replace("__SEED__", sessionSeed.toString())
-      fingerprintCache = sessionSeed to script
-      return script
-    }
+  private fun fingerprintScript(mode: Mode): String {
+    val seed = seedOf(mode)
+    fingerprintCache[mode]?.let { if (it.first == seed) return it.second }
+    val script = fingerprintSource
+      .replace("__SEED__", seed.toString())
+      .replace("__TOR__", (mode == Mode.TOR).toString())
+    fingerprintCache[mode] = seed to script
+    return script
+  }
 
-  /** Ends the current farbling identity. Call with no WebView alive, or follow with [updateFor]. */
-  fun rotateSeed() {
-    sessionSeed = SecureRandom().nextInt()
+  /** Ends every farbling identity. Call with no WebView alive, or follow with [updateFor]. */
+  fun rotateSeed() = Mode.entries.forEach(::rotateSeed)
+
+  /** Ends one identity: the Tor one when Tor comes on, the private one when its last tab closes. */
+  fun rotateSeed(mode: Mode) {
+    seeds[mode] = SecureRandom().nextInt()
   }
 
   private val autoconsentScript: String by lazy { read("autoconsent.js") }
@@ -86,6 +102,7 @@ class PrivacyScripts @Inject constructor(
     var private: ScriptHandler? = null
     var fingerprint: ScriptHandler? = null
     var fingerprintSeed: Int = 0
+    var fingerprintMode: Mode? = null
     var autoconsent: ScriptHandler? = null
     var referrer: ScriptHandler? = null
     var gpc: ScriptHandler? = null
@@ -94,7 +111,7 @@ class PrivacyScripts @Inject constructor(
   private val handlers = WeakHashMap<WebView, Handlers>()
 
   fun warmUp() {
-    fingerprintScript
+    fingerprintScript(Mode.NORMAL)
     autoconsentScript
   }
 
@@ -102,16 +119,23 @@ class PrivacyScripts @Inject constructor(
   fun updateFor(webView: WebView, isPrivate: Boolean) {
     if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
     val installed = handlers.getOrPut(webView) { Handlers() }
+    val mode = when {
+      settings.torMode -> Mode.TOR
+      isPrivate -> Mode.PRIVATE
+      else -> Mode.NORMAL
+    }
 
-    if (installed.fingerprint != null && installed.fingerprintSeed != sessionSeed) {
-      // A rotated seed means a new script; the old one comes off first.
+    val stale = installed.fingerprintSeed != seedOf(mode) || installed.fingerprintMode != mode
+    if (installed.fingerprint != null && stale) {
+      // A rotated seed or another kind of page means a new script; the old one comes off first.
       runCatching { installed.fingerprint?.remove() }
       installed.fingerprint = null
     }
     installed.fingerprint = sync(webView, installed.fingerprint, settings.blockFingerprinting) {
-      fingerprintScript
+      fingerprintScript(mode)
     }
-    installed.fingerprintSeed = sessionSeed
+    installed.fingerprintSeed = seedOf(mode)
+    installed.fingerprintMode = mode
     installed.autoconsent = sync(webView, installed.autoconsent, settings.answerCookiePopups) {
       autoconsentScript
     }

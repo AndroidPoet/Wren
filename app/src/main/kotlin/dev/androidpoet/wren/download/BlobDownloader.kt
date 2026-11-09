@@ -197,6 +197,11 @@ class BlobDownloader @Inject constructor(
     }
   }
 
+  /** Ends every transfer still spooling: the pages they came from are gone. */
+  fun cancelAll() {
+    transfers.keys.toList().forEach { abort(it, "page closed") }
+  }
+
   private fun abort(id: String, reason: String) {
     val transfer = transfers.remove(id) ?: return
     runCatching { transfer.stream.close() }

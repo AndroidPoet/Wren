@@ -14,7 +14,7 @@ import java.net.InetSocketAddress
 import java.net.Proxy
 
 class TorRouteGuardTest {
-  private val tunnel = InetSocketAddress(InetAddress.getLoopbackAddress(), 9050)
+  private val tunnel = InetSocketAddress(InetAddress.getByName("127.0.0.1"), 9050)
   private val outside =
     InetSocketAddress(InetAddress.getByName("93.184.216.34"), 443)
 

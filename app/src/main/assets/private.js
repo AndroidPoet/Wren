@@ -13,54 +13,106 @@
  * is being held and moved, so they are removed too, both the constructors and the window
  * events. Media devices are not listed: even without labels, the count of cameras and
  * microphones is a fingerprint. Tor Browser disables all three.
+ *
+ * Applied per realm: a child frame's window carries every native until the engine injects
+ * this script into it, so the frame accessors hand the child through the same treatment.
  */
 (function () {
   'use strict';
 
-  function remove(name) {
-    try {
-      Object.defineProperty(window, name, { value: undefined, writable: false, configurable: false });
-    } catch (ignored) {}
-  }
+  var defineProperty = Object.defineProperty;
+  var getOwn = Object.getOwnPropertyDescriptor;
+  var MARK = Symbol.for('wren.private');
 
-  ['RTCPeerConnection', 'webkitRTCPeerConnection', 'RTCDataChannel', 'RTCIceCandidate',
-    'RTCSessionDescription'].forEach(remove);
-
-  ['DeviceMotionEvent', 'DeviceOrientationEvent', 'Accelerometer', 'LinearAccelerationSensor',
-    'GravitySensor', 'Gyroscope', 'Magnetometer', 'AbsoluteOrientationSensor',
-    'RelativeOrientationSensor', 'AmbientLightSensor'].forEach(remove);
+  var REMOVED = ['RTCPeerConnection', 'webkitRTCPeerConnection', 'RTCDataChannel', 'RTCIceCandidate',
+    'RTCSessionDescription', 'DeviceMotionEvent', 'DeviceOrientationEvent', 'Accelerometer',
+    'LinearAccelerationSensor', 'GravitySensor', 'Gyroscope', 'Magnetometer',
+    'AbsoluteOrientationSensor', 'RelativeOrientationSensor', 'AmbientLightSensor'];
 
   var SENSOR_EVENTS = { devicemotion: true, deviceorientation: true, deviceorientationabsolute: true };
 
-  if (window.EventTarget && EventTarget.prototype.addEventListener) {
-    var nativeAdd = EventTarget.prototype.addEventListener;
-    var add = function (type) {
-      // A bare addEventListener(...) call reaches the window with no receiver at all.
-      var target = this === undefined || this === null ? window : this;
-      if (target === window && SENSOR_EVENTS[String(type).toLowerCase()]) return undefined;
-      return nativeAdd.apply(this, arguments);
-    };
-    try { add.toString = function () { return String(nativeAdd); }; } catch (ignored) {}
-    try {
-      Object.defineProperty(EventTarget.prototype, 'addEventListener', {
-        value: add, writable: true, configurable: true
-      });
-    } catch (ignored) {}
+  function isWindow(value) {
+    try { return value != null && typeof value === 'object' && value.window === value; } catch (ignored) { return false; }
   }
 
-  Object.keys(SENSOR_EVENTS).forEach(function (event) {
-    try {
-      Object.defineProperty(window, 'on' + event, {
-        get: function () { return null; }, set: function () {}, configurable: true
-      });
-    } catch (ignored) {}
-  });
+  function harden(window) {
+    if (window[MARK]) return;
+    try { defineProperty(window, MARK, { value: true }); } catch (ignored) { return; }
 
-  if (window.MediaDevices && MediaDevices.prototype.enumerateDevices) {
-    try {
-      Object.defineProperty(MediaDevices.prototype, 'enumerateDevices', {
-        value: function () { return Promise.resolve([]); }, writable: true, configurable: true
-      });
-    } catch (ignored) {}
+    REMOVED.forEach(function (name) {
+      try {
+        defineProperty(window, name, { value: undefined, writable: false, configurable: false });
+      } catch (ignored) {}
+    });
+
+    var EventTarget = window.EventTarget;
+    if (EventTarget && EventTarget.prototype.addEventListener) {
+      var nativeAdd = EventTarget.prototype.addEventListener;
+      var add = function (type, listener, options) {
+        // The type is read once and the same string handed on: a value whose toString answers
+        // differently on a second read must not pass under one name and register under another.
+        var name = String(type);
+        // A bare addEventListener(...) call reaches the window with no receiver at all, and a
+        // wrapper borrowed from a child frame may be called on this window: any realm's window.
+        var target = this === undefined || this === null ? window : this;
+        if (isWindow(target) && SENSOR_EVENTS[name.toLowerCase()]) return undefined;
+        return arguments.length > 2 ? nativeAdd.call(this, name, listener, options) : nativeAdd.call(this, name, listener);
+      };
+      try { add.toString = function () { return String(nativeAdd); }; } catch (ignored) {}
+      try {
+        defineProperty(EventTarget.prototype, 'addEventListener', {
+          value: add, writable: true, configurable: true
+        });
+      } catch (ignored) {}
+    }
+
+    Object.keys(SENSOR_EVENTS).forEach(function (event) {
+      try {
+        defineProperty(window, 'on' + event, {
+          get: function () { return null; }, set: function () {}, configurable: true
+        });
+      } catch (ignored) {}
+    });
+
+    var MediaDevices = window.MediaDevices;
+    if (MediaDevices && MediaDevices.prototype.enumerateDevices) {
+      try {
+        defineProperty(MediaDevices.prototype, 'enumerateDevices', {
+          value: function () { return window.Promise.resolve([]); }, writable: true, configurable: true
+        });
+      } catch (ignored) {}
+    }
+
+    hardenFrames(window);
   }
+
+  function hardenFrames(window) {
+    ['HTMLIFrameElement', 'HTMLFrameElement', 'HTMLObjectElement'].forEach(function (kind) {
+      var element = window[kind];
+      var proto = element && element.prototype;
+      if (!proto) return;
+      ['contentWindow', 'contentDocument'].forEach(function (name) {
+        var native = getOwn(proto, name);
+        if (!native || !native.get) return;
+        var get = native.get;
+        try {
+          defineProperty(proto, name, {
+            get: function () {
+              var value = get.call(this);
+              try {
+                var child = name === 'contentWindow' ? value : value && value.defaultView;
+                if (child) harden(child);
+              } catch (ignored) {}
+              return value;
+            },
+            set: native.set,
+            enumerable: native.enumerable,
+            configurable: true
+          });
+        } catch (ignored) {}
+      });
+    });
+  }
+
+  harden(window);
 })();

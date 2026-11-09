@@ -33,13 +33,13 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.Call
 import okhttp3.Response
 import timber.log.Timber
 import java.io.File
 import java.io.FileOutputStream
 import java.net.ProxySelector
 import java.net.URL
-import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -97,6 +97,9 @@ class InAppDownloader @Inject constructor(
 
   private class Transfer(val id: Long, val request: Request, var fileName: String, val part: File) {
     var job: Job? = null
+
+    /** The connection in flight, so a pause can cut a read blocked on the network. */
+    @Volatile var call: Call? = null
     var etag: String? = null
     var lastModified: String? = null
     var paused = false
@@ -226,7 +229,7 @@ class InAppDownloader @Inject constructor(
     val transfer = transfers[id] ?: return
     transfer.paused = true
     transfer.job?.cancel()
-    transfer.job = null
+    transfer.call?.cancel()
     scope.launch { repository.updateStatus(id, DownloadStatus.PAUSED, null, transfer.total) }
     publishStates()
   }
@@ -237,7 +240,10 @@ class InAppDownloader @Inject constructor(
     if (transfer.job?.isActive == true) return true
     if (!routeAvailable(transfer.request)) return false
     transfer.paused = false
+    val previous = transfer.job
     scope.launch {
+      // The paused writer must be gone before another opens the same part file.
+      previous?.join()
       repository.updateStatus(id, DownloadStatus.RUNNING, null, transfer.total)
       launchTransfer(transfer)
     }
@@ -248,6 +254,7 @@ class InAppDownloader @Inject constructor(
   fun cancel(id: Long) {
     val transfer = transfers.remove(id) ?: return
     transfer.job?.cancel()
+    transfer.call?.cancel()
     transfer.part.delete()
     _progress.update { it - id }
     publishStates()
@@ -351,6 +358,9 @@ class InAppDownloader @Inject constructor(
     }
     var currentUrl = request.url
     var hops = 0
+    // Cookies a redirect hop sets on the way (a one-time download token, typically) are
+    // carried to the hops on the same host and no further; the profile's jar never sees them.
+    val hopCookies = HashMap<String, MutableMap<String, String>>()
     for (attempt in 1..2) {
       check(routeAvailable(request)) { "route unavailable" }
       // A resume is only safe when the server can tell us it is still the same file; without
@@ -362,19 +372,35 @@ class InAppDownloader @Inject constructor(
       while (true) {
         // Redirects are followed by hand: an automatic follow would replay the Cookie and
         // Referer of the first address at every hop, to whatever host the chain ends on.
+        // Every hop asks again: Tor may have gone off between one response and the next request.
+        check(routeAvailable(request)) { "route unavailable" }
+        val hopHost = URL(currentUrl).host.lowercase()
         val hop = okhttp3.Request.Builder().url(currentUrl).apply {
           request.userAgent?.let { header("User-Agent", it) }
           DownloadHeaders.referer(request.pageUrl, settings.trimReferrers, currentUrl)
             ?.let { header("Referer", it) }
-          jar?.getCookie(currentUrl)?.let { header("Cookie", it) }
+          val cookies = listOfNotNull(
+            jar?.getCookie(currentUrl),
+            hopCookies[hopHost]?.entries?.joinToString("; ") { "${'$'}{it.key}=${'$'}{it.value}" },
+          ).filter { it.isNotBlank() }
+          if (cookies.isNotEmpty()) header("Cookie", cookies.joinToString("; "))
           if (have > 0 && validator != null) {
             header("Range", "bytes=$have-")
             header("If-Range", validator)
           }
         }.build()
-        response = http.client.newCall(hop).execute()
+        val call = http.client.newCall(hop)
+        transfer.call = call
+        response = call.execute()
         if (response.code !in REDIRECT_CODES) break
         val location = response.header("Location")
+        for (setCookie in response.headers("Set-Cookie")) {
+          val pair = setCookie.substringBefore(';')
+          val name = pair.substringBefore('=').trim()
+          if (name.isNotEmpty() && '=' in pair) {
+            hopCookies.getOrPut(hopHost) { LinkedHashMap() }[name] = pair.substringAfter('=').trim()
+          }
+        }
         response.close()
         check(location != null) { "redirect without a location" }
         check(++hops <= MAX_REDIRECTS) { "too many redirects" }
@@ -495,14 +521,48 @@ class InAppDownloader @Inject constructor(
     val base64 = header.endsWith(";base64", ignoreCase = true)
     val mime = header.removeSuffix(";base64").removeSuffix(";BASE64")
       .substringBefore(';').ifBlank { "text/plain" }
-    val bytes = if (base64) {
-      Base64.decode(payload, Base64.DEFAULT)
-    } else {
-      URLDecoder.decode(payload.replace("+", "%2B"), "UTF-8").toByteArray()
-    }
+    val bytes = if (base64) Base64.decode(payload, Base64.DEFAULT) else percentDecode(payload)
     require(bytes.size <= MAX_BYTES) { "too large" }
     return mime to bytes
   }
+
+  /**
+   * `%XX` escapes to the bytes they stand for, byte for byte: a text decoder would turn any
+   * sequence that is not valid UTF-8 into replacement characters and corrupt a binary payload.
+   */
+  private fun percentDecode(payload: String): ByteArray {
+    val out = java.io.ByteArrayOutputStream(payload.length)
+    var i = 0
+    while (i < payload.length) {
+      val c = payload[i]
+      if (c == '%' && i + 2 < payload.length) {
+        val pair = payload.substring(i + 1, i + 3)
+        val hex = if (pair.all { it.isHexDigit() }) pair.toInt(16) else null
+        if (hex != null) {
+          out.write(hex)
+          i += 3
+          continue
+        }
+      }
+      // A data: URL is ASCII by construction; anything else is written as UTF-8.
+      out.write(c.toString().toByteArray(Charsets.UTF_8))
+      i++
+    }
+    return out.toByteArray()
+  }
+
+  init {
+    // Part files and blob spools from a process that died mid-transfer: nothing can resume
+    // them, and a half-downloaded file must not sit in the cache indefinitely.
+    scope.launch {
+      application.cacheDir.listFiles { file ->
+        (file.name.startsWith("download-") && file.name.endsWith(".part")) ||
+          file.name.startsWith("blob-") || file.name.startsWith("data-")
+      }?.forEach { stale -> stale.delete() }
+    }
+  }
+
+  private fun Char.isHexDigit(): Boolean = this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
 
   private companion object {
     val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)

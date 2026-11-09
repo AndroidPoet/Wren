@@ -14,6 +14,7 @@ import android.webkit.WebView
 import androidx.webkit.CustomHeader
 import androidx.webkit.Profile
 import androidx.webkit.ProfileStore
+import androidx.webkit.WebStorageCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -105,12 +106,14 @@ class TorProfile @Inject constructor(@ApplicationContext private val context: Co
   /** Deletes what earlier processes left behind. Safe to call on a cold start. */
   fun destroyAll() {
     if (!isSupported) return
-    runCatching {
-      val store = ProfileStore.getInstance()
-      for (stale in store.allProfileNames.filter { it.startsWith(PREFIX) }) {
-        store.deleteProfile(stale)
-      }
-    }.onFailure { Timber.w(it, "could not delete old tor profiles") }
+    val store = runCatching { ProfileStore.getInstance() }.getOrNull() ?: return
+    val names = runCatching { store.allProfileNames.filter { it.startsWith(PREFIX) } }
+      .getOrElse { emptyList() }
+    // One profile at a time: the first one still loaded must not spare the others.
+    for (stale in names) {
+      val deleted = runCatching { store.deleteProfile(stale) }
+      if (deleted.isFailure) wipe(stale)
+    }
   }
 
   /**
@@ -133,8 +136,13 @@ class TorProfile @Inject constructor(@ApplicationContext private val context: Co
     runCatching {
       profile.cookieManager.removeAllCookies(null)
       profile.cookieManager.flush()
-      profile.webStorage.deleteAllData()
       profile.geolocationPermissions.clearAll()
+      if (WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)) {
+        // Storage, service workers and their caches, HSTS and the HTTP cache in one call.
+        WebStorageCompat.deleteBrowsingData(profile.webStorage) {}
+      } else {
+        profile.webStorage.deleteAllData()
+      }
       WebView(context).apply {
         WebViewCompat.setProfile(this, profileName)
         clearCache(true)

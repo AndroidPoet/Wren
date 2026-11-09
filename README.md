@@ -84,10 +84,13 @@ engine. Before relying on it for anything sensitive, know the limits:
   from pages, forces third-party cookies off, shows pages a UTC clock on a 100 ms grid and
   answers in English, letterboxes every page to 100 px steps and reports the screen as that
   viewport, and asks the keyboard not to learn from what is typed. A Safest switch on the Tor
-  sheet turns JavaScript off and blocks web fonts on every Tor page. It does not make you look
-  like other Tor users: fingerprint protection gives each site its own noise, the same for that
-  site until you clear browsing data or restart Wren, rather than giving every user the same
-  answers, and the fonts installed on the phone stay visible. Tor Browser isolates circuits by the site you are
+  sheet turns JavaScript off and blocks web fonts on every Tor page. Under Tor the canvas reads
+  back blank, as in Tor Browser, so every Tor user gives the same answer; outside Tor
+  fingerprint protection gives each site its own noise, the same for that site until you clear
+  browsing data or restart Wren, with separate noise for normal, private and Tor pages. The
+  fonts installed on the phone stay visible. Turning Tor on closes the pages that were open
+  rather than reloading them over Tor, because the same address fetched on both routes would
+  tie the Tor session to the one your network saw. Tor Browser isolates circuits by the site you are
   on; a WebView cannot, so Wren isolates them by the host being fetched. New identity closes
   every tab, deletes the Tor profile, moves the tunnel so no old connection survives, and asks
   Tor for new circuits. Web Workers do not see the clock and WebRTC shims; a page that measures

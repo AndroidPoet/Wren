@@ -1,0 +1,6 @@
+Tor: the canvas reads back blank, as in Tor Browser, so every Tor user gives the same answer; normal, private and Tor pages each get their own fingerprint noise, rotated when Tor comes on, on a new identity, and when the last private tab closes.
+Tor: the clock, time zone, screen and sensor shims now also cover frames a page creates, dates written without a zone ("2026-01-01 00:00"), and the performance entries; clocks carry Tor Browser's per-bucket jitter so the 100 ms grid cannot be averaged away.
+Tor: turning Tor on closes the pages that were open instead of reloading them over Tor, and stops any download or blob transfer that started over the open network; a Tor page's service worker is cut off the moment Tor is switched off; a Tor page that cannot get its own storage profile gets no network at all.
+Tor: new identity leaves the clear-net profile alone; saved pages wait for the Tor route before they restore; the Safest level applies from a tab's first byte.
+Downloads: redirects re-check the route at every hop and carry the hop's cookies on the same host only; pause and resume no longer race on the part file; stale part files are cleared at start; non-base64 data: payloads are decoded byte for byte.
+Every dialog over a Tor or private page is hidden from screenshots and recents like the page.

@@ -7,6 +7,7 @@
 package dev.androidpoet.wren.network
 
 import okhttp3.Call
+import okhttp3.Connection
 import okhttp3.EventListener
 import java.io.IOException
 import java.net.InetSocketAddress
@@ -32,6 +33,17 @@ class TorRouteGuard(private val torMode: () -> Boolean) : EventListener() {
   override fun connectStart(call: Call, inetSocketAddress: InetSocketAddress, proxy: Proxy) {
     if (!allows(proxy, inetSocketAddress)) {
       throw IOException("Tor mode: refusing a connection that is not through Tor")
+    }
+  }
+
+  /**
+   * A pooled connection is handed out without a new connect: one opened direct before Tor came
+   * on, and not yet evicted, would carry a Tor-mode request from the real address.
+   */
+  override fun connectionAcquired(call: Call, connection: Connection) {
+    val route = connection.route()
+    if (!allows(route.proxy, route.socketAddress)) {
+      throw IOException("Tor mode: refusing a pooled connection that is not through Tor")
     }
   }
 

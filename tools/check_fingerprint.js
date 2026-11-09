@@ -17,7 +17,7 @@ const path = require('path');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'app/src/main/assets/fingerprint.js'), 'utf8');
 
-function makeWorld(seed, topOrigin, frameOrigin) {
+function makeWorld(seed, topOrigin, frameOrigin, tor = false) {
   const canvases = [];
   function pixelsFor(canvas) {
     if (!canvas._pixels) {
@@ -61,7 +61,7 @@ function makeWorld(seed, topOrigin, frameOrigin) {
   win.window = win;
   win.top = win;
   win.URL = URL;
-  const code = source.replace('__SEED__', String(seed));
+  const code = source.replace('__SEED__', String(seed)).replace('__TOR__', String(tor));
   new Function('window', 'location', 'document', 'navigator', 'screen', 'HTMLCanvasElement',
     'CanvasRenderingContext2D', 'WebGLRenderingContext', 'Navigator', 'Screen', 'URL', code)(
     win, win.location, win.document, win.navigator, win.screen, HTMLCanvasElement,
@@ -130,6 +130,22 @@ function check(name, ok) { checks.push([name, ok]); }
   const recovered = Array.from(noisy, (v, i) => v ^ mask[i]);
   check('knownCanvasCannotRecoverNativeFingerprint', recovered.join() !== raw.join());
   check('maskDependsOnImage', Array.from(noisy, (v, i) => v ^ raw[i]).join() !== Array.from(mask).join());
+}
+
+// Under Tor every read is blank and every export is of an empty canvas, whatever the seed or site.
+{
+  const a = makeWorld(1, 'https://a.example', 'https://a.example', true);
+  const b = makeWorld(2, 'https://b.example', 'https://b.example', true);
+  const ca = canvasOf(a), cb = canvasOf(b);
+  const readA = ca.getContext('2d').getImageData(0, 0, 64, 64).data;
+  const readB = cb.getContext('2d').getImageData(0, 0, 64, 64).data;
+  check('torCanvasReadIsBlank', readA.every((v) => v === 0) && readB.every((v) => v === 0));
+  check('torCanvasExportSameEverywhere', ca.toDataURL() === cb.toDataURL());
+  const out = new Uint8Array(64);
+  new a.WebGLRenderingContext().readPixels(0, 0, 4, 4, 0, 0, out);
+  check('torReadPixelsIsBlank', out.every((v) => v === 0));
+  const normal = canvasOf(makeWorld(1, 'https://a.example', 'https://a.example', false));
+  check('normalCanvasStillCarriesPixels', normal.getContext('2d').getImageData(0, 0, 64, 64).data.some((v) => v !== 0));
 }
 
 let failed = 0;

@@ -224,6 +224,24 @@ class DownloadController @Inject constructor(
   /** False when the download cannot continue now, see [routeFor]; it stays paused. */
   fun resume(download: Download): Boolean = inApp.resume(download.id)
 
+  /**
+   * Tor is coming on: a system download started over the open network would keep transferring
+   * from the real address while every page says Tor. It is stopped, like the pages are.
+   */
+  fun stopDirectDownloads() {
+    val manager = downloadManager ?: return
+    val direct = _progress.value.keys.filter { !inApp.owns(it) }
+    if (direct.isEmpty()) return
+    scope.launch {
+      for (id in direct) {
+        val total = repository.get(id)?.totalBytes ?: -1L
+        runCatching { manager.remove(id) }
+        repository.updateStatus(id, DownloadStatus.CANCELLED, null, total)
+      }
+      _progress.value = _progress.value - direct.toSet()
+    }
+  }
+
   /** Whether [download] may use the network right now: a Tor download only while Tor is on. */
   fun routeFor(download: Download): Boolean = !download.viaTor || settings.torMode
 

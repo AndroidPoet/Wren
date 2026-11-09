@@ -41,9 +41,14 @@ object DeferredProxySelector : ProxySelector() {
    * every call in flight.
    */
   fun routeChanged() {
-    for (client in clients) {
-      client.dispatcher.cancelAll()
-      client.connectionPool.evictAll()
-    }
+    for (client in clients) client.dispatcher.cancelAll()
+    // Closing a socket is network I/O to Android, which throws for it on the main thread; the
+    // pool is emptied on its own thread, and the route guard refuses any connection that a
+    // request might reuse before that finishes.
+    evictor.execute { for (client in clients) client.connectionPool.evictAll() }
+  }
+
+  private val evictor = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+    Thread(runnable, "route-evict").apply { isDaemon = true }
   }
 }

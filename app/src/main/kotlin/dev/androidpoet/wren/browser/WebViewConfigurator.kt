@@ -53,7 +53,7 @@ class WebViewConfigurator @Inject constructor(
     }
 
     webView.settings.apply {
-      javaScriptEnabled = settings.javaScriptEnabled
+      javaScriptEnabled = settings.javaScriptEnabled && !settings.torSafestActive
 
       // Storage. A private tab on its own profile may store whatever it likes: the profile is
       // deleted with the session. A WebView without profiles, or one where the profile did not

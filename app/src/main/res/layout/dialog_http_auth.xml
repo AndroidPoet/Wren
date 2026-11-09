@@ -20,6 +20,7 @@
     android:hint="@string/http_auth_username"
     android:importantForAutofill="no"
     android:inputType="text"
+    android:imeOptions="flagNoPersonalizedLearning"
     android:singleLine="true" />
 
   <EditText

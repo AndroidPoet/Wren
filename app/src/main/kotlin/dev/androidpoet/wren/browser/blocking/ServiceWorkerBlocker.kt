@@ -28,8 +28,14 @@ class ServiceWorkerBlocker @Inject constructor(
 
   private val installed = HashSet<ServiceWorkerController>()
 
-  private val client = object : ServiceWorkerClient() {
+  /**
+   * [allowed] is asked before every worker request. A Tor profile's worker that outlives the
+   * route (Tor switched off while the profile could not yet be deleted) would otherwise fetch
+   * from the real address with the Tor session's cookies; it is answered with a block instead.
+   */
+  private fun client(allowed: () -> Boolean) = object : ServiceWorkerClient() {
     override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? {
+      if (!allowed()) return contentBlocker.blocked()
       val headers = request.requestHeaders.orEmpty()
       val pageUrl = headers["Referer"] ?: headers["Origin"].orEmpty()
       return contentBlocker.intercept(request, pageUrl)
@@ -37,10 +43,10 @@ class ServiceWorkerBlocker @Inject constructor(
   }
 
   /** Covers the default profile's workers. */
-  fun install() = install(ServiceWorkerController.getInstance())
+  fun install() = install(ServiceWorkerController.getInstance()) { true }
 
-  fun install(controller: ServiceWorkerController) {
+  fun install(controller: ServiceWorkerController, allowed: () -> Boolean) {
     if (!installed.add(controller)) return
-    controller.setServiceWorkerClient(client)
+    controller.setServiceWorkerClient(client(allowed))
   }
 }

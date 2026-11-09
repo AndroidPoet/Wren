@@ -274,6 +274,8 @@
   <string name="tor_off_confirm">Turn Tor off? The pages opened while it was on will be closed so they never load over your own connection.</string>
   <string name="tor_off_action">Turn off</string>
   <string name="tor_off_pages_closed">Tor off. Pages opened over Tor were closed.</string>
+  <string name="tor_on_pages_closed">Tor on. Pages opened before it were closed; open them again over Tor.</string>
+  <string name="tor_profile_unavailable">Tor storage could not be set up for this page, so it was given no network</string>
   <string name="tor_external_app_title">Open in another app?</string>
   <string name="tor_external_app_message">The other app will fetch this from your own connection, not through Tor.</string>
   <string name="tor_external_app_open">Open</string>

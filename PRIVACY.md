@@ -52,8 +52,11 @@ not name the phone, asks the keyboard not to learn from what is typed, offers a 
 with JavaScript off and web fonts blocked, and can reach Tor through obfs4,
 Snowflake or meek bridges where Tor is blocked (Snowflake and meek look up their front domain
 through the phone's DNS first, as Tor Browser does), but it does not make you
-indistinguishable from other users the way Tor Browser does: fingerprint noise is stable per
-site for the session rather than the same for every user. One lookup escapes it: a page's DNS prefetch hint is resolved by the engine through
+indistinguishable from other users the way Tor Browser does: the canvas is blank under Tor as
+in Tor Browser, but the fonts stay visible and audio and WebGL carry per-site noise, stable for
+the session and separate for normal, private and Tor pages, rather than the same answer for
+every user. Turning Tor on closes the open pages instead of reloading them over Tor; a new
+identity deletes the Tor profile and leaves the clear-net one alone. One lookup escapes it: a page's DNS prefetch hint is resolved by the engine through
 the phone's DNS rather than through Tor, and no app can turn that off; Tor over a VPN or a
 private DNS server moves that disclosure away from your ISP. Web Workers do not get the clock and
 WebRTC shims. The engine adds an `X-Requested-With` header naming
