@@ -47,6 +47,15 @@ function makeWorld(seed, topOrigin, frameOrigin, tor = false) {
     }
     readPixels(x, y, w, h, f, t, out) { for (let i = 0; i < out.length; i++) out[i] = (i * 7) & 255; }
   }
+  class WebGL2RenderingContext extends WebGLRenderingContext {
+    getBufferSubData(target, offset, out) { for (let i = 0; i < out.length; i++) out[i] = (i * 11) & 255; }
+  }
+  class AnalyserNode {
+    getByteFrequencyData(array) { for (let i = 0; i < array.length; i++) array[i] = i & 255; }
+    getByteTimeDomainData(array) { array.fill(128); }
+    getFloatFrequencyData(array) { array.fill(-30); }
+    getFloatTimeDomainData(array) { array.fill(0); }
+  }
   class Navigator {}
   Object.defineProperty(Navigator.prototype, 'hardwareConcurrency', { get() { return 8; }, configurable: true });
   class Screen {}
@@ -55,7 +64,9 @@ function makeWorld(seed, topOrigin, frameOrigin, tor = false) {
   const win = {
     location: { origin: frameOrigin, ancestorOrigins: frameOrigin === topOrigin ? [] : [topOrigin] },
     document: { referrer: '', createElement: (t) => (t === 'canvas' ? new HTMLCanvasElement() : null) },
-    HTMLCanvasElement, CanvasRenderingContext2D, WebGLRenderingContext, Navigator, Screen,
+    HTMLCanvasElement, CanvasRenderingContext2D, WebGLRenderingContext, WebGL2RenderingContext, AnalyserNode, Navigator, Screen,
+    // A stand-in for the realm's Function so the shared toString wrapper lands somewhere observable.
+    Function: { prototype: { toString: Function.prototype.toString } },
     navigator: Object.create(Navigator.prototype), screen: Object.create(Screen.prototype),
   };
   win.window = win;
@@ -132,6 +143,33 @@ function check(name, ok) { checks.push([name, ok]); }
   check('maskDependsOnImage', Array.from(noisy, (v, i) => v ^ raw[i]).join() !== Array.from(mask).join());
 }
 
+// Shims read as native through the realm's Function.prototype.toString and carry no own toString.
+{
+  const win = makeWorld(777, 'https://site-a.example', 'https://site-a.example');
+  const toString = win.Function.prototype.toString;
+  const getImageData = win.CanvasRenderingContext2D.prototype.getImageData;
+  check('shimReadsAsNative', /\[native code\]|getImageData\(x, y, w, h\)/.test(toString.call(getImageData)) &&
+    toString.call(getImageData).indexOf('perturb') < 0);
+  check('shimHasNoOwnToString', !Object.prototype.hasOwnProperty.call(getImageData, 'toString'));
+  check('toStringItselfReadsAsNative', /\[native code\]/.test(toString.call(toString)));
+  check('hardwareConcurrencyGetterReadsAsNative',
+    /\[native code\]|get\(\)/.test(toString.call(Object.getOwnPropertyDescriptor(win.Navigator.prototype, 'hardwareConcurrency').get)));
+
+  // WebGL2 buffer readbacks and the byte analyser reads carry noise, in range and stable.
+  const gl = new win.WebGL2RenderingContext();
+  const a = new Uint8Array(4096), b = new Uint8Array(4096);
+  gl.getBufferSubData(0, 0, a); gl.getBufferSubData(0, 0, b);
+  check('bufferSubDataNoisy', a.some((v, i) => v !== ((i * 11) & 255)));
+  check('bufferSubDataStable', a.join() === b.join());
+  const analyser = new win.AnalyserNode();
+  const bytes = new Uint8Array(1024);
+  analyser.getByteFrequencyData(bytes);
+  check('byteAnalyserNoisyInRange', bytes.some((v, i) => v !== (i & 255)) && bytes.every((v, i) => Math.abs(v - (i & 255)) <= 1 || (i & 255) === 0 || (i & 255) === 255));
+  const flat = new Uint8Array(1024);
+  analyser.getByteTimeDomainData(flat);
+  check('byteTimeDomainNoisy', flat.some((v) => v !== 128));
+}
+
 // Under Tor every read is blank and every export is of an empty canvas, whatever the seed or site.
 {
   const a = makeWorld(1, 'https://a.example', 'https://a.example', true);
@@ -144,6 +182,9 @@ function check(name, ok) { checks.push([name, ok]); }
   const out = new Uint8Array(64);
   new a.WebGLRenderingContext().readPixels(0, 0, 4, 4, 0, 0, out);
   check('torReadPixelsIsBlank', out.every((v) => v === 0));
+  const sub = new Uint8Array(64);
+  new a.WebGL2RenderingContext().getBufferSubData(0, 0, sub);
+  check('torBufferSubDataIsBlank', sub.every((v) => v === 0));
   const normal = canvasOf(makeWorld(1, 'https://a.example', 'https://a.example', false));
   check('normalCanvasStillCarriesPixels', normal.getContext('2d').getImageData(0, 0, 64, 64).data.some((v) => v !== 0));
 }

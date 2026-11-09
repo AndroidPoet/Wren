@@ -17,7 +17,7 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'app/src/main/assets/t
 
 // A realm shaped like a page's window: the clocks and the screen as WebView exposes them.
 function realm(width, height) {
-  const context = vm.createContext({});
+  const context = vm.createContext({ hostURL: URL, hostBlob: Blob });
   vm.runInContext(`
     window = this;
     Date = Date; Math = Math; Object = Object; Reflect = Reflect; Symbol = Symbol; Promise = Promise; Intl = Intl; Function = Function; Number = Number; String = String; Array = Array;
@@ -25,8 +25,21 @@ function realm(width, height) {
     PerformanceEntry = class PerformanceEntry { get startTime() { return 5555.5; } get duration() { return 12.25; } toJSON() { return { startTime: 5555.5, duration: 12.25 }; } }
     Event = class Event { get timeStamp() { return 98765.4321; } }
     IdleDeadline = class IdleDeadline { timeRemaining() { return 33.3; } }
+    ExpiredDeadline = class ExpiredDeadline extends IdleDeadline { timeRemaining() { return 0; } };
+    Temporal = { Now: { timeZoneId() { return 'Asia/Calcutta'; }, instant() { return { ms: 1794200000123 }; }, zonedDateTimeISO(z) { return { zone: z || 'Asia/Calcutta' }; }, plainDateTimeISO(z) { return { zone: z || 'Asia/Calcutta' }; }, plainDateISO(z) { return { zone: z || 'Asia/Calcutta' }; }, plainTimeISO(z) { return { zone: z || 'Asia/Calcutta' }; } },
+                 Instant: { fromEpochMilliseconds(ms) { return { ms: ms, toZonedDateTimeISO(z) { return { zone: z, ms: ms, toPlainDateTime() { return { zone: z, ms: ms }; }, toPlainDate() { return { zone: z }; }, toPlainTime() { return { zone: z }; } }; } }; } } };
     Screen = class Screen { get width() { return ${width}; } get height() { return ${height}; } get availWidth() { return ${width}; } get availHeight() { return ${height - 37}; } get availTop() { return 37; } get availLeft() { return 0; } }
     Navigator = class Navigator { get language() { return 'hi-IN'; } }
+    KeyboardEvent = class KeyboardEvent { constructor(k, c) { this._k = k; this._c = c; } get key() { return this._k; } get code() { return this._c; } };
+    MouseEvent = class MouseEvent { constructor(x, y) { this._x = x; this._y = y; } get clientX() { return this._x; } get clientY() { return this._y; } get screenX() { return this._x + 6; } get screenY() { return this._y + 243; } };
+    Touch = class Touch { constructor(x) { this._x = x; } get clientX() { return this._x; } get clientY() { return 0; } get screenX() { return this._x + 6; } get screenY() { return 243; } };
+    __workerBodies = {};
+    URL = class URL extends hostURL {
+      static createObjectURL(blob) { const url = 'blob:https://example.org/' + Math.random().toString(16).slice(2); __workerBodies[url] = blob.__text; return url; }
+    };
+    Blob = class Blob extends hostBlob { constructor(parts, opts) { super(parts, opts); this.__text = parts.join(''); } }; JSON = JSON; TypeError = TypeError; WeakMap = WeakMap;
+    location = { href: 'https://example.org/app/page.html' };
+    Worker = class Worker { constructor(url, options) { this.url = String(url); this.options = options; } static get builtIn() { return 1; } };
     HTMLIFrameElement = class HTMLIFrameElement { constructor(child) { this._child = child; } get contentWindow() { return this._child; } get contentDocument() { return this._child && { defaultView: this._child }; } }
     performance = new Performance();
     screen = new Screen();
@@ -82,6 +95,10 @@ check('frameTimestampIsCoarse', nearby(run('var t = -1; requestAnimationFrame(fu
 check('entryStartTimeIsCoarse', nearby(run('new PerformanceEntry().startTime'), 5555.5));
 check('entryJsonIsCoarse', nearby(run('new PerformanceEntry().toJSON().startTime'), 5555.5));
 check('idleDeadlineIsCoarse', onGrid(run('new IdleDeadline().timeRemaining()')));
+check('expiredDeadlineStaysZero', run('new ExpiredDeadline().timeRemaining()') === 0);
+check('temporalZoneIsUtc', run('Temporal.Now.timeZoneId()') === 'UTC' && run('Temporal.Now.zonedDateTimeISO().zone') === 'UTC' &&
+  run('Temporal.Now.plainDateTimeISO().zone') === 'UTC' && run('Temporal.Now.zonedDateTimeISO("Europe/Paris").zone') === 'Europe/Paris');
+check('temporalInstantIsCoarse', onGrid(run('Temporal.Now.instant().ms')) && onGrid(run('Temporal.Now.zonedDateTimeISO().ms')));
 check('dateNowMonotonic', run('var a = Date.now(), ok = true; for (var i = 0; i < 2000; i++) { var b = Date.now(); if (b < a) ok = false; a = b; } ok'));
 // A page that swaps Math.floor for a recorder must not see the raw inputs.
 check('floorSwapSeesNothing', run('var seen = []; var f = Math.floor; Math.floor = function (v) { seen.push(v); return f(v); }; performance.now(); Date.now(); Math.floor = f; seen.length') === 0);
@@ -98,6 +115,42 @@ check('outerHeightIsInner', run('outerHeight') === 700);
 check('screenYIsZero', run('screenY') === 0);
 check('screenFollowsViewport', run('innerWidth = 300; screen.width') === 300);
 check('languageIsEnglish', run('navigator.language') === 'en-US');
+// Keys read as a US layout: the physical key behind a character stays unknown.
+check('keyCodeIsUsLayout', run('new KeyboardEvent("z", "KeyY").code') === 'KeyZ' &&
+  run('new KeyboardEvent("@", "Digit0").code') === 'Digit2' && run('new KeyboardEvent("Enter", "NumpadEnter").code') === 'NumpadEnter');
+
+// Pointer and touch events report screen coordinates equal to client coordinates.
+check('mouseScreenXIsClientX', run('new MouseEvent(10, 20).screenX') === 10 && run('new MouseEvent(10, 20).screenY') === 20);
+check('touchScreenXIsClientX', run('new Touch(42).screenX') === 42);
+check('unmappedKeyCodeIsEmpty', run('new KeyboardEvent("\u00e9", "Digit2").code') === '');
+
+// Everything locale-sensitive answers as en-US unless the page names a locale.
+check('intlLocaleIsEnglish', run('new Intl.NumberFormat().resolvedOptions().locale') === 'en-US' &&
+  run('Intl.DateTimeFormat().resolvedOptions().locale') === 'en-US' && run('new Intl.Collator().resolvedOptions().locale') === 'en-US');
+check('intlNamedLocaleKept', run('new Intl.NumberFormat("de-DE").resolvedOptions().locale') === 'de-DE');
+check('toLocaleStringIsEnglish', run('(1234567.5).toLocaleString()') === '1,234,567.5' &&
+  run('new Date(Date.UTC(2026, 0, 2, 15)).toLocaleString()') === '1/2/2026, 3:00:00 PM');
+check('intlConstructorLooksNative', run('Intl.NumberFormat.name') === 'NumberFormat' && run('Intl.NumberFormat.prototype.constructor === Intl.NumberFormat') &&
+  run('Intl.NumberFormat.supportedLocalesOf') !== undefined);
+
+// Shims read as native code through Function.prototype.toString, including toString itself.
+check('shimToStringLooksNative', /\[native code\]/.test(run('Function.prototype.toString.call(Date.prototype.getTimezoneOffset)')) &&
+  /\[native code\]/.test(run('Date.toString()')) && /\[native code\]/.test(run('Function.prototype.toString.call(Function.prototype.toString)')) &&
+  !run('Object.prototype.hasOwnProperty.call(Date.prototype.getTimezoneOffset, "toString")'));
+check('pageFunctionToStringIntact', run('(function page() { return 1; }).toString()') === 'function page() { return 1; }');
+
+// A worker is started from a bootstrap that installs this script before the page's own.
+check('workerStartsFromBootstrap', run('Worker.name') === 'Worker' && run('Worker.builtIn') === 1 &&
+  /^blob:/.test(run('new Worker("w.js").url')) && run('new Worker("w.js").url === new Worker("./w.js").url') &&
+  run('new Worker("w.js").url !== new Worker("w.js", { type: "module" }).url'));
+check('workerBootstrapCarriesScript', (() => {
+  const url = run('new Worker("worker.js").url');
+  const body = run('__workerBodies[' + JSON.stringify(url) + ']');
+  return typeof body === 'string' && body.indexOf('Symbol.for(\'wren.tor\')') > 0 && body.indexOf('(self, true, ') > 0 &&
+    body.indexOf('importScripts("https://example.org/app/worker.js")') > 0 && body.indexOf('resolveAgainst') > 0 &&
+    body.indexOf(', "https://example.org/app/worker.js");') > 0;
+})());
+check('workerWithoutNewThrows', (() => { try { run('Worker("w.js")'); return false; } catch (e) { return e instanceof TypeError || /new/.test(String(e)); } })());
 
 // A child frame reached through its element gets the same treatment, with its own natives.
 const child = realm(412, 915);

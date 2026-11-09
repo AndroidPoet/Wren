@@ -97,6 +97,9 @@ class PrivacyScripts @Inject constructor(
 
   private val gpcScript: String by lazy { read("gpc.js") }
 
+  /** Third-party frames get no storage, as Chrome gives them none with its cookies blocked. */
+  private val partitionScript: String by lazy { read("partition.js") }
+
   private class Handlers {
     var tor: ScriptHandler? = null
     var private: ScriptHandler? = null
@@ -106,6 +109,7 @@ class PrivacyScripts @Inject constructor(
     var autoconsent: ScriptHandler? = null
     var referrer: ScriptHandler? = null
     var gpc: ScriptHandler? = null
+    var partition: ScriptHandler? = null
   }
 
   private val handlers = WeakHashMap<WebView, Handlers>()
@@ -144,7 +148,14 @@ class PrivacyScripts @Inject constructor(
       installed.referrer,
       settings.trimReferrers,
     ) { referrerScript }
-    installed.gpc = sync(webView, installed.gpc, settings.sendDoNotTrack) { gpcScript }
+    installed.gpc = sync(webView, installed.gpc, settings.sendDoNotTrack && !settings.torMode) {
+      gpcScript
+    }
+    installed.partition = sync(
+      webView,
+      installed.partition,
+      settings.blockThirdPartyCookies || settings.torMode,
+    ) { partitionScript }
     installed.tor = sync(webView, installed.tor, settings.torMode) { torScript }
     installed.private = sync(webView, installed.private, isPrivate || settings.torMode) {
       privateScript

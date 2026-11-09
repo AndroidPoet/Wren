@@ -287,6 +287,8 @@ class InAppDownloader @Inject constructor(
 
   private suspend fun run(transfer: Transfer) {
     val id = transfer.id
+    // Paused between being scheduled and starting: the part file stays, nothing is fetched.
+    if (transfer.paused) return
     val outcome = runCatching { fetch(transfer) }
     if (!currentCoroutineIsActive()) {
       // Paused: the part file stays for the resume. Cancelled: already removed.
@@ -374,14 +376,19 @@ class InAppDownloader @Inject constructor(
         // Referer of the first address at every hop, to whatever host the chain ends on.
         // Every hop asks again: Tor may have gone off between one response and the next request.
         check(routeAvailable(request)) { "route unavailable" }
-        val hopHost = URL(currentUrl).host.lowercase()
+        val hopUrl = URL(currentUrl)
+        // One jar per origin: a token set on https://a must not be replayed to http://a or to
+        // another port of the same host.
+        val hopPort = hopUrl.port.takeIf { it >= 0 } ?: hopUrl.defaultPort
+        val hopHost = "${hopUrl.protocol}://${hopUrl.host.lowercase()}:$hopPort"
+        val hopEncrypted = hopUrl.protocol.equals("https", ignoreCase = true)
         val hop = okhttp3.Request.Builder().url(currentUrl).apply {
           request.userAgent?.let { header("User-Agent", it) }
           DownloadHeaders.referer(request.pageUrl, settings.trimReferrers, currentUrl)
             ?.let { header("Referer", it) }
           val cookies = listOfNotNull(
             jar?.getCookie(currentUrl),
-            hopCookies[hopHost]?.entries?.joinToString("; ") { "${'$'}{it.key}=${'$'}{it.value}" },
+            hopCookies[hopHost]?.entries?.joinToString("; ") { "${it.key}=${it.value}" },
           ).filter { it.isNotBlank() }
           if (cookies.isNotEmpty()) header("Cookie", cookies.joinToString("; "))
           if (have > 0 && validator != null) {
@@ -397,6 +404,9 @@ class InAppDownloader @Inject constructor(
         for (setCookie in response.headers("Set-Cookie")) {
           val pair = setCookie.substringBefore(';')
           val name = pair.substringBefore('=').trim()
+          val secure = setCookie.split(';').drop(1)
+            .any { it.trim().equals("Secure", ignoreCase = true) }
+          if (secure && !hopEncrypted) continue
           if (name.isNotEmpty() && '=' in pair) {
             hopCookies.getOrPut(hopHost) { LinkedHashMap() }[name] = pair.substringAfter('=').trim()
           }

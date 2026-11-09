@@ -43,8 +43,6 @@ class ServiceWorkerBlocker @Inject constructor(
   }
 
   /** Covers the default profile's workers. */
-  fun install() = install(ServiceWorkerController.getInstance()) { true }
-
   fun install(controller: ServiceWorkerController, allowed: () -> Boolean) {
     if (!installed.add(controller)) return
     controller.setServiceWorkerClient(client(allowed))

@@ -43,9 +43,13 @@ object LinkCleaner {
     "s_kwcid", "ef_id", "hsa_acc", "hsa_cam", "hsa_grp", "hsa_ad", "hsa_src",
     "hsa_tgt", "hsa_kw", "hsa_mt", "hsa_net", "hsa_ver",
     // Miscellaneous analytics
-    "_openstat", "icid", "ncid", "cmpid", "sc_cid", "trk", "trkcampaign", "spm",
+    "_openstat", "icid", "ncid", "cmpid", "sc_cid", "sccid", "trk", "trkcampaign", "spm",
+    // Omeda / Oracle email click tokens (the PrivacyTests.org navigation-tracking set)
+    "oft_c", "oft_ck", "oft_d", "oft_id", "oft_ids", "oft_k", "oft_lk", "oft_sk",
     // Cross-site linkers and merchant click ids
     "_ga", "_gl", "srsltid", "mibextid", "ref_src", "ref_url", "cvid", "ocid",
+    // Deliberately absent: `si` (Spotify, YouTube share ids) is also a plain query parameter on
+    // many sites, where removing it breaks the page; the risk outweighs the share-id leak.
   )
 
   /** Returns [url] with tracking parameters removed, or [url] unchanged when there are none. */

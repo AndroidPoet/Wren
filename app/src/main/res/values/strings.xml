@@ -275,6 +275,9 @@
   <string name="tor_off_action">Turn off</string>
   <string name="tor_off_pages_closed">Tor off. Pages opened over Tor were closed.</string>
   <string name="tor_on_pages_closed">Tor on. Pages opened before it were closed; open them again over Tor.</string>
+  <string name="page_leave_message">This page is asking whether you want to leave. Changes you made may not be saved.</string>
+  <string name="page_leave">Leave</string>
+  <string name="page_stay">Stay</string>
   <string name="tor_profile_unavailable">Tor storage could not be set up for this page, so it was given no network</string>
   <string name="tor_external_app_title">Open in another app?</string>
   <string name="tor_external_app_message">The other app will fetch this from your own connection, not through Tor.</string>

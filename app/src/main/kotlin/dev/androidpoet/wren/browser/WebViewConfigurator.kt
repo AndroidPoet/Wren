@@ -142,9 +142,10 @@ class WebViewConfigurator @Inject constructor(
     // GPC and DNT on every request of this view's profile, where the engine supports it.
     if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
       runCatching {
+        // Tor Browser sends neither: a signal few browsers send is itself a mark.
         PrivacyHeaders.apply(
           WebViewCompat.getProfile(webView),
-          settings.sendDoNotTrack,
+          settings.sendDoNotTrack && !settings.torMode,
         )
       }
     }
@@ -312,7 +313,7 @@ class WebViewConfigurator @Inject constructor(
 
   /** Headers sent with every top-level navigation the omnibox starts. */
   fun requestHeaders(): Map<String, String> = buildMap {
-    if (settings.sendDoNotTrack) {
+    if (settings.sendDoNotTrack && !settings.torMode) {
       put("DNT", "1")
       put("Sec-GPC", "1")
     }

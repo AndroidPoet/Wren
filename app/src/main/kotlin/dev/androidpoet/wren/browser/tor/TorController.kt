@@ -159,17 +159,19 @@ class TorController @Inject constructor(
   suspend fun newIdentity(): Boolean {
     val control = service?.torControlConnection ?: return false
     val fresh = withContext(Dispatchers.IO) { freePort() }
-    val changed = withContext(Dispatchers.IO) {
-      runCatching {
-        control.setConf("HTTPTunnelPort", "127.0.0.1:$fresh IsolateDestAddr")
-        control.signal(TorControlCommands.SIGNAL_NEWNYM)
-      }.onFailure { Timber.w(it, "new identity failed") }.isSuccess
+    val moved = withContext(Dispatchers.IO) {
+      runCatching { control.setConf("HTTPTunnelPort", "127.0.0.1:$fresh IsolateDestAddr") }
+        .onFailure { Timber.w(it, "new identity: port move failed") }.isSuccess
     }
-    if (changed) {
-      settings.torHttpPort = fresh
-      installProxy(fresh)
+    if (!moved) return false
+    // The daemon now listens on the new port whether or not the circuits are renewed below;
+    // the proxy must follow it or every page would lose its route.
+    settings.torHttpPort = fresh
+    installProxy(fresh)
+    return withContext(Dispatchers.IO) {
+      runCatching { control.signal(TorControlCommands.SIGNAL_NEWNYM) }
+        .onFailure { Timber.w(it, "new identity: NEWNYM failed") }.isSuccess
     }
-    return changed
   }
 
   private fun start() {

@@ -30,6 +30,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.webkit.CookieManager
 import android.webkit.HttpAuthHandler
+import android.webkit.ServiceWorkerController
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -339,7 +340,8 @@ class BrowserActivity :
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-    serviceWorkerBlocker.install()
+    // A clear-net worker must not keep fetching from the real address once Tor is on.
+    serviceWorkerBlocker.install(ServiceWorkerController.getInstance()) { !settings.torMode }
     appliedNightMode = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
     binding = ActivityBrowserBinding.inflate(layoutInflater)
     setContentView(binding.root)
@@ -500,7 +502,12 @@ class BrowserActivity :
   ).also { created ->
     val tabId = tab.id
     if (tab.isPrivate && privateProfile.attach(created)) {
-      privateProfile.serviceWorkerController()?.let { serviceWorkerBlocker.install(it) { true } }
+      // A private worker lives as long as the private session; one that outlives a change of
+      // route (Tor on or off since it registered) is answered with a block.
+      val onTor = settings.torMode
+      privateProfile.serviceWorkerController()?.let {
+        serviceWorkerBlocker.install(it) { settings.torMode == onTor }
+      }
     } else if (settings.torMode) {
       if (torProfile.attach(created)) {
         // A worker of this profile that outlives the route is answered with a block.
@@ -858,11 +865,16 @@ class BrowserActivity :
       renderTabChrome(tab)
       return
     }
-    val state = tab.state
-    if (state != null && view.restoreState(state) != null) {
-      renderTabChrome(tab)
-    } else {
-      loadUrl(tab.url)
+    // A restored page fetches again at once; while Tor is still connecting that would go out
+    // on the open network, so the restore waits for the route like a fresh load does.
+    whenNetworkReady {
+      if (webView !== view) return@whenNetworkReady
+      val state = tab.state
+      if (state != null && view.restoreState(state) != null) {
+        renderTabChrome(tab)
+      } else {
+        loadUrl(tab.url)
+      }
     }
   }
 

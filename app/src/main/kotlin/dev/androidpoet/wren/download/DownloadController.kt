@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -115,7 +116,13 @@ class DownloadController @Inject constructor(
       return inApp.saveDataUrl(url, isPrivate, suggestedName, apkAllowed)
     }
     if (!url.startsWith("http")) return null
-    if (settings.torMode) {
+    // A private page's download carries the private jar's cookies, never the normal one's;
+    // without a private jar it carries none.
+    val jar = if (isPrivate) privateProfile.cookieManager() else CookieManager.getInstance()
+    val cookies = jar?.getCookie(url)?.takeIf { it.isNotBlank() }
+    if (settings.torMode || cookies != null) {
+      // The system manager replays the Cookie header on every redirect, to whatever host the
+      // chain ends on; the in-app downloader follows redirects by hand and scopes cookies.
       return inApp.start(
         InAppDownloader.Request(
           url,
@@ -124,7 +131,7 @@ class DownloadController @Inject constructor(
           mimeType,
           pageUrl,
           isPrivate,
-          viaTor = true,
+          viaTor = settings.torMode,
           apkAllowed = apkAllowed,
         ),
       )
@@ -140,10 +147,6 @@ class DownloadController @Inject constructor(
         settings.trimReferrers,
         targetUrl = url,
       )?.let { addRequestHeader("Referer", it) }
-      // A private page's download carries the private jar's cookies, never the normal one's;
-      // without a private jar it carries none.
-      val jar = if (isPrivate) privateProfile.cookieManager() else CookieManager.getInstance()
-      jar?.getCookie(url)?.let { addRequestHeader("Cookie", it) }
       setTitle(fileName)
       setDescription(hostOf(pageUrl ?: url))
       setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
@@ -230,15 +233,31 @@ class DownloadController @Inject constructor(
    */
   fun stopDirectDownloads() {
     val manager = downloadManager ?: return
-    val direct = _progress.value.keys.filter { !inApp.owns(it) }
-    if (direct.isEmpty()) return
     scope.launch {
+      // Asked of the system, not of the progress map: a download enqueued before the process
+      // restarted is in the manager's list and not yet in ours.
+      val direct = withContext(Dispatchers.IO) { activeSystemDownloads(manager) }
+      if (direct.isEmpty()) return@launch
       for (id in direct) {
         val total = repository.get(id)?.totalBytes ?: -1L
         runCatching { manager.remove(id) }
         repository.updateStatus(id, DownloadStatus.CANCELLED, null, total)
       }
       _progress.value = _progress.value - direct.toSet()
+    }
+  }
+
+  private fun activeSystemDownloads(manager: DownloadManager): List<Long> = buildList {
+    val query = DownloadManager.Query().setFilterByStatus(
+      DownloadManager.STATUS_RUNNING or
+        DownloadManager.STATUS_PENDING or
+        DownloadManager.STATUS_PAUSED,
+    )
+    runCatching {
+      manager.query(query)?.use { cursor ->
+        val idCol = cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_ID)
+        while (cursor.moveToNext()) add(cursor.getLong(idCol))
+      }
     }
   }
 

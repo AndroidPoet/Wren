@@ -39,7 +39,9 @@
 - **App lock** using the device's own screen lock.
 - HTTPS upgrade and an HTTPS-only mode, tracking parameters stripped from links, bounce
   redirectors and AMP cache links unwrapped, fingerprinting and WebRTC leak protection with
-  noise that is stable per site, third-party cookies blocked, Attribution Reporting off, `DNT`
+  noise that is stable per site, third-party cookies blocked and third-party frames denied every
+  other kind of storage (the engine blocks the cookie but not the frame's localStorage, IndexedDB,
+  caches or files, which join two sites the same way), Attribution Reporting off, `DNT`
   and Global Privacy Control exposed to pages, form data never saved, location and camera/mic
   requests denied.
 
@@ -93,8 +95,8 @@ engine. Before relying on it for anything sensitive, know the limits:
   tie the Tor session to the one your network saw. Tor Browser isolates circuits by the site you are
   on; a WebView cannot, so Wren isolates them by the host being fetched. New identity closes
   every tab, deletes the Tor profile, moves the tunnel so no old connection survives, and asks
-  Tor for new circuits. Web Workers do not see the clock and WebRTC shims; a page that measures
-  the time zone inside a worker learns it. If Tor fails to connect, Wren points every tab at a
+  Tor for new circuits. Web Workers are started from a bootstrap that installs the clock, canvas
+  and locale shims before the page's script runs in them. If Tor fails to connect, Wren points every tab at a
   closed port rather than falling back to the open network. Bridges run through Lyrebird,
   Tor Browser's pluggable-transport binary; Snowflake and meek need an ordinary DNS lookup of
   their front domain before the first byte goes through Tor, as in Tor Browser. Downloads,

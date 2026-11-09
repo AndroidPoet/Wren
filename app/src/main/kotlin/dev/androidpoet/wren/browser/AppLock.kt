@@ -9,6 +9,7 @@ package dev.androidpoet.wren.browser
 import android.app.Activity
 import android.os.Build
 import android.view.View
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
@@ -64,6 +65,14 @@ class AppLock internal constructor(
   fun shieldRecents(activity: Activity) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       activity.setRecentsScreenshotEnabled(!settings.appLock)
+    }
+    // Settings, the library and the downloads list name Tor addresses and files while Tor is
+    // on; like the browser window they stay out of screenshots and the recents preview.
+    val secure = WindowManager.LayoutParams.FLAG_SECURE
+    if (settings.torMode || needsSecureWindow) {
+      activity.window.addFlags(secure)
+    } else {
+      activity.window.clearFlags(secure)
     }
   }
 

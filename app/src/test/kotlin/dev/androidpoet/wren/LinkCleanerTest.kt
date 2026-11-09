@@ -31,6 +31,14 @@ class LinkCleanerTest {
   }
 
   @Test
+  fun `email and snapchat click tokens are removed`() {
+    assertThat(LinkCleaner.clean("https://example.com/?oft_id=1&oft_k=2&page=3"))
+      .isEqualTo("https://example.com/?page=3")
+    assertThat(LinkCleaner.clean("https://example.com/?ScCid=abc"))
+      .isEqualTo("https://example.com/")
+  }
+
+  @Test
   fun `real parameters survive alongside tracking ones`() {
     assertThat(LinkCleaner.clean("https://example.com/search?q=kotlin&utm_source=news&page=2"))
       .isEqualTo("https://example.com/search?q=kotlin&page=2")

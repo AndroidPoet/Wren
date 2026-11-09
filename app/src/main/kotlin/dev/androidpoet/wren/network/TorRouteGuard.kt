@@ -43,6 +43,8 @@ class TorRouteGuard(private val torMode: () -> Boolean) : EventListener() {
   override fun connectionAcquired(call: Call, connection: Connection) {
     val route = connection.route()
     if (!allows(route.proxy, route.socketAddress)) {
+      // An exception from a listener is not an exception from the call; cancelling is.
+      call.cancel()
       throw IOException("Tor mode: refusing a pooled connection that is not through Tor")
     }
   }

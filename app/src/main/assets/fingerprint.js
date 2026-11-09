@@ -33,10 +33,34 @@
   var defineProperty = Object.defineProperty;
   var getOwn = Object.getOwnPropertyDescriptor;
   var MARK = Symbol.for('wren.fingerprint');
+  var SOURCES = Symbol.for('wren.sources');
+  var nativeToString = Function.prototype.toString;
+
+  // Every shim answers Function.prototype.toString with the source of what it replaced. The map
+  // is shared with the other privacy scripts of this realm; whichever runs first installs the
+  // toString wrapper, which itself reads as native.
+  function sourcesOf(window) {
+    var map = window[SOURCES];
+    if (map) return map;
+    map = new WeakMap();
+    try {
+      defineProperty(window, SOURCES, { value: map });
+      var FunctionPrototype = window.Function.prototype;
+      var toString = FunctionPrototype.toString;
+      var masked = function toString() {
+        var text = map.get(this);
+        return text !== undefined ? text : nativeToString.call(this);
+      };
+      map.set(masked, nativeToString.call(toString));
+      defineProperty(FunctionPrototype, 'toString', { value: masked, writable: true, configurable: true });
+    } catch (ignored) {}
+    return map;
+  }
 
   function harden(window) {
     if (window[MARK]) return;
     try { defineProperty(window, MARK, { value: true }); } catch (ignored) { return; }
+    var sources = sourcesOf(window);
     var document = window.document;
     var location = window.location;
     var HTMLCanvasElement = window.HTMLCanvasElement;
@@ -109,7 +133,11 @@
 
     function define(target, name, getter) {
       try {
+        var native = getOwn(target, name);
         Object.defineProperty(target, name, { get: getter, configurable: true, enumerable: true });
+        sources.set(getter, native && native.get
+          ? nativeToString.call(native.get)
+          : 'function get ' + name + '() { [native code] }');
       } catch (ignored) {
         // Some properties are locked down; skip rather than throw during page start-up.
       }
@@ -119,13 +147,10 @@
       try {
         var original = owner[name];
         if (typeof original !== 'function') return;
-        owner[name] = replacement(original);
-        // A page checking toString() should not see obviously patched source.
-        try {
-          owner[name].toString = function () { return String(original); };
-        } catch (ignored) {
-          // Non-writable toString; harmless.
-        }
+        var wrapped = replacement(original);
+        owner[name] = wrapped;
+        // A page checking toString() sees the native source, through the shared toString.
+        sources.set(wrapped, nativeToString.call(original));
       } catch (ignored) {
         // Never let hardening break the page.
       }
@@ -283,6 +308,22 @@
       });
     }
 
+    // A readback through a pixel buffer object lands in getBufferSubData instead.
+    function wrapBufferRead(prototype) {
+      wrap(prototype, 'getBufferSubData', function (original) {
+        return function (target, offset, out) {
+          var result = original.apply(this, arguments);
+          try {
+            if (out && typeof out.length === 'number' && out.length >= 4) {
+              if (TOR) out.fill(0);
+              else perturbPixels(out, readSalt(0, 0, out.length, target));
+            }
+          } catch (ignored) {}
+          return result;
+        };
+      });
+    }
+
     if (window.WebGLRenderingContext) {
       maskGetParameter(WebGLRenderingContext.prototype);
       wrapReadPixels(WebGLRenderingContext.prototype);
@@ -290,6 +331,28 @@
     if (window.WebGL2RenderingContext) {
       maskGetParameter(WebGL2RenderingContext.prototype);
       wrapReadPixels(WebGL2RenderingContext.prototype);
+      wrapBufferRead(WebGL2RenderingContext.prototype);
+    }
+
+    // A decoded video frame copied out is a canvas read of the decoder: the exact pixels a
+    // device produces for a known stream name its hardware decoder.
+    if (window.VideoFrame && window.VideoFrame.prototype.copyTo) {
+      wrap(VideoFrame.prototype, 'copyTo', function (original) {
+        return function (destination) {
+          var frame = this;
+          var promise = original.apply(this, arguments);
+          return promise.then(function (layout) {
+            try {
+              var view = destination instanceof Uint8Array
+                ? destination
+                : new Uint8Array(destination.buffer || destination, destination.byteOffset || 0, destination.byteLength);
+              if (TOR) view.fill(0);
+              else perturbPixels(view, readSalt(0, 0, frame.codedWidth || view.length, frame.codedHeight || 0));
+            } catch (ignored) {}
+            return layout;
+          });
+        };
+      });
     }
 
     // --- Audio -------------------------------------------------------------------------
@@ -345,6 +408,23 @@
       }
       wrapAnalyser('getFloatFrequencyData', 1000);
       wrapAnalyser('getFloatTimeDomainData', 1000);
+      // The byte reads of the same data: one step of the 256, at the same stride, kept in range.
+      function wrapByteAnalyser(name) {
+        wrap(AnalyserNode.prototype, name, function (original) {
+          return function (array) {
+            original.apply(this, arguments);
+            try {
+              for (var i = 0; i < array.length; i += 97) {
+                var step = sampleNoise(1, i) < 0 ? -1 : 1;
+                var value = array[i] + step;
+                array[i] = value < 0 ? 1 : value > 255 ? 254 : value;
+              }
+            } catch (ignored) {}
+          };
+        });
+      }
+      wrapByteAnalyser('getByteFrequencyData');
+      wrapByteAnalyser('getByteTimeDomainData');
     }
 
     // --- Navigator ---------------------------------------------------------------------
