@@ -130,13 +130,20 @@ trackers and ads out of the way.
 
 ## Android TV
 
+<p align="center">
+  <img src="fastlane/metadata/android/en-US/images/tvScreenshots/1.png" width="32%" alt="The home page on a TV, with a tile in focus">
+  <img src="fastlane/metadata/android/en-US/images/tvScreenshots/2.png" width="32%" alt="A page on a TV, with the cursor on a link">
+  <img src="fastlane/metadata/android/en-US/images/tvScreenshots/3.png" width="32%" alt="The link menu a held centre key opens">
+</p>
+
 Wren appears in the Android TV launcher and is driven by the remote. The D-pad moves a cursor
 over the page: a tap is a step, a held key accelerates, the centre key presses where the cursor
 points and a held centre key is a long press. At an edge the cursor scrolls the page; pushed off
 the top of a page that is already at its top it moves into the address bar, from where Down
-returns to the page. The chrome is one row at the top of the screen and sites get their desktop
-layout. Tor mode works the same as on a phone when the TV's WebView supports profiles (it fails
-closed, with no network, when it does not).
+returns to the page. On the home page the D-pad moves between the tiles instead. The chrome is
+one row at the top of the screen and sites get their desktop layout. Tor mode works the same as
+on a phone when the TV's WebView supports profiles (it fails closed, with no network, when it
+does not).
 
 ## Download
 

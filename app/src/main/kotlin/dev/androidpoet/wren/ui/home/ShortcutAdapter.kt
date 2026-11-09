@@ -8,6 +8,7 @@ package dev.androidpoet.wren.ui.home
 
 import android.graphics.Bitmap
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.core.view.isVisible
@@ -17,6 +18,7 @@ import androidx.recyclerview.widget.RecyclerView
 import dev.androidpoet.wren.R
 import dev.androidpoet.wren.core.model.Shortcut
 import dev.androidpoet.wren.databinding.ItemShortcutBinding
+import dev.androidpoet.wren.ui.tv.TvMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -37,12 +39,22 @@ class ShortcutAdapter(
     data object Add : Cell
   }
 
-  fun submitShortcuts(shortcuts: List<Shortcut>) {
-    submitList(shortcuts.map { Cell.Site(it) } + Cell.Add)
+  fun submitShortcuts(shortcuts: List<Shortcut>, onCommitted: () -> Unit = {}) {
+    submitList(shortcuts.map { Cell.Site(it) } + Cell.Add, onCommitted)
   }
 
-  override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder =
-    ViewHolder(ItemShortcutBinding.inflate(LayoutInflater.from(parent.context), parent, false))
+  override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+    val binding = ItemShortcutBinding.inflate(LayoutInflater.from(parent.context), parent, false)
+    // A remote needs to see which tile it is on; the platform's borderless highlight spills over
+    // the neighbours, so a TV gets a plate behind the focused tile instead.
+    if (TvMode.isTv(parent.context)) {
+      binding.root.setBackgroundResource(R.drawable.bg_tv_focus)
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        binding.root.defaultFocusHighlightEnabled = false
+      }
+    }
+    return ViewHolder(binding)
+  }
 
   override fun onBindViewHolder(holder: ViewHolder, position: Int) = holder.bind(getItem(position))
 

@@ -1,0 +1,1 @@
+Android TV fixes: the home page works with the remote (the D-pad moves between the tiles, the focused tile is marked, and the row of chrome stays on screen so the tabs and menu are reachable), the cursor is visible on white pages as well as dark ones, it stays within the page instead of wandering over the toolbar, and it disappears as soon as the address bar takes over.

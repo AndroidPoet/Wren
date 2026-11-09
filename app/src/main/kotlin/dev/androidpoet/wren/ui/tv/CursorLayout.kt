@@ -52,14 +52,17 @@ class CursorLayout @JvmOverloads constructor(
 
   private val radius: Float get() = width / 100f
   private val maxSpeed: Float get() = width / 25f * FRAMES_PER_SECOND
-  private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+  private val ringWidth: Float get() = radius / RING_FRACTION
+
+  // A pale disc inside a white ring inside a dark ring: one of the two rings stands out on any page.
+  private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(110, 255, 255, 255) }
+  private val lightRing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
     color = Color.WHITE
-    alpha = 220
-  }
-  private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-    color = Color.argb(200, 20, 20, 20)
     style = Paint.Style.STROKE
-    strokeWidth = 2f
+  }
+  private val darkRing = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    color = Color.argb(230, 20, 20, 20)
+    style = Paint.Style.STROKE
   }
 
   init {
@@ -86,6 +89,7 @@ class CursorLayout @JvmOverloads constructor(
       cursorX = width / 2f
       cursorY = height / 2f
     }
+    cursorY = cursorY.coerceAtLeast(pageTop(target()))
     wake()
   }
 
@@ -122,9 +126,11 @@ class CursorLayout @JvmOverloads constructor(
       scrollX = (nx - width).toInt()
       nx = width.toFloat()
     }
-    if (ny < 0f) {
-      scrollY = ny.toInt()
-      ny = 0f
+    // The chrome above the page is the D-pad's own ground, so the page's top edge is the cursor's.
+    val top = pageTop(page)
+    if (ny < top) {
+      scrollY = (ny - top).toInt()
+      ny = top
     }
     if (ny > height) {
       scrollY = (ny - height).toInt()
@@ -136,7 +142,14 @@ class CursorLayout @JvmOverloads constructor(
       if (scrollY < 0 && !page.canScrollVertically(-1)) {
         dirX = 0
         dirY = 0
+        // The address bar has the D-pad now, so the cursor goes at once instead of lingering,
+        // parked just inside the page so that it is whole when it comes back.
+        cursorX = nx
+        cursorY = top + radius * 2
+        visibleUntil = 0L
+        invalidate()
         onExitTop?.invoke()
+        return
       } else {
         nudge(page, 0, scrollY)
         nudge(page, scrollX, 0)
@@ -145,6 +158,13 @@ class CursorLayout @JvmOverloads constructor(
     cursorX = nx
     cursorY = ny
     wake()
+  }
+
+  private fun pageTop(page: View?): Float {
+    if (page == null) return 0f
+    val mine = IntArray(2).also(::getLocationInWindow)
+    val theirs = IntArray(2).also(page::getLocationInWindow)
+    return (theirs[1] - mine[1]).coerceAtLeast(0).toFloat()
   }
 
   private fun nudge(page: View, dx: Int, dy: Int) {
@@ -247,8 +267,11 @@ class CursorLayout @JvmOverloads constructor(
   override fun onDraw(canvas: Canvas) {
     super.onDraw(canvas)
     if (SystemClock.uptimeMillis() > visibleUntil) return
-    canvas.drawCircle(cursorX, cursorY, radius, fill)
-    canvas.drawCircle(cursorX, cursorY, radius, outline)
+    lightRing.strokeWidth = ringWidth
+    darkRing.strokeWidth = ringWidth
+    canvas.drawCircle(cursorX, cursorY, radius - ringWidth, fill)
+    canvas.drawCircle(cursorX, cursorY, radius - ringWidth, lightRing)
+    canvas.drawCircle(cursorX, cursorY, radius, darkRing)
   }
 
   override fun onTouchEvent(event: MotionEvent): Boolean = false
@@ -271,5 +294,8 @@ class CursorLayout @JvmOverloads constructor(
 
     /** The largest single scroll a page is asked for; bounds any overshoot past its end. */
     const val NUDGE_PX = 8
+
+    /** Each ring is this fraction of the radius thick. */
+    const val RING_FRACTION = 6f
   }
 }

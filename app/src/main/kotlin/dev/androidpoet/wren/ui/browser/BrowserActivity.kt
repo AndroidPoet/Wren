@@ -49,6 +49,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import androidx.core.net.toUri
+import androidx.core.view.doOnNextLayout
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import androidx.core.widget.doAfterTextChanged
@@ -226,6 +227,7 @@ class BrowserActivity :
   private var fileChooserCallback: ValueCallback<Array<Uri>>? = null
   private var isOmniboxFocused = false
   private var isHomeVisible = false
+  private var isTvHomeFocusSettled = false
 
   private var lastTorStatus: TorStatus? = null
 
@@ -1453,6 +1455,8 @@ class BrowserActivity :
     shortcutGrid.adapter = shortcutAdapter
     mostVisitedList.layoutManager = LinearLayoutManager(this@BrowserActivity)
     mostVisitedList.adapter = mostVisitedAdapter
+    // A TV keeps its one row of chrome over the home page, so the card would be a second field.
+    homeSearchCard.isGone = binding.cursor != null
     // The card is a target, not a field: tapping it hands focus to the real omnibox.
     homeSearchCard.setOnClickListener {
       binding.omnibox.requestFocus()
@@ -1503,14 +1507,44 @@ class BrowserActivity :
     binding.swipeRefresh.isVisible = !isHomeVisible
     if (isHomeVisible) hideFindBar()
     updateChromeVisibility()
+    binding.cursor?.let { cursor ->
+      // The cursor is for pages. Over the home page the tiles take the D-pad instead.
+      cursor.isFocusable = !isHomeVisible
+      if (isHomeVisible && !isOmniboxFocused) focusHomeTiles()
+    }
+  }
+
+  /**
+   * On a TV the grid takes focus while it still holds nothing but the Add tile. The first time the
+   * real tiles arrive, focus moves to the first of them.
+   */
+  private fun settleTvHomeFocus(hasTiles: Boolean) {
+    if (binding.cursor == null || isTvHomeFocusSettled || !hasTiles) return
+    isTvHomeFocusSettled = true
+    if (!isHomeVisible || isOmniboxFocused) return
+    binding.home.shortcutGrid.doOnNextLayout { focusFirstTile() }
+  }
+
+  private fun focusFirstTile(): Boolean =
+    binding.home.shortcutGrid.layoutManager?.findViewByPosition(0)?.requestFocus() == true
+
+  /** The tiles arrive after the page does, so an empty grid gets focus once it has been laid out. */
+  private fun focusHomeTiles() {
+    val grid = binding.home.shortcutGrid
+    grid.post {
+      if (!focusFirstTile()) {
+        grid.doOnNextLayout { if (isHomeVisible && !isOmniboxFocused) focusFirstTile() }
+      }
+    }
   }
 
   /**
    * The home page has its own search card, so showing the toolbar as well would put two search
-   * fields on one screen. It comes back the moment the omnibox is actually being used.
+   * fields on one screen. It comes back the moment the omnibox is actually being used. On a TV
+   * the toolbar is the only way to the tabs and the menu, so it stays and the card goes instead.
    */
   private fun updateChromeVisibility() {
-    binding.topBar.isVisible = !isHomeVisible || isOmniboxFocused
+    binding.topBar.isVisible = !isHomeVisible || isOmniboxFocused || binding.cursor != null
   }
 
   private fun promptForShortcut() {
@@ -1571,7 +1605,9 @@ class BrowserActivity :
           }
         }
         launch {
-          viewModel.shortcuts.collectLatest { shortcutAdapter.submitShortcuts(it) }
+          viewModel.shortcuts.collectLatest { shortcuts ->
+            shortcutAdapter.submitShortcuts(shortcuts) { settleTvHomeFocus(shortcuts.isNotEmpty()) }
+          }
         }
         launch {
           torController.state.collectLatest { renderTor(it) }
@@ -2532,8 +2568,14 @@ class BrowserActivity :
     speculativeLoader.cancel()
     updateChromeVisibility()
     binding.omnibox.clearFocus()
-    // On a TV focus goes back to the page's cursor; elsewhere the root takes it.
-    (binding.cursor ?: binding.root).requestFocus()
+    // On a TV focus goes back to the page's cursor, or to the home page's tiles; elsewhere the
+    // root takes it.
+    val cursor = binding.cursor
+    when {
+      cursor == null -> binding.root.requestFocus()
+      isHomeVisible -> focusHomeTiles()
+      else -> cursor.requestFocus()
+    }
     binding.suggestionList.isGone = true
     getSystemService<InputMethodManager>()
       ?.hideSoftInputFromWindow(binding.omnibox.windowToken, 0)
@@ -2624,8 +2666,13 @@ class BrowserActivity :
   private fun routeToTvCursor(event: KeyEvent): Boolean {
     val cursor = binding.cursor ?: return false
     if (isOmniboxFocused || binding.findBar.isVisible) return false
-    if (isHomeVisible && customView == null) return false
     val focus = currentFocus
+    if (isHomeVisible && customView == null) {
+      // Nothing on the home page holds focus after a cold start: the first key lands on a tile.
+      val stray = focus == null || focus === cursor || focus === binding.root
+      if (stray && event.action == KeyEvent.ACTION_DOWN) focusFirstTile()
+      return stray
+    }
     val onPage = focus == null || focus === cursor || focus === binding.root || focus is WebView ||
       focus.isInside(binding.webViewContainer) || focus.isInside(binding.customViewContainer)
     return onPage && cursor.dispatchKey(event)
