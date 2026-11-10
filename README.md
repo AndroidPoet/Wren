@@ -119,9 +119,8 @@ engine. Before relying on it for anything sensitive, know the limits:
   that was to remove it, and androidx.webkit now documents the allow-list API that was meant
   to control it as doing nothing. Wren strips it from the page request itself, but images,
   scripts and fetches still carry it, so a site can tell it is talking to Wren. The user agent
-  and client hints are
-  Chrome's reduced ones (`Android 10; K`, no device model or build), so the phone itself is not
-  named.
+  and client hints are Chrome's reduced ones (`Android 10; K`, no device model or build), so
+  the phone itself is not named.
 - **Safe Browsing talks to Google.** Short hashed prefixes of addresses go to Google through
   Android. It is off in Tor mode and can be turned off in Settings.
 - **The privacy signal headers need a recent engine.** Pages can always read Global Privacy
