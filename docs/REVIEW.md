@@ -15,7 +15,7 @@ app on Android's system WebView).
 
 | Requirement | Score | Where | Note |
 |---|---|---|---|
-| Page traffic through the proxy | Met | `TorController.installProxy`, `ProxyController` | HTTP tunnel on 127.0.0.1, verified with check.torproject.org |
+| Page traffic through the proxy | Met | `TorController.installProxy`, `ProxyController` | HTTP tunnel on 127.0.0.1, verified with check.torproject.org. Socket audit 2026-11-10 (`ss -tnp` sampled through a clean cold start with Tor on and a Wikipedia page load): the process holds sockets to four Tor relays and loopback only; with Tor off the same start opens only the home-tile icon sites and the filter-list hosts |
 | The app's own fetches through the proxy | Met | `network/SafeHttp`, `network/TorRouteGuard` | Downloads, icons, filter lists. Guard refuses any non-tunnel route before a packet leaves. Fixed in 1.0.6; every earlier version leaked here |
 | Fail closed when Tor is down | Met | `TorController.fail`, `shutDown(sealed)` | Proxy pointed at a closed port |
 | Fail closed when the Tor profile is missing | Met **(1.0.8)** | `BrowserActivity.createWebView` | A Tor WebView whose profile cannot be attached gets `blockNetworkLoads`; before 1.0.8 it ran on the clear-net profile over Tor |
