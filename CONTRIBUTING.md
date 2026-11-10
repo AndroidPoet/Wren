@@ -4,7 +4,8 @@ Bug reports, fixes and filter-rule problems are welcome as issues and pull reque
 
 ## Building
 
-JDK 17 and the Android SDK. Then:
+JDK 17, the Android SDK and Rust with the Android targets and cargo-ndk (see the README's Build
+section; the filter engine in `native/` is Rust). Then:
 
 ```sh
 ./gradlew :app:assembleDebug

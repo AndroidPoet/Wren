@@ -23,9 +23,10 @@
 ## Features
 
 **Blocking**
-- Tracker and ad blocking with EasyList, EasyPrivacy and uBlock Origin rules, compiled into a
-  pattern engine with cosmetic filtering and scriptlets. Lists update from Settings, and you can
-  add your own.
+- Tracker and ad blocking with EasyList, EasyPrivacy and uBlock Origin rules. Network requests
+  are matched by Brave's [adblock-rust](https://github.com/brave/adblock-rust) (MPL-2.0), which
+  reads the lists as uBlock Origin does; cosmetic filtering and scriptlets run in the page. Lists
+  update from Settings, and you can add your own.
 - A per-site panel showing what was blocked, grouped by the company that owns it.
 - Cookie banners declined and hidden on common consent platforms.
 
@@ -191,7 +192,10 @@ over Wren unless it is signed with this same key, so one checked install covers 
 ./gradlew spotlessApply          # format + license headers
 ```
 
-Requires JDK 17+ (Android Studio's JBR works) and `compileSdk 37`. `minSdk` is 24.
+Requires JDK 17+ (Android Studio's JBR works) and `compileSdk 37`. `minSdk` is 24. The filter
+engine in `native/` is Rust: install [rustup](https://rustup.rs), the four Android targets
+(`rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+i686-linux-android`) and `cargo install cargo-ndk`; Gradle builds it with NDK 28.2.13676358.
 
 ## How it works
 
@@ -244,4 +248,5 @@ checks and ground rules. Report privacy leaks and security bugs privately, as de
 
 ## License
 
-GNU General Public License v3.0 or later. See [LICENSE](LICENSE).
+GNU General Public License v3.0 or later. See [LICENSE](LICENSE). The filter engine links
+[adblock-rust](https://github.com/brave/adblock-rust) under the Mozilla Public License 2.0.

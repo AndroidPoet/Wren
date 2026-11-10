@@ -1,0 +1,23 @@
+[package]
+name = "wren_adblock"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Brave's filter engine. `single-thread` is left out so the engine is Send + Sync: WebView asks
+# about requests from several threads at once.
+adblock = { version = "=0.13.5", default-features = false, features = ["embedded-domain-resolver", "full-regex-handling", "resource-assembler"] }
+jni = { version = "0.21", default-features = false }
+
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

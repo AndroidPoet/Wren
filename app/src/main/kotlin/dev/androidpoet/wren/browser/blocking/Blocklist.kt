@@ -7,9 +7,11 @@
 package dev.androidpoet.wren.browser.blocking
 
 import android.app.Application
+import android.util.Base64
 import dev.androidpoet.wren.browser.blocking.rules.BlockEngine
 import dev.androidpoet.wren.browser.blocking.rules.CosmeticRules
 import dev.androidpoet.wren.browser.blocking.rules.EngineBuilder
+import dev.androidpoet.wren.browser.blocking.rules.NativeEngine
 import dev.androidpoet.wren.browser.blocking.rules.RuleEngine
 import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
@@ -134,10 +136,14 @@ class Blocklist @Inject constructor(
   fun isBlocked(host: String): Boolean = engine.hosts.matchesSuffixOf(host)
 
   fun install(engine: BlockEngine, replacesSnapshot: Boolean) {
-    synchronized(this) {
-      installed = engine
-      if (replacesSnapshot) snapshot = null
+    val replaced = synchronized(this) {
+      installed.also {
+        installed = engine
+        if (replacesSnapshot) snapshot = null
+      }
     }
+    // Requests still asking the old native engine finish first; close frees it after them.
+    if (replaced?.native !== engine.native) replaced?.native?.close()
     notifyEngineChanged()
     Timber.i(
       "filter engine v%d active: %d hosts, %d rules, %d cosmetic",
@@ -182,6 +188,17 @@ class Blocklist @Inject constructor(
   fun resourceFor(name: String): Resource? = RESOURCES[name]
 
   fun resourceBytes(resource: Resource): ByteArray = shimBytes(resource.assetPath)
+
+  /** The same stand-ins for the native engine, one entry per file with its other names. */
+  fun nativeResources(): List<NativeEngine.Resource> =
+    RESOURCES.entries.groupBy({ it.value }, { it.key }).map { (resource, names) ->
+      NativeEngine.Resource(
+        name = names.first(),
+        aliases = names.drop(1),
+        mime = resource.mimeType,
+        base64 = Base64.encodeToString(resourceBytes(resource), Base64.NO_WRAP),
+      )
+    }
 
   /** The compiled host set alone, for a rebuild that already parses the bundled text lists. */
   fun bundledHosts(): CompactHostSet = snapshot?.hosts ?: loadCompiledHosts()

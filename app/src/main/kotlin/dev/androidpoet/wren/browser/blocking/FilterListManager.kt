@@ -8,6 +8,7 @@ package dev.androidpoet.wren.browser.blocking
 
 import android.app.Application
 import dev.androidpoet.wren.browser.blocking.rules.EngineBuilder
+import dev.androidpoet.wren.browser.blocking.rules.NativeEngine
 import dev.androidpoet.wren.browser.tor.TorProxySelector
 import dev.androidpoet.wren.network.SafeHttp
 import dev.androidpoet.wren.settings.SettingsStore
@@ -245,23 +246,49 @@ class FilterListManager @Inject constructor(
         Timber.i("no cached filter lists; bundled snapshot stays active")
         return@withContext false
       }
-      val builder = EngineBuilder()
+      // The native engine decides network requests when it loads; the Kotlin builder then keeps
+      // only cosmetic rules and page-wide exceptions.
+      val nativeText = if (NativeEngine.isAvailable) NativeEngine.ListText() else null
+      val builder = EngineBuilder(networkRules = nativeText == null)
+      fun read(lines: Sequence<String>) {
+        if (nativeText == null) {
+          builder.addLines(lines)
+        } else {
+          lines.forEach {
+            builder.addLine(it)
+            nativeText.add(it)
+          }
+          nativeText.endList()
+        }
+      }
       val snapshotCovered = FilterListCatalog.bundledIds.all { !isEnabled(it) || it in cached }
       if (!snapshotCovered) {
-        builder.addHostSet(blocklist.bundledHosts())
+        // The compiled host set has no text the native engine could read; with a native engine
+        // the bundled lists' hosts come from their text form in blocklist.txt and rules.txt.
+        if (nativeText == null) builder.addHostSet(blocklist.bundledHosts())
         for (asset in SNAPSHOT_TEXT_ASSETS) {
           runCatching {
-            application.assets.open(asset).bufferedReader().useLines { builder.addLines(it) }
+            application.assets.open(asset).bufferedReader().useLines { read(it) }
           }.onFailure { Timber.w(it, "bundled %s unreadable", asset) }
         }
       }
       for (id in cached) {
         runCatching {
-          cacheFile(id).bufferedReader().useLines { builder.addLines(it) }
+          cacheFile(id).bufferedReader().useLines { read(it) }
         }.onFailure { Timber.w(it, "cached list %s unreadable", id) }
       }
-      blocklist.install(builder.build(++version), replacesSnapshot = snapshotCovered)
-      Timber.i("filter lists compiled in %d ms", (System.nanoTime() - started) / 1_000_000)
+      val parsed = System.nanoTime()
+      val native = nativeText?.build(blocklist.nativeResources())
+      if (nativeText != null && native == null) {
+        Timber.w("native filter engine failed to build; Kotlin engine stays")
+        return@withContext false
+      }
+      blocklist.install(builder.build(++version, native), replacesSnapshot = snapshotCovered)
+      Timber.i(
+        "filter lists compiled in %d ms (native engine %d ms)",
+        (System.nanoTime() - started) / 1_000_000,
+        (System.nanoTime() - parsed) / 1_000_000,
+      )
       true
     }
   }

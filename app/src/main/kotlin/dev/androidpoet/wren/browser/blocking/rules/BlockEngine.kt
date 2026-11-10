@@ -8,12 +8,17 @@ package dev.androidpoet.wren.browser.blocking.rules
 
 import dev.androidpoet.wren.browser.blocking.CompactHostSet
 
-/** Everything the blocker consults, built as one unit so a list refresh swaps it whole. */
+/**
+ * Everything the blocker consults, built as one unit so a list refresh swaps it whole. With a
+ * [native] engine, it decides network requests and [hosts] and [rules] hold only what it does
+ * not: the page-wide `$document` and `$generichide` exceptions.
+ */
 class BlockEngine(
   val hosts: CompactHostSet,
   val rules: RuleEngine,
   val cosmetics: CosmeticRules,
   val version: Int,
+  val native: NativeEngine? = null,
 ) {
   val size: Int get() = hosts.size + rules.size + cosmetics.size
 
@@ -27,7 +32,13 @@ class BlockEngine(
  * EasyList syntax can be mixed line by line, so a user's custom subscription needs no format
  * setting.
  */
-class EngineBuilder {
+class EngineBuilder(
+  /**
+   * False when a [NativeEngine] decides network requests: only cosmetic rules and the
+   * page-wide exceptions are kept, so the rules are not held in memory twice.
+   */
+  private val networkRules: Boolean = true,
+) {
   private val hosts = HashSet<String>()
 
   /** Hosts a `||host^$badfilter` line cancels; taken out of the set once every list is read. */
@@ -58,6 +69,14 @@ class EngineBuilder {
     lines++
     if (CosmeticRules.isCosmeticLine(line)) {
       cosmetics.add(line)
+      return
+    }
+    if (!networkRules) {
+      if (FilterRule.documentExceptionHost(line) != null ||
+        FilterRule.genericHideExceptionHost(line) != null
+      ) {
+        rules.add(line)
+      }
       return
     }
     if (line[0] == '#') return
@@ -100,12 +119,12 @@ class EngineBuilder {
     }
   }
 
-  fun build(version: Int): BlockEngine {
+  fun build(version: Int, native: NativeEngine? = null): BlockEngine {
     conditions.clear()
     hosts.removeAll(cancelledHosts)
     var all = CompactHostSet.of(hosts)
     for (set in hostSets) all = CompactHostSet.union(all, set)
-    return BlockEngine(all, rules.build(), cosmetics.build(), version)
+    return BlockEngine(all, rules.build(), cosmetics.build(), version, native)
   }
 
   companion object {
