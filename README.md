@@ -117,10 +117,11 @@ engine. Before relying on it for anything sensitive, know the limits:
   named.
 - **Safe Browsing talks to Google.** Short hashed prefixes of addresses go to Google through
   Android, except in Tor mode. There is no switch for it yet.
-- **The privacy signals are visible to scripts, not yet in headers.** Pages can read Global
-  Privacy Control and Do Not Track from JavaScript. Sending them as `Sec-GPC` and `DNT` request
-  headers needs a WebView that lets an app add a header to every request; Wren asks for that and
-  no shipping engine grants it yet, so a site that only reads the header does not see them.
+- **The privacy signal headers need a recent engine.** Pages can always read Global Privacy
+  Control and Do Not Track from JavaScript. As `Sec-GPC` and `DNT` request headers they ride on
+  every request only where the WebView lets an app add a header per profile, which Chromium
+  shipped in WebView 142 (October 2025); on an older engine only the page loads started from
+  the address bar carry them, so a site that reads just the header does not see them there.
 - **Nobody independent has audited Wren.** The source is public and reviews of it are
   welcome, but reading the source shows what Wren intends to do, not that it is safe against a
   determined adversary.

@@ -107,7 +107,7 @@ app on Android's system WebView).
 | Navigation tracking (query parameters) | Met | `LinkCleaner`: utm_*, fbclid, gclid, dclid, gbraid, wbraid, msclkid, twclid, ttclid, yclid, igshid and more; bounce redirectors and AMP unwrapped |
 | Referrer | Met | `strict-origin` by default, optional trim to origin |
 | HTTPS | Met | Upgrade, HTTPS-only mode, mixed content blocked |
-| Global Privacy Control and DNT | Met | `Sec-GPC` and `DNT` headers plus the `navigator` properties (`gpc.js`) |
+| Global Privacy Control and DNT | Met | `Sec-GPC` and `DNT` headers plus the `navigator` properties (`gpc.js`). The per-profile headers need WebView 142 or newer (Chromium commit 61ccfbb41e, "available in M142"); on WebView 133 a page's own `fetch` was seen without them, only the address-bar loads carry them there |
 | Tracker and ad blocking | Met | EasyList, EasyPrivacy, hosts, cosmetic and scriptlet rules |
 | WebRTC IP leak | Met in private tabs **(1.0.7)**, Engine in normal tabs | WebRTC removed in private and Tor tabs. In a normal tab a page can collect ICE candidates; Chromium's mDNS obfuscation covers local addresses |
 | Fingerprinting resistance (screen, fonts) | Partial | Fonts remain; screen closed under Tor (section 4) |
