@@ -27,6 +27,8 @@ val hasReleaseSigning = keystoreProps.getProperty("storeFile") != null
 
 android {
   namespace = "dev.androidpoet.wren"
+  // The NDK cargo-ndk links the filter engine with.
+  ndkVersion = "28.2.13676358"
 
   defaultConfig {
     applicationId = "dev.androidpoet.wren"
@@ -103,9 +105,46 @@ android {
   }
 }
 
+// The network filter engine is Brave's adblock-rust (native/), built for every processor the APK
+// splits for with cargo-ndk and packaged as libwren_adblock.so. Unit tests load a build for the
+// machine running them.
+val cargo = File(System.getProperty("user.home"), ".cargo/bin/cargo")
+  .takeIf { it.exists() }?.path ?: "cargo"
+val nativeDir = rootProject.file("native")
+val rustJniLibs = layout.buildDirectory.dir("rustJniLibs")
+
+val cargoBuildAndroid = tasks.register<Exec>("cargoBuildAndroid") {
+  workingDir = nativeDir
+  inputs.dir(nativeDir.resolve("src"))
+  inputs.files(nativeDir.resolve("Cargo.toml"), nativeDir.resolve("Cargo.lock"))
+  outputs.dir(rustJniLibs)
+  environment("ANDROID_NDK_HOME", android.ndkDirectory.path)
+  commandLine(
+    cargo, "ndk",
+    "-t", "arm64-v8a", "-t", "armeabi-v7a", "-t", "x86_64", "-t", "x86",
+    "-P", "24",
+    "-o", rustJniLibs.get().asFile.path,
+    "build", "--release", "--locked",
+  )
+}
+
+val cargoBuildHost = tasks.register<Exec>("cargoBuildHost") {
+  workingDir = nativeDir
+  inputs.dir(nativeDir.resolve("src"))
+  inputs.files(nativeDir.resolve("Cargo.toml"), nativeDir.resolve("Cargo.lock"))
+  outputs.dir(nativeDir.resolve("target/release"))
+  commandLine(cargo, "build", "--release", "--locked")
+}
+
+android.sourceSets.getByName("main").jniLibs.srcDir(rustJniLibs.get().asFile)
+
+tasks.named("preBuild") { dependsOn(cargoBuildAndroid) }
+
 tasks.withType<Test>().configureEach {
   // Opt-in micro-benchmarks print their numbers only when asked for on the command line.
   systemProperty("wren.bench", System.getProperty("wren.bench") ?: "false")
+  dependsOn(cargoBuildHost)
+  systemProperty("java.library.path", nativeDir.resolve("target/release").path)
 }
 
 dependencies {

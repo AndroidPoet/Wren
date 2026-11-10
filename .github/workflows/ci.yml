@@ -16,6 +16,12 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
+      # The network filter engine (native/) is Rust, built for each processor with cargo-ndk.
+      - name: Rust targets, cargo-ndk and the NDK
+        run: |
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
+          cargo install cargo-ndk --version 4.1.2 --locked
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "ndk;28.2.13676358" > /dev/null
       - name: Format and licence headers
         run: ./gradlew spotlessCheck --no-daemon
       - name: Unit tests

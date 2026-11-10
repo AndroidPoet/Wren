@@ -6,8 +6,11 @@
 
 package dev.androidpoet.wren.browser.blocking
 
+import android.net.Uri
+import android.util.Base64
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import dev.androidpoet.wren.browser.blocking.rules.NativeEngine
 import dev.androidpoet.wren.browser.blocking.rules.PageRules
 import dev.androidpoet.wren.browser.blocking.rules.RequestContext
 import dev.androidpoet.wren.browser.blocking.rules.RequestType
@@ -53,11 +56,21 @@ class ContentBlocker @Inject constructor(
     // The user can exempt a whole site when blocking breaks it, and a list can do the same.
     if (pageHost != null && (page.isExempt || settings.isAllowlisted(pageHost))) return null
 
+    val typeMask = RequestType.infer(context.url) { acceptHeaderOf(request) }
+    blocklist.engine.native?.let { native ->
+      // A request with no page to name (a worker's, say) is judged as its own page's.
+      val verdict = native.check(url, pageUrl.ifEmpty { url }, typeMask) ?: return null
+      if (verdict is NativeEngine.Verdict.Redirect) {
+        dataUrlResponse(verdict.dataUrl)?.let { return it }
+      }
+      val shimAsset = blocklist.shimAssetFor(requestHost)
+      return if (shimAsset != null) shimResponse(shimAsset) else BLOCKED_RESPONSE()
+    }
+
     // The host set is a list of trackers, so a site loading its own resources never hits it;
     // pattern rules know about paths and decide first-party requests for themselves.
     val thirdParty = pageHost == null || !HostMatcher.isSameParty(requestHost, pageHost)
     val hostHit = thirdParty && blocklist.isBlocked(requestHost)
-    val typeMask = RequestType.infer(context.url) { acceptHeaderOf(request) }
     val verdict = rules.decide(context, typeMask, thirdParty, pageHost, hostHit, page.rules)
       ?: return null
 
@@ -140,6 +153,30 @@ class ContentBlocker @Inject constructor(
       NO_STORE + ("Access-Control-Allow-Origin" to "*"),
       ByteArrayInputStream(blocklist.resourceBytes(resource)),
     )
+
+  /** A `data:<mime>;base64,<body>` stand-in from the native engine, served as the response. */
+  private fun dataUrlResponse(dataUrl: String): WebResourceResponse? {
+    val comma = dataUrl.indexOf(',')
+    if (!dataUrl.startsWith("data:") || comma < 0) return null
+    val header = dataUrl.substring(5, comma)
+    val mime = header.substringBefore(';')
+    val body = runCatching {
+      if (header.endsWith(";base64")) {
+        Base64.decode(dataUrl.substring(comma + 1), Base64.DEFAULT)
+      } else {
+        Uri.decode(dataUrl.substring(comma + 1)).toByteArray(Charsets.UTF_8)
+      }
+    }.getOrNull() ?: return null
+    val binary = mime.startsWith("image/") || mime.startsWith("audio/") || mime.startsWith("video/")
+    return WebResourceResponse(
+      mime,
+      if (binary) null else "utf-8",
+      200,
+      "OK",
+      NO_STORE + ("Access-Control-Allow-Origin" to "*"),
+      ByteArrayInputStream(body),
+    )
+  }
 
   /** The answer for a request that must not leave: an empty body, no network. */
   fun blocked(): WebResourceResponse = BLOCKED_RESPONSE()
