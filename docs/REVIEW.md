@@ -97,7 +97,7 @@ app on Android's system WebView).
 | Security levels (safer / safest) | Partial **(1.0.7)** | Safest switch on the Tor sheet: JavaScript off on every Tor page from its first byte (1.0.8) and web fonts blocked by file extension (`ContentBlocker`; the engine does not pass `Sec-Fetch-Dest` to the interceptor, so a font served without an extension loads), media already click-to-play. No JIT switch exists in the engine |
 | Update checks over Tor | Met | There are none: GitHub, F-Droid and Obtainium carry updates |
 | Outdated engine visible | Met | `warnIfWebViewStale` |
-| Censorship circumvention | Met | obfs4, Snowflake, meek bridges (1.0.6); Snowflake and meek not yet exercised on a device with working DNS |
+| Censorship circumvention | Met | obfs4, Snowflake, meek bridges (1.0.6). All three built-in sets bootstrap to 100% and `check.torproject.org` answers `IsTor: true` through them (Snowflake in about four minutes, meek in under twenty seconds, on an API 36 emulator with public DNS, 2026-11-10) |
 
 ## 7. PrivacyTests.org categories (outside Tor)
 
@@ -120,7 +120,7 @@ confirmation, sensors, letterboxing and timers, WebRTC in private tabs, the Safe
 shipped in 1.0.7. What remains:
 
 1. ~~Run the PrivacyTests harness~~ Done in 1.0.9: the engine did not partition third-party storage; `partition.js` now denies it.
-2. **Verify Snowflake and meek** on a device with working DNS.
+2. ~~Verify Snowflake and meek~~ Done 2026-11-10: both bootstrap and route a page through Tor; the earlier failure was the emulator's resolver, cured by `-dns-server 8.8.8.8,1.1.1.1`.
 3. **Fonts.** A `@font-face` default stylesheet under Tor naming a few fonts would narrow what a page can measure; it cannot replace the system font stack.
 4. ~~Keyboard layout~~ Done in 1.0.9.
 5. **Memory-only cache under Tor** and **CSS `device-width`** remain engine-level gaps.
