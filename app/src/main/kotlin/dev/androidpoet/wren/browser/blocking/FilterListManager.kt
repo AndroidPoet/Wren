@@ -166,7 +166,9 @@ class FilterListManager @Inject constructor(
         check(temp.length() > MIN_BYTES) { "list too small: ${temp.length()} bytes" }
         appendIncludes(temp, connection.request.url.toUrl())
         check(temp.renameTo(cached)) { "could not replace cached list" }
-        settings.setFilterListEtag(id, connection.header("ETag"))
+        // A validator is a token the server chose: one taken over Tor and sent later direct,
+        // or the other way round, would join the two routes. Under Tor none is kept or sent.
+        settings.setFilterListEtag(id, if (settings.torMode) null else connection.header("ETag"))
         settings.setFilterListUpdatedAt(id, System.currentTimeMillis())
         Timber.i("filter list %s fetched: %d KB", id, cached.length() / 1024)
         Fetched.UPDATED
@@ -217,7 +219,7 @@ class FilterListManager @Inject constructor(
 
   private fun open(id: String, url: String, cached: File, whole: Boolean): Response {
     val request = okhttp3.Request.Builder().url(url).apply {
-      if (cached.exists() && !whole) {
+      if (cached.exists() && !whole && !settings.torMode) {
         settings.filterListEtag(id)?.let { header("If-None-Match", it) }
         header("If-Modified-Since", httpDate(cached.lastModified()))
       }

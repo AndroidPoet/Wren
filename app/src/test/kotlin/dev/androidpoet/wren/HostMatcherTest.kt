@@ -77,6 +77,8 @@ class HostMatcherTest {
     // A two-letter TLD with an ordinary second label keeps the usual two-label rule.
     assertThat(HostMatcher.registrableDomain("www.example.de")).isEqualTo("example.de")
     assertThat(HostMatcher.registrableDomain("co.uk")).isEqualTo("co.uk")
+    assertThat(HostMatcher.registrableDomain("10.0.2.2")).isEqualTo("10.0.2.2")
+    assertThat(HostMatcher.registrableDomain("[::1]")).isEqualTo("[::1]")
   }
 
   @Test

@@ -12,6 +12,7 @@ import android.os.Looper
 import android.webkit.WebView
 import androidx.webkit.JavaScriptReplyProxy
 import androidx.webkit.ScriptHandler
+import androidx.webkit.WebMessageCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import dev.androidpoet.wren.BuildConfig
@@ -77,7 +78,13 @@ class CosmeticFilter @Inject constructor(
         webView,
         CHANNEL,
         ALLOWED_ORIGINS,
-      ) { _, message, origin, _, reply -> respond(origin.host, message.data.orEmpty(), reply) }
+      ) { _, message, origin, _, reply ->
+        // Reading the text of a binary message throws; a page must not be able to crash the
+        // browser by posting one.
+        if (message.type == WebMessageCompat.TYPE_STRING) {
+          respond(origin.host, message.data.orEmpty(), reply)
+        }
+      }
       listeners[webView] = true
     }.onFailure { Timber.w(it, "could not install the cosmetic channel") }
   }

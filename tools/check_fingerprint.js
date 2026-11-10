@@ -46,6 +46,8 @@ function makeWorld(seed, topOrigin, frameOrigin, tor = false) {
       return null;
     }
     readPixels(x, y, w, h, f, t, out) { for (let i = 0; i < out.length; i++) out[i] = (i * 7) & 255; }
+    // The pixel-pack binding point, as a real context reports it for a pixel readback.
+    get PIXEL_PACK_BUFFER() { return 0x88EB; }
   }
   class WebGL2RenderingContext extends WebGLRenderingContext {
     getBufferSubData(target, offset, out) { for (let i = 0; i < out.length; i++) out[i] = (i * 11) & 255; }
@@ -72,7 +74,7 @@ function makeWorld(seed, topOrigin, frameOrigin, tor = false) {
   win.window = win;
   win.top = win;
   win.URL = URL;
-  const code = source.replace('__SEED__', String(seed)).replace('__TOR__', String(tor));
+  const code = source.replace('__SEED__', String(seed)).replace('__SEED2__', String((seed * 2654435761) | 0)).replace('__TOR__', String(tor));
   new Function('window', 'location', 'document', 'navigator', 'screen', 'HTMLCanvasElement',
     'CanvasRenderingContext2D', 'WebGLRenderingContext', 'Navigator', 'Screen', 'URL', code)(
     win, win.location, win.document, win.navigator, win.screen, HTMLCanvasElement,
@@ -158,7 +160,7 @@ function check(name, ok) { checks.push([name, ok]); }
   // WebGL2 buffer readbacks and the byte analyser reads carry noise, in range and stable.
   const gl = new win.WebGL2RenderingContext();
   const a = new Uint8Array(4096), b = new Uint8Array(4096);
-  gl.getBufferSubData(0, 0, a); gl.getBufferSubData(0, 0, b);
+  gl.getBufferSubData(0x88EB, 0, a); gl.getBufferSubData(0x88EB, 0, b);
   check('bufferSubDataNoisy', a.some((v, i) => v !== ((i * 11) & 255)));
   check('bufferSubDataStable', a.join() === b.join());
   const analyser = new win.AnalyserNode();
@@ -168,6 +170,52 @@ function check(name, ok) { checks.push([name, ok]); }
   const flat = new Uint8Array(1024);
   analyser.getByteTimeDomainData(flat);
   check('byteTimeDomainNoisy', flat.some((v) => v !== 128));
+  // A vertex or index buffer is not a rendering result: read back as is.
+  const vertices = new Uint8Array(4096);
+  gl.getBufferSubData(0x8892, 0, vertices);
+  check('nonPixelBufferUntouched', vertices.every((v, i) => v === ((i * 11) & 255)));
+  // Only the bytes a readback writes are perturbed: those before dstOffset keep what they held.
+  const partial = new Uint8Array(4096);
+  gl.readPixels(0, 0, 32, 32, 0, 0, partial, 2048);
+  check('readbackHonoursDstOffset', partial.subarray(0, 2048).every((v, i) => v === ((i * 7) & 255)) &&
+    partial.subarray(2048).some((v, i) => v !== (((i + 2048) * 7) & 255)));
+  // Float readbacks carry noise too, within what a float stores.
+  const floats = new Float32Array(1024);
+  gl.readPixels(0, 0, 16, 16, 0, 0, floats);
+  check('floatReadbackNoisy', floats.some((v, i) => v !== ((i * 7) & 255)) && floats.every((v, i) => Math.abs(v - ((i * 7) & 255)) < 1e-3));
+  // Every sample of a time-domain read moves, not one in a thousand: a block of flat samples
+  // would otherwise reveal where the few touched ones sit.
+  const samples = new Float32Array(2048);
+  analyser.getFloatTimeDomainData(samples);
+  let moved = 0;
+  for (const v of samples) if (v !== 0) moved++;
+  check('everyAudioSampleMoved', moved > samples.length * 0.99);
+}
+
+{
+  // The shims call no page-replaceable intrinsic: a spy on apply/call/forEach sees nothing.
+  const win = makeWorld(777, 'https://site-a.example', 'https://site-a.example');
+  const seen = [];
+  const natives = [[Function.prototype, 'apply'], [Function.prototype, 'call'], [Array.prototype, 'forEach'],
+    [Uint8Array.prototype, 'fill'], [Uint8ClampedArray.prototype, 'subarray'], [WeakMap.prototype, 'get'], [Math, 'imul'], [Math, 'floor']];
+  const saved = natives.map(([o, k]) => o[k]);
+  // Plain loops: the spied forEach must not be what installs or removes the spies.
+  for (let i = 0; i < natives.length; i++) {
+    const [o, k] = natives[i];
+    o[k] = function () { seen.push(k); return Reflect.apply(saved[i], this, arguments); };
+  }
+  try {
+    const c = canvasOf(win);
+    c.toDataURL();
+    c.getContext('2d').getImageData(0, 0, 64, 64);
+    const gl = new win.WebGL2RenderingContext();
+    gl.readPixels(0, 0, 8, 8, 0, 0, new Uint8Array(256));
+    new win.AnalyserNode().getFloatTimeDomainData(new Float32Array(64));
+  } finally {
+    for (let i = 0; i < natives.length; i++) natives[i][0][natives[i][1]] = saved[i];
+  }
+  check('spyOnIntrinsicsSeesNothing', seen.length === 0);
+  if (seen.length) console.log('  spy saw: ' + Array.from(new Set(seen)).join(','));
 }
 
 // Under Tor every read is blank and every export is of an empty canvas, whatever the seed or site.
@@ -182,6 +230,9 @@ function check(name, ok) { checks.push([name, ok]); }
   const out = new Uint8Array(64);
   new a.WebGLRenderingContext().readPixels(0, 0, 4, 4, 0, 0, out);
   check('torReadPixelsIsBlank', out.every((v) => v === 0));
+  const one = new Uint8Array(1);
+  new a.WebGLRenderingContext().readPixels(0, 0, 1, 1, 0, 0, one);
+  check('torOneByteReadIsBlank', one[0] === 0);
   const sub = new Uint8Array(64);
   new a.WebGL2RenderingContext().getBufferSubData(0, 0, sub);
   check('torBufferSubDataIsBlank', sub.every((v) => v === 0));

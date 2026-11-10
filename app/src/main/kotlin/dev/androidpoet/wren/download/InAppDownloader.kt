@@ -164,7 +164,25 @@ class InAppDownloader @Inject constructor(
     if (request.viaTor && (!settings.torMode || ProxySelector.getDefault() !is TorProxySelector)) {
       return false
     }
+    // A transfer begun direct carries the clear-net cookies; under Tor it stays paused.
+    if (!request.viaTor && settings.torMode) return false
     return !TorProxySelector.wouldLeakFor(settings)
+  }
+
+  /**
+   * The client a transfer's connections come from. A Tor transfer's calls are pinned to the
+   * tunnel port Tor listens on now: should Tor go off between the route check and the connect,
+   * the connection is refused at the closed port instead of being made direct.
+   */
+  private fun clientFor(request: Request): okhttp3.OkHttpClient {
+    if (!request.viaTor) return http.client
+    val port = settings.torHttpPort
+    check(port > 0) { "route unavailable" }
+    val tunnel = java.net.Proxy(
+      java.net.Proxy.Type.HTTP,
+      java.net.InetSocketAddress("127.0.0.1", port),
+    )
+    return http.client.newBuilder().proxy(tunnel).build()
   }
 
   /**
@@ -178,6 +196,8 @@ class InAppDownloader @Inject constructor(
     apkAllowed: Boolean = false,
   ): Long? {
     if (!url.startsWith("data:", ignoreCase = true)) return null
+    // Checked before the address is copied anywhere: the decoded form is bounded by this.
+    if (url.length > MAX_DATA_URL_LENGTH) return null
     val id = newId()
     scope.launch {
       val saved = runCatching { decodeDataUrl(url) }.getOrNull()
@@ -262,6 +282,17 @@ class InAppDownloader @Inject constructor(
 
   /** Removes the record of a cancelled transfer. */
   suspend fun forget(id: Long) = repository.remove(id)
+
+  /** Cancels every transfer, running or paused, whose request [matches]; marked as cancelled. */
+  fun dropWhere(matches: (Request) -> Boolean) {
+    for (transfer in transfers.values.toList()) {
+      if (!matches(transfer.request)) continue
+      cancel(transfer.id)
+      scope.launch {
+        repository.updateStatus(transfer.id, DownloadStatus.CANCELLED, null, transfer.total)
+      }
+    }
+  }
 
   /** Starts a failed or cancelled download over from its record. */
   fun retry(download: Download): Long? = start(
@@ -360,6 +391,7 @@ class InAppDownloader @Inject constructor(
     }
     var currentUrl = request.url
     var hops = 0
+    val client = clientFor(request)
     // Cookies a redirect hop sets on the way (a one-time download token, typically) are
     // carried to the hops on the same host and no further; the profile's jar never sees them.
     val hopCookies = HashMap<String, MutableMap<String, String>>()
@@ -396,7 +428,7 @@ class InAppDownloader @Inject constructor(
             header("If-Range", validator)
           }
         }.build()
-        val call = http.client.newCall(hop)
+        val call = client.newCall(hop)
         transfer.call = call
         response = call.execute()
         if (response.code !in REDIRECT_CODES) break
@@ -531,8 +563,8 @@ class InAppDownloader @Inject constructor(
     val base64 = header.endsWith(";base64", ignoreCase = true)
     val mime = header.removeSuffix(";base64").removeSuffix(";BASE64")
       .substringBefore(';').ifBlank { "text/plain" }
+    require(payload.length <= MAX_DATA_URL_LENGTH) { "too large" }
     val bytes = if (base64) Base64.decode(payload, Base64.DEFAULT) else percentDecode(payload)
-    require(bytes.size <= MAX_BYTES) { "too large" }
     return mime to bytes
   }
 
@@ -574,7 +606,7 @@ class InAppDownloader @Inject constructor(
 
   private fun Char.isHexDigit(): Boolean = this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
 
-  private companion object {
+  companion object {
     val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
     const val MAX_REDIRECTS = 5
 
@@ -585,6 +617,9 @@ class InAppDownloader @Inject constructor(
     const val BUFFER_BYTES = 64 * 1024
     const val REPORT_INTERVAL_MS = 1_500L
     const val MAX_BYTES = 4L * 1024 * 1024 * 1024
+
+    /** A `data:` address longer than this is refused before any copy of it is made. */
+    const val MAX_DATA_URL_LENGTH = 32 * 1024 * 1024
     const val RANGE_NOT_SATISFIABLE = 416
   }
 }

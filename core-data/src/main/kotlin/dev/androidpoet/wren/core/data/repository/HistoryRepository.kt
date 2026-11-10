@@ -22,6 +22,9 @@ interface HistoryRepository {
 
   suspend fun delete(url: String)
 
+  /** Removes every entry whose address [matches]; used to forget one site. */
+  suspend fun deleteMatching(matches: (url: String) -> Boolean)
+
   suspend fun clear()
 
   companion object {

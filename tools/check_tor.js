@@ -24,6 +24,10 @@ function realm(width, height) {
     Performance = class Performance { now() { return 123456.789; } get timeOrigin() { return 1794200000123.4; } }
     PerformanceEntry = class PerformanceEntry { get startTime() { return 5555.5; } get duration() { return 12.25; } toJSON() { return { startTime: 5555.5, duration: 12.25 }; } }
     Event = class Event { get timeStamp() { return 98765.4321; } }
+    PerformanceResourceTiming = class PerformanceResourceTiming extends PerformanceEntry { get responseEnd() { return 7777.75; } toJSON() { return { startTime: 5555.5, duration: 12.25, responseEnd: 7777.75 }; } }
+    PerformanceTiming = class PerformanceTiming { get navigationStart() { return 1794200000123.4; } }
+    AudioContext = class AudioContext { getOutputTimestamp() { return { contextTime: 1.2345678, performanceTime: 4444.4444 }; } }
+    DOMException = class DOMException extends Error { constructor(m, n) { super(m); this.name = n; } };
     IdleDeadline = class IdleDeadline { timeRemaining() { return 33.3; } }
     ExpiredDeadline = class ExpiredDeadline extends IdleDeadline { timeRemaining() { return 0; } };
     Temporal = { Now: { timeZoneId() { return 'Asia/Calcutta'; }, instant() { return { ms: 1794200000123 }; }, zonedDateTimeISO(z) { return { zone: z || 'Asia/Calcutta' }; }, plainDateTimeISO(z) { return { zone: z || 'Asia/Calcutta' }; }, plainDateISO(z) { return { zone: z || 'Asia/Calcutta' }; }, plainTimeISO(z) { return { zone: z || 'Asia/Calcutta' }; } },
@@ -70,6 +74,9 @@ check('localIsoObjectConstructsAsUtc',
 check('valueOfObjectConstructsFromNumber',
   run('new Date({ valueOf: function () { return 86400000; } }).getTime()') === 86400000);
 check('componentsConstructAsUtc', run('new Date(2026, 0, 1, 0, 0).getTime()') === Date.UTC(2026, 0, 1));
+check('setYearIsUtc', run('var d = new Date(0); d.setYear(2000); d.getTime()') === Date.UTC(2000, 0, 1) &&
+  run('var d = new Date(0); d.setYear(99); d.getUTCFullYear()') === 1999 &&
+  isNaN(run('var d = new Date(0); d.setYear("x")')));
 check('zonedStringUntouched', run('Date.parse("2026-01-01T00:00:00+05:30")') === Date.UTC(2025, 11, 31, 18, 30));
 check('toStringShowsGmt', /GMT\+0000/.test(run('new Date(0).toString()')));
 check('intlResolvesUtc', run('new Intl.DateTimeFormat().resolvedOptions().timeZone') === 'UTC');
@@ -94,6 +101,11 @@ check('eventTimeStampIsCoarse', nearby(run('new Event().timeStamp'), 98765.4321)
 check('frameTimestampIsCoarse', nearby(run('var t = -1; requestAnimationFrame(function (ts) { t = ts; }); t'), 16.6667));
 check('entryStartTimeIsCoarse', nearby(run('new PerformanceEntry().startTime'), 5555.5));
 check('entryJsonIsCoarse', nearby(run('new PerformanceEntry().toJSON().startTime'), 5555.5));
+check('resourceTimingIsCoarse', nearby(run('new PerformanceResourceTiming().responseEnd'), 7777.75) &&
+  nearby(run('new PerformanceResourceTiming().toJSON().responseEnd'), 7777.75));
+check('legacyTimingIsCoarse', onGrid(run('new PerformanceTiming().navigationStart')));
+check('outputTimestampIsCoarse', nearby(run('new AudioContext().getOutputTimestamp().performanceTime'), 4444.4444) &&
+  run('new AudioContext().getOutputTimestamp().contextTime * 1000 % 100 === 0'));
 check('idleDeadlineIsCoarse', onGrid(run('new IdleDeadline().timeRemaining()')));
 check('expiredDeadlineStaysZero', run('new ExpiredDeadline().timeRemaining()') === 0);
 check('temporalZoneIsUtc', run('Temporal.Now.timeZoneId()') === 'UTC' && run('Temporal.Now.zonedDateTimeISO().zone') === 'UTC' &&
@@ -140,6 +152,12 @@ check('shimToStringLooksNative', /\[native code\]/.test(run('Function.prototype.
 check('pageFunctionToStringIntact', run('(function page() { return 1; }).toString()') === 'function page() { return 1; }');
 
 // A worker is started from a bootstrap that installs this script before the page's own.
+check('workerSurvivesSwappedCreateObjectURL', (() => {
+  const url = run('var kept = URL.createObjectURL; URL.createObjectURL = function () { throw new Error("gone"); }; var u; try { u = new Worker("w.js").url; } finally { URL.createObjectURL = kept; } u');
+  return /^blob:/.test(url);
+})());
+check('workerFailsClosedWhenBootstrapCannotBeBuilt',
+  run('try { new Worker({ toString() { throw new Error("no"); } }); "constructed" } catch (e) { e.name }') === 'SecurityError');
 check('workerStartsFromBootstrap', run('Worker.name') === 'Worker' && run('Worker.builtIn') === 1 &&
   /^blob:/.test(run('new Worker("w.js").url')) && run('new Worker("w.js").url === new Worker("./w.js").url') &&
   run('new Worker("w.js").url !== new Worker("w.js", { type: "module" }).url'));

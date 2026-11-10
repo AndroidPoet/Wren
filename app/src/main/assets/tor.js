@@ -29,6 +29,7 @@
   'use strict';
 
   var nativeFunctionToString = Function.prototype.toString;
+  var apply = Reflect.apply;
 
   // The whole shim is one function so its source can be carried into a worker verbatim.
   // `base` is the real address of a bootstrapped worker's script, for the workers it creates.
@@ -38,6 +39,15 @@
     var floor = Math.floor;
     var imul = Math.imul;
     var construct = Reflect.construct;
+    var apply = Reflect.apply;
+    var finite = isFinite;
+    var stringify = JSON.stringify;
+    var fill = Uint8Array.prototype.fill;
+    var weakGet = WeakMap.prototype.get;
+    var weakSet = WeakMap.prototype.set;
+    function each(list, fn) {
+      for (var i = 0; i < list.length; i++) fn(list[i], i);
+    }
     var defineProperty = Object.defineProperty;
     var getOwn = Object.getOwnPropertyDescriptor;
     var nativeToString = Function.prototype.toString;
@@ -62,7 +72,7 @@
     // secret midpoint per bucket decides which, so the result stays monotonic while the moment
     // it ticks over cannot be recovered by counting iterations between two reads.
     function coarse(ms) {
-      if (typeof ms !== 'number' || ms !== ms || !isFinite(ms)) return ms;
+      if (typeof ms !== 'number' || ms !== ms || !finite(ms)) return ms;
       var bucket = floor(ms / PRECISION_MS) * PRECISION_MS;
       var midpoint = mix(SECRET, bucket / PRECISION_MS) % PRECISION_MS;
       return ms - bucket >= midpoint ? bucket + PRECISION_MS : bucket;
@@ -89,10 +99,10 @@
         var FunctionPrototype = window.Function.prototype;
         var toString = FunctionPrototype.toString;
         var masked = function toString() {
-          var text = map.get(this);
-          return text !== undefined ? text : nativeToString.call(this);
+          var text = apply(weakGet, map, [this]);
+          return text !== undefined ? text : apply(nativeToString, this, []);
         };
-        map.set(masked, nativeToString.call(toString));
+        apply(weakSet, map, [masked, apply(nativeToString, toString, [])]);
         defineProperty(FunctionPrototype, 'toString', { value: masked, writable: true, configurable: true });
       } catch (ignored) {}
       return map;
@@ -105,9 +115,9 @@
 
       function hide(fn, original, name) {
         try {
-          sources.set(fn, typeof original === 'function'
-            ? nativeToString.call(original)
-            : 'function ' + (name || '') + '() { [native code] }');
+          apply(weakSet, sources, [fn, typeof original === 'function'
+            ? apply(nativeToString, original, [])
+            : 'function ' + (name || '') + '() { [native code] }']);
         } catch (ignored) {}
       }
       function replace(owner, name, fn) {
@@ -127,7 +137,7 @@
       function coarseGetter(owner, name) {
         var native = owner && getOwn(owner, name);
         if (!native || !native.get) return;
-        expose(owner, name, function () { return coarse(native.get.call(this)); });
+        expose(owner, name, function () { return coarse(apply(native.get, this, [])); });
       }
       function answer(owner, name, value) {
         expose(owner, name, function () { return value; });
@@ -141,7 +151,7 @@
           defineProperty(Wrapped, 'length', { value: length === undefined ? Native.length : length, configurable: true });
           defineProperty(Native.prototype, 'constructor', { value: Wrapped, writable: true, configurable: true });
         } catch (ignored) {}
-        Object.getOwnPropertyNames(Native).forEach(function (key) {
+        each(Object.getOwnPropertyNames(Native), function (key) {
           if (key === 'prototype' || key === 'name' || key === 'length') return;
           if (getOwn(Wrapped, key)) return;
           try { defineProperty(Wrapped, key, getOwn(Native, key)); } catch (ignored) {}
@@ -180,11 +190,26 @@
       replace(proto, 'toTimeString', function toTimeString() { return valid(this) ? timeString(this) : 'Invalid Date'; });
 
       // Local getters and setters become their UTC twins: the same instant, read in UTC.
-      ['FullYear', 'Month', 'Date', 'Day', 'Hours', 'Minutes', 'Seconds', 'Milliseconds'].forEach(function (part) {
+      each(['FullYear', 'Month', 'Date', 'Day', 'Hours', 'Minutes', 'Seconds', 'Milliseconds'], function (part) {
         replace(proto, 'get' + part, proto['getUTC' + part]);
         if (part !== 'Day') replace(proto, 'set' + part, proto['setUTC' + part]);
       });
       replace(proto, 'getYear', function getYear() { return this.getUTCFullYear() - 1900; });
+      // The legacy setter works in local time too; left native it would set the year by the
+      // real zone and hand the offset back through the UTC getters.
+      var nativeSetTime = proto.setTime;
+      var nativeSetUTCFullYear = proto.setUTCFullYear;
+      replace(proto, 'setYear', function setYear(year) {
+        var number = +year;
+        if (number !== number) {
+          apply(nativeSetTime, this, [NaN]);
+          return NaN;
+        }
+        var whole = number < 0 ? -floor(-number) : floor(number);
+        if (whole >= 0 && whole <= 99) whole += 1900;
+        if (!valid(this)) apply(nativeSetTime, this, [0]);
+        return apply(nativeSetUTCFullYear, this, [whole]);
+      });
 
       // Everything locale-sensitive answers as en-US unless the page names a locale itself, and
       // Intl formats in UTC unless it names a zone; resolvedOptions() then reports both.
@@ -202,8 +227,8 @@
         return construct(NativeFormat, [withLocale(locales), withUtc(options)], new.target || DateTimeFormat);
       }, NativeFormat);
       replace(Intl, 'DateTimeFormat', DateTimeFormat);
-      ['NumberFormat', 'Collator', 'PluralRules', 'RelativeTimeFormat', 'ListFormat', 'DisplayNames',
-        'Segmenter', 'DurationFormat'].forEach(function (name) {
+      each(['NumberFormat', 'Collator', 'PluralRules', 'RelativeTimeFormat', 'ListFormat', 'DisplayNames',
+        'Segmenter', 'DurationFormat'], function (name) {
         var Native = Intl[name];
         if (typeof Native !== 'function') return;
         var Wrapped = mirror(function (locales, options) {
@@ -211,28 +236,28 @@
         }, Native);
         replace(Intl, name, Wrapped);
       });
-      ['toLocaleString', 'toLocaleDateString', 'toLocaleTimeString'].forEach(function (name) {
+      each(['toLocaleString', 'toLocaleDateString', 'toLocaleTimeString'], function (name) {
         var original = proto[name];
         replace(proto, name, function (locales, options) {
-          return original.call(this, withLocale(locales), withUtc(options));
+          return apply(original, this, [withLocale(locales), withUtc(options)]);
         });
       });
-      [window.Number, window.BigInt, window.Array].forEach(function (type) {
+      each([window.Number, window.BigInt, window.Array], function (type) {
         var original = type && type.prototype && type.prototype.toLocaleString;
         if (!original) return;
         replace(type.prototype, 'toLocaleString', function toLocaleString(locales, options) {
-          return original.call(this, withLocale(locales), options);
+          return apply(original, this, [withLocale(locales), options]);
         });
       });
       var StringPrototype = window.String.prototype;
       var nativeCompare = StringPrototype.localeCompare;
       replace(StringPrototype, 'localeCompare', function localeCompare(that, locales, options) {
-        return nativeCompare.call(this, that, withLocale(locales), options);
+        return apply(nativeCompare, this, [that, withLocale(locales), options]);
       });
-      ['toLocaleUpperCase', 'toLocaleLowerCase'].forEach(function (name) {
+      each(['toLocaleUpperCase', 'toLocaleLowerCase'], function (name) {
         var original = StringPrototype[name];
         replace(StringPrototype, name, function (locales) {
-          return original.call(this, withLocale(locales));
+          return apply(original, this, [withLocale(locales)]);
         });
       });
 
@@ -264,9 +289,9 @@
         }
       }
       function utcArgs(args) {
-        var parts = Array.prototype.slice.call(args);
+        var parts = apply(Array.prototype.slice, args, []);
         while (parts.length < 7) parts.push(parts.length === 2 ? 1 : 0);
-        return NativeDate.UTC.apply(NativeDate, parts);
+        return apply(NativeDate.UTC, NativeDate, parts);
       }
       function now() { return coarse(NativeDate.now()); }
       var WrenDate = mirror(function Date(single) {
@@ -326,7 +351,7 @@
         var nativeKey = getOwn(KeyboardEvent.prototype, 'key');
         if (nativeCode && nativeCode.get && nativeKey && nativeKey.get) {
           expose(KeyboardEvent.prototype, 'code', function () {
-            return usCode(nativeKey.get.call(this), nativeCode.get.call(this));
+            return usCode(apply(nativeKey.get, this, []), apply(nativeCode.get, this, []));
           });
         }
       }
@@ -337,9 +362,9 @@
         var fromMillis = Temporal.Instant.fromEpochMilliseconds;
         var zoneOf = function (zone) { return zone === undefined ? 'UTC' : zone; };
         replace(Temporal.Now, 'timeZoneId', function timeZoneId() { return 'UTC'; });
-        replace(Temporal.Now, 'instant', function instant() { return fromMillis.call(Temporal.Instant, now()); });
+        replace(Temporal.Now, 'instant', function instant() { return apply(fromMillis, Temporal.Instant, [now()]); });
         replace(Temporal.Now, 'zonedDateTimeISO', function zonedDateTimeISO(zone) {
-          return fromMillis.call(Temporal.Instant, now()).toZonedDateTimeISO(zoneOf(zone));
+          return apply(fromMillis, Temporal.Instant, [now()]).toZonedDateTimeISO(zoneOf(zone));
         });
         replace(Temporal.Now, 'plainDateTimeISO', function plainDateTimeISO(zone) {
           return Temporal.Now.zonedDateTimeISO(zoneOf(zone)).toPlainDateTime();
@@ -357,7 +382,7 @@
       var Performance = window.Performance;
       if (Performance && Performance.prototype.now) {
         var nativeNow = Performance.prototype.now;
-        replace(Performance.prototype, 'now', function now() { return coarse(nativeNow.call(this)); });
+        replace(Performance.prototype, 'now', function now() { return coarse(apply(nativeNow, this, [])); });
         coarseGetter(Performance.prototype, 'timeOrigin');
       }
       var PerformanceEntry = window.PerformanceEntry;
@@ -367,7 +392,7 @@
         var nativeJson = PerformanceEntry.prototype.toJSON;
         if (nativeJson) {
           replace(PerformanceEntry.prototype, 'toJSON', function toJSON() {
-            var json = nativeJson.call(this);
+            var json = apply(nativeJson, this, []);
             try {
               if (json && typeof json === 'object') {
                 if ('startTime' in json) json.startTime = coarse(json.startTime);
@@ -378,13 +403,61 @@
           });
         }
       }
+      // The other clocks a resource or navigation entry carries, and the legacy timing object:
+      // each is a millisecond reading of the same grid-free clock, coarsened the same way.
+      var RESOURCE_TIMES = ['workerStart', 'redirectStart', 'redirectEnd', 'fetchStart',
+        'domainLookupStart', 'domainLookupEnd', 'connectStart', 'connectEnd',
+        'secureConnectionStart', 'requestStart', 'responseStart', 'responseEnd',
+        'firstInterimResponseStart', 'finalResponseHeadersStart'];
+      var NAVIGATION_TIMES = ['unloadEventStart', 'unloadEventEnd', 'domInteractive',
+        'domContentLoadedEventStart', 'domContentLoadedEventEnd', 'domComplete',
+        'loadEventStart', 'loadEventEnd', 'activationStart', 'criticalCHRestart'];
+      var LEGACY_TIMES = ['navigationStart', 'unloadEventStart', 'unloadEventEnd', 'redirectStart',
+        'redirectEnd', 'fetchStart', 'domainLookupStart', 'domainLookupEnd', 'connectStart',
+        'connectEnd', 'secureConnectionStart', 'requestStart', 'responseStart', 'responseEnd',
+        'domLoading', 'domInteractive', 'domContentLoadedEventStart', 'domContentLoadedEventEnd',
+        'domComplete', 'loadEventStart', 'loadEventEnd'];
+      function coarseEntry(kind, names) {
+        var Kind = window[kind];
+        if (!Kind || !Kind.prototype) return;
+        each(names, function (name) { coarseGetter(Kind.prototype, name); });
+        var nativeEntryJson = Kind.prototype.hasOwnProperty('toJSON') ? Kind.prototype.toJSON : null;
+        if (!nativeEntryJson) return;
+        replace(Kind.prototype, 'toJSON', function toJSON() {
+          var json = apply(nativeEntryJson, this, []);
+          try {
+            if (json && typeof json === 'object') {
+              each(names, function (name) { if (typeof json[name] === 'number') json[name] = coarse(json[name]); });
+              if (typeof json.startTime === 'number') json.startTime = coarse(json.startTime);
+              if (typeof json.duration === 'number') json.duration = coarse(json.duration);
+            }
+          } catch (ignored) {}
+          return json;
+        });
+      }
+      coarseEntry('PerformanceResourceTiming', RESOURCE_TIMES);
+      coarseEntry('PerformanceNavigationTiming', NAVIGATION_TIMES);
+      coarseEntry('PerformanceTiming', LEGACY_TIMES);
+      if (window.AudioContext && window.AudioContext.prototype.getOutputTimestamp) {
+        var nativeOutputTimestamp = window.AudioContext.prototype.getOutputTimestamp;
+        replace(window.AudioContext.prototype, 'getOutputTimestamp', function getOutputTimestamp() {
+          var stamp = apply(nativeOutputTimestamp, this, []);
+          try {
+            if (stamp && typeof stamp === 'object') {
+              if (typeof stamp.contextTime === 'number') stamp.contextTime = coarse(stamp.contextTime * 1000) / 1000;
+              if (typeof stamp.performanceTime === 'number') stamp.performanceTime = coarse(stamp.performanceTime);
+            }
+          } catch (ignored) {}
+          return stamp;
+        });
+      }
       if (window.Event) coarseGetter(window.Event.prototype, 'timeStamp');
       if (window.IdleDeadline && window.IdleDeadline.prototype.timeRemaining) {
         var nativeRemaining = window.IdleDeadline.prototype.timeRemaining;
         replace(window.IdleDeadline.prototype, 'timeRemaining', function timeRemaining() {
           // An expired deadline stays expired: a bucket's worth of time out of nothing would
           // make a page run work it had no time for.
-          var remaining = nativeRemaining.call(this);
+          var remaining = apply(nativeRemaining, this, []);
           return remaining <= 0 ? 0 : coarse(remaining);
         });
       }
@@ -393,14 +466,14 @@
         var audioClock = getOwn(window.BaseAudioContext.prototype, 'currentTime');
         if (audioClock && audioClock.get) {
           expose(window.BaseAudioContext.prototype, 'currentTime', function () {
-            return coarse(audioClock.get.call(this) * 1000) / 1000;
+            return coarse(apply(audioClock.get, this, []) * 1000) / 1000;
           });
         }
       }
       if (typeof window.requestAnimationFrame === 'function') {
         var nativeFrame = window.requestAnimationFrame;
         replace(window, 'requestAnimationFrame', function requestAnimationFrame(callback) {
-          return nativeFrame.call(window, function (timestamp) { return callback(coarse(timestamp)); });
+          return apply(nativeFrame, window, [function (timestamp) { return callback(coarse(timestamp)); }]);
         });
       }
 
@@ -425,17 +498,17 @@
       if (!inWorker) {
         expose(window, 'outerWidth', viewport('innerWidth'));
         expose(window, 'outerHeight', viewport('innerHeight'));
-        ['screenX', 'screenY', 'screenLeft', 'screenTop'].forEach(function (name) {
+        each(['screenX', 'screenY', 'screenLeft', 'screenTop'], function (name) {
           expose(window, name, function () { return 0; });
         });
       }
-      ['MouseEvent', 'Touch'].forEach(function (kind) {
+      each(['MouseEvent', 'Touch'], function (kind) {
         var Kind = window[kind];
         if (!Kind) return;
-        ['X', 'Y'].forEach(function (axis) {
+        each(['X', 'Y'], function (axis) {
           var client = getOwn(Kind.prototype, 'client' + axis);
           if (client && client.get) {
-            expose(Kind.prototype, 'screen' + axis, function () { return client.get.call(this); });
+            expose(Kind.prototype, 'screen' + axis, function () { return apply(client.get, this, []); });
           }
         });
       });
@@ -453,34 +526,34 @@
         try {
           var original = owner[name];
           defineProperty(owner, name, { value: fn, writable: true, configurable: true });
-          sources.set(fn, nativeToString.call(original));
+          apply(weakSet, sources, [fn, apply(nativeToString, original, [])]);
         } catch (ignored) {}
       }
       var Context2D = window.OffscreenCanvasRenderingContext2D;
       if (Context2D && Context2D.prototype.getImageData) {
         var nativeGet = Context2D.prototype.getImageData;
         replace(Context2D.prototype, 'getImageData', function getImageData() {
-          var image = nativeGet.apply(this, arguments);
-          try { image.data.fill(0); } catch (ignored) {}
+          var image = apply(nativeGet, this, arguments);
+          try { apply(fill, image.data, [0]); } catch (ignored) {}
           return image;
         });
       }
-      ['WebGLRenderingContext', 'WebGL2RenderingContext'].forEach(function (kind) {
+      each(['WebGLRenderingContext', 'WebGL2RenderingContext'], function (kind) {
         var Context = window[kind];
         if (!Context) return;
         var nativeRead = Context.prototype.readPixels;
         if (nativeRead) {
           replace(Context.prototype, 'readPixels', function readPixels() {
-            var result = nativeRead.apply(this, arguments);
-            try { var pixels = arguments[6]; if (pixels && typeof pixels.fill === 'function') pixels.fill(0); } catch (ignored) {}
+            var result = apply(nativeRead, this, arguments);
+            try { var pixels = arguments[6]; if (pixels && typeof pixels.fill === 'function') apply(fill, pixels, [0]); } catch (ignored) {}
             return result;
           });
         }
         var nativeSub = Context.prototype.getBufferSubData;
         if (nativeSub) {
           replace(Context.prototype, 'getBufferSubData', function getBufferSubData() {
-            var result = nativeSub.apply(this, arguments);
-            try { var out = arguments[2]; if (out && typeof out.fill === 'function') out.fill(0); } catch (ignored) {}
+            var result = apply(nativeSub, this, arguments);
+            try { var out = arguments[2]; if (out && typeof out.fill === 'function') apply(fill, out, [0]); } catch (ignored) {}
             return result;
           });
         }
@@ -490,7 +563,7 @@
         var nativeBlob = Offscreen.prototype.convertToBlob;
         replace(Offscreen.prototype, 'convertToBlob', function convertToBlob(options) {
           var blank = new Offscreen(this.width || 1, this.height || 1);
-          return nativeBlob.call(blank, options);
+          return apply(nativeBlob, blank, [options]);
         });
       }
       var WorkerNavigator = window.WorkerNavigator;
@@ -507,32 +580,43 @@
     // worker is therefore started from a bootstrap that installs the same code first and then
     // loads the page's script, with relative addresses still resolved against that script.
     function hardenWorkers(window) {
-      if (!source || !window.URL || !window.Blob) return;
+      // Taken now: a page that later swapped URL.createObjectURL for one that throws must not
+      // be handed a worker started from its own script, unhardened.
+      var NativeURL = window.URL;
+      var NativeBlob = window.Blob;
+      var createObjectURL = NativeURL && NativeURL.createObjectURL;
+      if (!source || !NativeURL || !NativeBlob || typeof createObjectURL !== 'function') return;
       var sources = sourcesOf(window);
       var bootstraps = {};
       function bootstrapFor(url, options) {
-        var resolved = new window.URL(String(url), base || window.location.href).href;
+        var resolved = new NativeURL(String(url), base || window.location.href).href;
         var isModule = !!(options && options.type === 'module');
         var key = (isModule ? 'module ' : 'classic ') + resolved;
         if (bootstraps[key]) return bootstraps[key];
         var load = isModule
-          ? 'import(' + JSON.stringify(resolved) + ');'
-          : 'importScripts(' + JSON.stringify(resolved) + ');';
-        var body = '(' + source + ')(self, true, ' + JSON.stringify(source) + ', ' + JSON.stringify(resolved) + ');\n' +
-          '(' + nativeToString.call(resolveAgainst) + ')(' + JSON.stringify(resolved) + ');\n' + load;
-        var blobUrl = window.URL.createObjectURL(new window.Blob([body], { type: 'text/javascript' }));
+          ? 'import(' + stringify(resolved) + ');'
+          : 'importScripts(' + stringify(resolved) + ');';
+        var body = '(' + source + ')(self, true, ' + stringify(source) + ', ' + stringify(resolved) + ');\n' +
+          '(' + apply(nativeToString, resolveAgainst, []) + ')(' + stringify(resolved) + ');\n' + load;
+        var blobUrl = apply(createObjectURL, NativeURL, [new NativeBlob([body], { type: 'text/javascript' })]);
         bootstraps[key] = blobUrl;
         return blobUrl;
       }
-      ['Worker', 'SharedWorker'].forEach(function (kind) {
+      each(['Worker', 'SharedWorker'], function (kind) {
         var Native = window[kind];
         if (typeof Native !== 'function') return;
         var Wrapped = function (url, options) {
           if (!new.target) {
             throw new TypeError("Failed to construct '" + kind + "': Please use the 'new' operator, this DOM object constructor cannot be called as a function.");
           }
-          var target = url;
-          try { target = bootstrapFor(url, options); } catch (ignored) {}
+          // No bootstrap, no worker: the page's script must not run in a realm with the real
+          // clocks and zone because the page broke what the bootstrap is built from.
+          var target;
+          try {
+            target = bootstrapFor(url, options);
+          } catch (ignored) {
+            throw new window.DOMException("Failed to construct '" + kind + "': the script could not be prepared.", 'SecurityError');
+          }
           return construct(Native, [target, options], new.target);
         };
         Wrapped.prototype = Native.prototype;
@@ -540,11 +624,11 @@
           defineProperty(Wrapped, 'name', { value: Native.name, configurable: true });
           defineProperty(Wrapped, 'length', { value: Native.length, configurable: true });
           defineProperty(Native.prototype, 'constructor', { value: Wrapped, writable: true, configurable: true });
-          Object.getOwnPropertyNames(Native).forEach(function (key) {
+          each(Object.getOwnPropertyNames(Native), function (key) {
             if (key === 'prototype' || key === 'name' || key === 'length') return;
             try { defineProperty(Wrapped, key, getOwn(Native, key)); } catch (ignored) {}
           });
-          sources.set(Wrapped, nativeToString.call(Native));
+          apply(weakSet, sources, [Wrapped, apply(nativeToString, Native, [])]);
           defineProperty(window, kind, { value: Wrapped, writable: true, configurable: true });
         } catch (ignored) {}
       });
@@ -553,6 +637,10 @@
     // Runs inside the bootstrap worker: its own address is a blob, so anything the page's
     // worker script addresses relative to itself is resolved against the script's real address.
     function resolveAgainst(base) {
+      var apply = Reflect.apply;
+      function each(list, fn) {
+        for (var i = 0; i < list.length; i++) fn(list[i], i);
+      }
       var toAbsolute = function (value) {
         if (typeof value !== 'string') return value;
         try { return new URL(value, base).href; } catch (ignored) { return value; }
@@ -562,12 +650,12 @@
         self.importScripts = function importScripts() {
           var urls = [];
           for (var i = 0; i < arguments.length; i++) urls.push(toAbsolute(arguments[i]));
-          return nativeImport.apply(self, urls);
+          return apply(nativeImport, self, urls);
         };
       }
       var nativeFetch = self.fetch;
       if (nativeFetch) {
-        self.fetch = function fetch(input, init) { return nativeFetch.call(self, toAbsolute(input), init); };
+        self.fetch = function fetch(input, init) { return apply(nativeFetch, self, [toAbsolute(input), init]); };
       }
       var NativeRequest = self.Request;
       if (NativeRequest) {
@@ -579,19 +667,19 @@
       if (Xhr && Xhr.prototype.open) {
         var nativeOpen = Xhr.prototype.open;
         Xhr.prototype.open = function open() {
-          var args = Array.prototype.slice.call(arguments);
+          var args = apply(Array.prototype.slice, arguments, []);
           if (args.length > 1) args[1] = toAbsolute(args[1]);
-          return nativeOpen.apply(this, args);
+          return apply(nativeOpen, this, args);
         };
       }
-      ['WebSocket', 'EventSource'].forEach(function (kind) {
+      each(['WebSocket', 'EventSource'], function (kind) {
         var Native = self[kind];
         if (typeof Native !== 'function') return;
         var Wrapped = function (url, extra) {
           return extra === undefined ? new Native(toAbsolute(url)) : new Native(toAbsolute(url), extra);
         };
         Wrapped.prototype = Native.prototype;
-        Object.getOwnPropertyNames(Native).forEach(function (key) {
+        each(Object.getOwnPropertyNames(Native), function (key) {
           if (key === 'prototype' || key === 'name' || key === 'length') return;
           try { Object.defineProperty(Wrapped, key, Object.getOwnPropertyDescriptor(Native, key)); } catch (ignored) {}
         });
@@ -604,7 +692,7 @@
         return urlBase === undefined ? new NativeURL(url) : new NativeURL(url, urlBase);
       };
       URLWrapper.prototype = NativeURL.prototype;
-      Object.getOwnPropertyNames(NativeURL).forEach(function (key) {
+      each(Object.getOwnPropertyNames(NativeURL), function (key) {
         if (key === 'prototype' || key === 'name' || key === 'length') return;
         try { Object.defineProperty(URLWrapper, key, Object.getOwnPropertyDescriptor(NativeURL, key)); } catch (ignored) {}
       });
@@ -614,17 +702,17 @@
     // A child frame's window exists, with every native intact, before the engine injects this
     // script into it. The accessors a page uses to reach it apply the same treatment first.
     function hardenFrames(window) {
-      ['HTMLIFrameElement', 'HTMLFrameElement', 'HTMLObjectElement'].forEach(function (kind) {
+      each(['HTMLIFrameElement', 'HTMLFrameElement', 'HTMLObjectElement'], function (kind) {
         var element = window[kind];
         var proto = element && element.prototype;
         if (!proto) return;
-        ['contentWindow', 'contentDocument'].forEach(function (name) {
+        each(['contentWindow', 'contentDocument'], function (name) {
           var native = getOwn(proto, name);
           if (!native || !native.get) return;
           var get = native.get;
           try {
             var getter = function () {
-              var value = get.call(this);
+              var value = apply(get, this, []);
               try {
                 var child = name === 'contentWindow' ? value : value && value.defaultView;
                 if (child) harden(child);
@@ -639,7 +727,7 @@
               enumerable: native.enumerable,
               configurable: true
             });
-            sourcesOf(window).set(getter, nativeToString.call(get));
+            apply(weakSet, sourcesOf(window), [getter, apply(nativeToString, get, [])]);
           } catch (ignored) {}
         });
       });
@@ -648,6 +736,6 @@
     harden(window);
   }
 
-  var source = nativeFunctionToString.call(install);
+  var source = apply(nativeFunctionToString, install, []);
   install(window, false, source);
 })();

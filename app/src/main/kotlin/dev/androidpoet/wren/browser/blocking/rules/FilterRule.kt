@@ -6,6 +6,8 @@
 
 package dev.androidpoet.wren.browser.blocking.rules
 
+import dev.androidpoet.wren.browser.blocking.HostMatcher
+
 /**
  * One network rule from an EasyList-style filter list: an address pattern plus the conditions
  * under which it applies. Rules the engine cannot honour faithfully (popups, CSP injection,
@@ -20,6 +22,9 @@ class FilterRule(
   val excludedDomains: Array<String>?,
   val isException: Boolean,
   val isImportant: Boolean,
+  /** `site.*` entries: the site under any public suffix, as uBlock reads them. */
+  val entities: Array<String>? = null,
+  val excludedEntities: Array<String>? = null,
   /** The resource a `$redirect=` rule serves in place of the blocked response, if any. */
   val redirect: String? = null,
   /** A `$redirect-rule=`: names the stand-in for a block some other rule makes, blocks nothing. */
@@ -39,9 +44,15 @@ class FilterRule(
     if (types and typeMask == 0) return false
     if (party == THIRD_PARTY && !thirdParty) return false
     if (party == FIRST_PARTY && thirdParty) return false
-    if (domains != null && (pageHost == null || !isUnder(pageHost, domains))) return false
-    if (excludedDomains != null && pageHost != null && isUnder(pageHost, excludedDomains)) {
-      return false
+    if (domains != null || entities != null) {
+      if (pageHost == null) return false
+      val named = (domains != null && isUnder(pageHost, domains)) ||
+        (entities != null && isEntity(pageHost, entities))
+      if (!named) return false
+    }
+    if (pageHost != null) {
+      if (excludedDomains != null && isUnder(pageHost, excludedDomains)) return false
+      if (excludedEntities != null && isEntity(pageHost, excludedEntities)) return false
     }
     return true
   }
@@ -68,6 +79,27 @@ class FilterRule(
         if (!host.endsWith(domain)) continue
         val boundary = host.length - domain.length - 1
         if (boundary < 0 || host[boundary] == '.') return true
+      }
+      return false
+    }
+
+    /**
+     * True when [host] is `entity` under some public suffix, or a host beneath that: `kat.*`
+     * names kat.ai, kat.pink and www.kat.sx alike. The suffix is whatever the registrable
+     * domain says it is, so `shop.*` and `shop.co.uk` agree.
+     */
+    fun isEntity(host: String, entities: Array<String>): Boolean {
+      val registrable = HostMatcher.registrableDomain(host)
+      val suffixStart = registrable.indexOf('.')
+      if (suffixStart <= 0) return false
+      val withoutSuffix = host.substring(0, host.length - (registrable.length - suffixStart))
+      for (entity in entities) {
+        if (withoutSuffix == entity) return true
+        if (withoutSuffix.length > entity.length && withoutSuffix.endsWith(entity) &&
+          withoutSuffix[withoutSuffix.length - entity.length - 1] == '.'
+        ) {
+          return true
+        }
       }
       return false
     }
@@ -147,6 +179,8 @@ class FilterRule(
       if (body.length > 1 && body.startsWith("/") && body.endsWith("/")) return null
       var included: MutableList<String>? = null
       var excluded: MutableList<String>? = null
+      var includedEntities: MutableList<String>? = null
+      var excludedEntities: MutableList<String>? = null
       var party = ANY_PARTY
       var positiveTypes = 0
       var negativeTypes = 0
@@ -164,7 +198,9 @@ class FilterRule(
             "third-party", "3p" -> party = if (negated) FIRST_PARTY else THIRD_PARTY
             "first-party", "1p" -> party = if (negated) THIRD_PARTY else FIRST_PARTY
             "important" -> important = true
-            "match-case" -> Unit
+            // Patterns and addresses are compared in lowercase; a rule that asks for case to
+            // count would match more than its author wrote, so it is left out instead.
+            "match-case" -> return null
             // A redirect rule blocks and serves a stand-in; the block part must survive even
             // where the stand-in is unknown, or the ad request simply goes through.
             "redirect", "redirect-rule" -> {
@@ -180,18 +216,26 @@ class FilterRule(
                 val domain = (if (negatedEntry) entry.substring(1) else entry).lowercase()
                 if (domain.isEmpty()) continue
                 if (!negatedEntry) namedASite = true
-                // `site.*` names every public suffix at once; the engine cannot express it.
-                if (domain.contains('*')) continue
-                if (negatedEntry) {
-                  excluded = (excluded ?: ArrayList()).also { it.add(domain) }
-                } else {
-                  included = (included ?: ArrayList()).also { it.add(domain) }
+                val entity = domain.endsWith(".*")
+                val name = if (entity) domain.dropLast(2) else domain
+                // A wildcard anywhere else is not a form any list defines; the rule is skipped
+                // rather than widened or narrowed by a guess at what it meant.
+                if (name.isEmpty() || name.contains('*')) return null
+                when {
+                  entity && negatedEntry ->
+                    excludedEntities = (excludedEntities ?: ArrayList()).also { it.add(name) }
+                  entity -> includedEntities = (includedEntities ?: ArrayList()).also {
+                    it.add(
+                      name,
+                    )
+                  }
+                  negatedEntry -> excluded = (excluded ?: ArrayList()).also { it.add(name) }
+                  else -> included = (included ?: ArrayList()).also { it.add(name) }
                 }
               }
-              // A rule scoped to named sites must not outlive the names: with every positive
-              // entry dropped, `*$script,1p,domain=~a.com|b.*` would block first-party scripts
-              // on the whole web instead of on b.* alone.
-              if (included == null && (excluded == null || namedASite)) return null
+              // A rule scoped to named sites must not outlive the names.
+              if (namedASite && included == null && includedEntities == null) return null
+              if (!namedASite && excluded == null && excludedEntities == null) return null
             }
             in UNSUPPORTED_OPTIONS -> return null
             else -> {
@@ -212,7 +256,8 @@ class FilterRule(
       }
       if (types == 0) return null
       val pattern = UrlPattern.parse(body)
-      val unconditional = types == RequestType.ALL && party == ANY_PARTY && included == null
+      val unconditional = types == RequestType.ALL && party == ANY_PARTY && included == null &&
+        includedEntities == null
       if (pattern.text.isEmpty() && unconditional) return null
       return FilterRule(
         pattern = pattern,
@@ -224,6 +269,8 @@ class FilterRule(
         isImportant = important,
         redirect = redirect,
         redirectOnly = redirectOnly,
+        entities = includedEntities?.toTypedArray(),
+        excludedEntities = excludedEntities?.toTypedArray(),
       )
     }
   }

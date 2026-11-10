@@ -44,21 +44,24 @@ class PrivacyScripts @Inject constructor(
    */
   enum class Mode { NORMAL, PRIVATE, TOR }
 
-  private val seeds = EnumMap<Mode, Int>(Mode::class.java).apply {
-    Mode.entries.forEach { put(it, SecureRandom().nextInt()) }
+  private val seeds = EnumMap<Mode, Long>(Mode::class.java).apply {
+    Mode.entries.forEach { put(it, SecureRandom().nextLong()) }
   }
 
-  private fun seedOf(mode: Mode): Int = seeds.getValue(mode)
+  private fun seedOf(mode: Mode): Long = seeds.getValue(mode)
 
   private val fingerprintSource: String by lazy { read("fingerprint.js") }
 
-  private val fingerprintCache = EnumMap<Mode, Pair<Int, String>>(Mode::class.java)
+  private val fingerprintCache = EnumMap<Mode, Pair<Long, String>>(Mode::class.java)
 
   private fun fingerprintScript(mode: Mode): String {
     val seed = seedOf(mode)
     fingerprintCache[mode]?.let { if (it.first == seed) return it.second }
+    // Two words of key for the script's keyed hash: a site learns its own per-site noise and
+    // nothing of the key, so nothing of another site's noise.
     val script = fingerprintSource
-      .replace("__SEED__", seed.toString())
+      .replace("__SEED__", (seed ushr 32).toInt().toString())
+      .replace("__SEED2__", seed.toInt().toString())
       .replace("__TOR__", (mode == Mode.TOR).toString())
     fingerprintCache[mode] = seed to script
     return script
@@ -69,7 +72,7 @@ class PrivacyScripts @Inject constructor(
 
   /** Ends one identity: the Tor one when Tor comes on, the private one when its last tab closes. */
   fun rotateSeed(mode: Mode) {
-    seeds[mode] = SecureRandom().nextInt()
+    seeds[mode] = SecureRandom().nextLong()
   }
 
   private val autoconsentScript: String by lazy { read("autoconsent.js") }
@@ -107,7 +110,7 @@ class PrivacyScripts @Inject constructor(
     var tor: ScriptHandler? = null
     var private: ScriptHandler? = null
     var fingerprint: ScriptHandler? = null
-    var fingerprintSeed: Int = 0
+    var fingerprintSeed: Long = 0
     var fingerprintMode: Mode? = null
     var autoconsent: ScriptHandler? = null
     var referrer: ScriptHandler? = null

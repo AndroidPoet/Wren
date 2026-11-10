@@ -222,7 +222,13 @@ class BlobDownloader @Inject constructor(
   private companion object {
     /** Random per process; see [install]. Must be a valid identifier. */
     val BRIDGE_NAME: String = "b" + UUID.randomUUID().toString().replace("-", "")
-    val EVENT_NAME: String = "e" + UUID.randomUUID().toString().replace("-", "")
+
+    /**
+     * Fixed, unlike the bridge name: the event is dispatched only during a transfer the page
+     * itself started, and a random name would be one more value that is the same in a normal,
+     * a private and a Tor page of this process.
+     */
+    const val EVENT_NAME = "wrenblob"
     val ALL_ORIGINS = setOf("*")
     const val MAX_BYTES = 512L * 1024 * 1024
 

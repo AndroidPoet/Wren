@@ -18,6 +18,7 @@ import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import dev.androidpoet.wren.R
 import dev.androidpoet.wren.browser.tor.BridgeMode
 import dev.androidpoet.wren.browser.tor.Bridges
+import dev.androidpoet.wren.browser.tor.TorController
 import dev.androidpoet.wren.browser.tor.TorState
 import dev.androidpoet.wren.browser.tor.TorStatus
 import dev.androidpoet.wren.databinding.SheetTorBinding
@@ -107,6 +108,8 @@ class TorSheet : BottomSheetDialogFragment() {
       TorStatus.STOPPING -> getString(R.string.tor_stopping)
       TorStatus.FAILED -> state.error?.takeIf { it.startsWith(TRANSPORT_MISSING) }
         ?.let { getString(R.string.tor_bridge_transport_missing) }
+        ?: state.error?.takeIf { it == TorController.PROXY_UNSUPPORTED }
+          ?.let { getString(R.string.tor_unsupported) }
         ?: getString(
           if ((activity as? Host)?.torBridgeMode() == BridgeMode.NONE) {
             R.string.tor_failed_try_bridge

@@ -84,6 +84,8 @@ object HostMatcher {
 
   /** Where the registrable domain begins in [host]; the same answer as [registrableDomain]. */
   private fun registrableDomainStart(host: String): Int {
+    // An address is its own site: the last two numbers of 10.0.2.2 name nothing.
+    if (isIpAddress(host)) return 0
     PublicSuffixes.registrableDomainStart(host)?.let { return it }
     val dot1 = host.lastIndexOf('.')
     if (dot1 < 0) return 0
@@ -95,6 +97,9 @@ object HostMatcher {
     }
     return dot2 + 1
   }
+
+  private fun isIpAddress(host: String): Boolean =
+    host.indexOf(':') >= 0 || host.all { it == '.' || it in '0'..'9' }
 
   private fun isSecondLevelSuffix(host: String, from: Int, to: Int): Boolean {
     val length = to - from

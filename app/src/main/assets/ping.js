@@ -31,8 +31,12 @@
   }
 
   // A middle-click or a modifier-click opens the link too, as auxclick; both are seen first here,
-  // in the capture phase on the window, before any handler of the page.
+  // in the capture phase on the window, before any handler of the page, and once more as the
+  // event bubbles back to the window, after the page's handlers: one that put the attribute
+  // back on the way is undone before the engine activates the link. A handler that stops the
+  // event from bubbling keeps its ping; that case is the engine's to close.
   ['click', 'auxclick'].forEach(function (type) {
     try { window.addEventListener(type, strip, true); } catch (ignored) {}
+    try { window.addEventListener(type, strip, false); } catch (ignored) {}
   });
 })();

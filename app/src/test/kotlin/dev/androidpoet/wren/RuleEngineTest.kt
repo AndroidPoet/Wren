@@ -127,17 +127,66 @@ class FilterRuleTest {
   }
 
   @Test
-  fun `a rule scoped to wildcard sites does not widen to the whole web`() {
-    // uBlock filters carries `*$script,1p,domain=~kat.ai|...|kat.*|kickass.*`: with the `kat.*`
-    // entries dropped, the leftover exclusions once made it block every first-party script.
-    assertThat(FilterRule.parse("*\$script,1p,domain=~a.com|b.*")).isNull()
-    assertThat(FilterRule.parse("*\$script,1p,domain=b.*")).isNull()
-    val partlyExpressible = FilterRule.parse("||x.com/y\$script,domain=a.com|b.*")
-    assertThat(partlyExpressible).isNotNull()
-    assertThat(partlyExpressible!!.domains!!.toList()).containsExactly("a.com")
-    val onlyExclusions = FilterRule.parse("||x.com/y\$script,domain=~a.com|~b.*")
-    assertThat(onlyExclusions).isNotNull()
-    assertThat(onlyExclusions!!.excludedDomains!!.toList()).containsExactly("a.com")
+  fun `wildcard sites name the site under every public suffix`() {
+    // uBlock filters carries `*$script,1p,domain=~kat.ai|...|kat.*|kickass.*`: in 1.0.12 the
+    // `kat.*` entries were dropped and the leftover exclusions blocked every first-party script.
+    val rule = FilterRule.parse("*\$script,1p,domain=~kat.ai|kat.*|kickass.*")!!
+    assertThat(rule.entities!!.toList()).containsExactly("kat", "kickass")
+    assertThat(rule.excludedDomains!!.toList()).containsExactly("kat.ai")
+    assertThat(rule.domains).isNull()
+    assertThat(rule.appliesTo(RequestType.SCRIPT, false, "kat.sx")).isTrue()
+    assertThat(rule.appliesTo(RequestType.SCRIPT, false, "www.kickass.co.uk")).isTrue()
+    assertThat(rule.appliesTo(RequestType.SCRIPT, false, "kat.ai")).isFalse()
+    assertThat(rule.appliesTo(RequestType.SCRIPT, false, "example.com")).isFalse()
+    assertThat(rule.appliesTo(RequestType.SCRIPT, false, "notkat.sx")).isFalse()
+    assertThat(rule.appliesTo(RequestType.SCRIPT, false, null)).isFalse()
+
+    // An excluded wildcard site is honoured too: dropping it would block on shop.com.
+    val excluded = FilterRule.parse("||cdn.example/ad.js\$script,domain=~safe.example|~shop.*")!!
+    assertThat(excluded.excludedEntities!!.toList()).containsExactly("shop")
+    assertThat(excluded.appliesTo(RequestType.SCRIPT, true, "shop.com")).isFalse()
+    assertThat(excluded.appliesTo(RequestType.SCRIPT, true, "www.shop.co.uk")).isFalse()
+    assertThat(excluded.appliesTo(RequestType.SCRIPT, true, "other.com")).isTrue()
+
+    // A wildcard anywhere else is no form a list defines.
+    assertThat(FilterRule.parse("||x.com/y\$script,domain=a*b.com")).isNull()
+    assertThat(FilterRule.parse("||x.com/y\$script,domain=*.com")).isNull()
+  }
+
+  @Test
+  fun `wildcard sites are matched by the engine`() {
+    val engine = RuleEngine.parse(
+      sequenceOf(
+        "||cdn.example/ad.js\$script,domain=~shop.*",
+        "/collector\$script,1p,domain=kat.*",
+      ),
+    )
+    val ad = RequestContext("https://cdn.example/ad.js")
+    assertThat(engine.decide(ad, RequestType.SCRIPT, true, "shop.com", false)).isNull()
+    assertThat(
+      engine.decide(ad, RequestType.SCRIPT, true, "news.com", false),
+    ).isNotNull()
+    val collector = RequestContext("https://kat.sx/collector")
+    assertThat(engine.decide(collector, RequestType.SCRIPT, false, "kat.sx", false)).isNotNull()
+    assertThat(
+      engine.decide(collector, RequestType.SCRIPT, false, "example.com", false),
+    ).isNull()
+  }
+
+  @Test
+  fun `a rule that needs case to count is left out`() {
+    // Patterns and addresses are compared lowercased; honouring the rule would widen it.
+    assertThat(FilterRule.parse("/Ad.js\$script,match-case")).isNull()
+  }
+
+  @Test
+  fun `every token of a long address is seen`() {
+    val engine = RuleEngine.parse(sequenceOf("/analytics-collector\$script"))
+    val padding = "x/".repeat(600)
+    val url = "https://tracker.example/${padding}analytics-collector"
+    assertThat(
+      engine.decide(RequestContext(url), RequestType.SCRIPT, true, "site.example", false),
+    ).isNotNull()
   }
 
   @Test

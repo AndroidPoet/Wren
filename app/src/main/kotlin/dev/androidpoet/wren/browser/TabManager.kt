@@ -113,8 +113,11 @@ class TabManager @Inject constructor() {
     openTab()
   }
 
-  fun closePrivateTabs() {
-    openTabs.removeAll(openTabs.filter { it.isPrivate })
+  fun closePrivateTabs() = closeWhere { it.isPrivate }
+
+  /** Closes every tab [shouldClose] names, with no undo; the rest keep their order and focus. */
+  fun closeWhere(shouldClose: (BrowserTab) -> Boolean) {
+    openTabs.removeAll(openTabs.filter(shouldClose))
     if (openTabs.isEmpty()) {
       openTab()
       return

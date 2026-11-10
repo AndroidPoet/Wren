@@ -48,6 +48,9 @@ interface HistoryDao {
   @Query("DELETE FROM history WHERE url = :url")
   suspend fun delete(url: String)
 
+  @Query("DELETE FROM history WHERE url IN (:urls)")
+  suspend fun deleteAll(urls: List<String>)
+
   @Query("DELETE FROM history")
   suspend fun clear()
 

@@ -23,6 +23,12 @@
   var defineProperty = Object.defineProperty;
   var getOwn = Object.getOwnPropertyDescriptor;
   var MARK = Symbol.for('wren.private');
+  // Natives used at call time, taken before any page script can replace them.
+  var apply = Reflect.apply;
+
+  function each(list, fn) {
+    for (var i = 0; i < list.length; i++) fn(list[i], i);
+  }
 
   var REMOVED = ['RTCPeerConnection', 'webkitRTCPeerConnection', 'RTCDataChannel', 'RTCIceCandidate',
     'RTCSessionDescription', 'DeviceMotionEvent', 'DeviceOrientationEvent', 'Accelerometer',
@@ -39,7 +45,7 @@
     if (window[MARK]) return;
     try { defineProperty(window, MARK, { value: true }); } catch (ignored) { return; }
 
-    REMOVED.forEach(function (name) {
+    each(REMOVED, function (name) {
       try {
         defineProperty(window, name, { value: undefined, writable: false, configurable: false });
       } catch (ignored) {}
@@ -56,7 +62,7 @@
         // wrapper borrowed from a child frame may be called on this window: any realm's window.
         var target = this === undefined || this === null ? window : this;
         if (isWindow(target) && SENSOR_EVENTS[name.toLowerCase()]) return undefined;
-        return arguments.length > 2 ? nativeAdd.call(this, name, listener, options) : nativeAdd.call(this, name, listener);
+        return arguments.length > 2 ? apply(nativeAdd, this, [name, listener, options]) : apply(nativeAdd, this, [name, listener]);
       };
       try { add.toString = function () { return String(nativeAdd); }; } catch (ignored) {}
       try {
@@ -66,7 +72,7 @@
       } catch (ignored) {}
     }
 
-    Object.keys(SENSOR_EVENTS).forEach(function (event) {
+    each(Object.keys(SENSOR_EVENTS), function (event) {
       try {
         defineProperty(window, 'on' + event, {
           get: function () { return null; }, set: function () {}, configurable: true
@@ -96,18 +102,18 @@
   }
 
   function hardenFrames(window) {
-    ['HTMLIFrameElement', 'HTMLFrameElement', 'HTMLObjectElement'].forEach(function (kind) {
+    each(['HTMLIFrameElement', 'HTMLFrameElement', 'HTMLObjectElement'], function (kind) {
       var element = window[kind];
       var proto = element && element.prototype;
       if (!proto) return;
-      ['contentWindow', 'contentDocument'].forEach(function (name) {
+      each(['contentWindow', 'contentDocument'], function (name) {
         var native = getOwn(proto, name);
         if (!native || !native.get) return;
         var get = native.get;
         try {
           defineProperty(proto, name, {
             get: function () {
-              var value = get.call(this);
+              var value = apply(get, this, []);
               try {
                 var child = name === 'contentWindow' ? value : value && value.defaultView;
                 if (child) harden(child);

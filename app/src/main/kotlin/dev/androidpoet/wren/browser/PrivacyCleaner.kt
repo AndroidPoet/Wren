@@ -113,6 +113,67 @@ class PrivacyCleaner @Inject constructor(
   }
 
   /**
+   * Forgets one site: cookies, cache, every storage API and service workers for [host]'s
+   * registrable domain in [storage]'s profile, its history and its icons. The site's own
+   * settings (JavaScript, desktop, blocking) are kept: they are the user's, not the site's.
+   * [onDone] runs on the main thread once the engine reports back, or after
+   * [DELETION_TIMEOUT_MS] if it never does.
+   */
+  suspend fun forgetSite(
+    host: String,
+    storage: WebStorage,
+    cookies: CookieManager,
+    onDone: () -> Unit,
+  ) {
+    val domain = HostMatcher.registrableDomain(host)
+    historyRepository.deleteMatching { url ->
+      HostMatcher.hostOf(url)?.let { HostMatcher.registrableDomain(it) } == domain
+    }
+    faviconStore.forget(domain)
+    settings.setKeptSignedIn(host, false)
+    withTimeoutOrNull(DELETION_TIMEOUT_MS) {
+      suspendCancellableCoroutine { continuation ->
+        val done = { if (continuation.isActive) continuation.resume(Unit) }
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)) {
+          // The engine resolves the site itself, with the real public suffix list.
+          WebStorageCompat.deleteBrowsingDataForSite(storage, host) { done() }
+        } else {
+          expireCookies(cookies, domain)
+          storage.getOrigins { origins ->
+            origins?.keys?.forEach { origin ->
+              val originHost = HostMatcher.hostOf(origin.toString())
+              if (originHost != null && HostMatcher.registrableDomain(originHost) == domain) {
+                storage.deleteOrigin(origin.toString())
+              }
+            }
+            done()
+          }
+        }
+      }
+    } ?: Timber.w("forgetting %s did not report back in time", domain)
+    onDone()
+  }
+
+  /**
+   * Without the per-site deletion API a cookie can only be removed by setting it again,
+   * expired, under the names the engine reports for the domain and its `www` host. The
+   * engine does not say which path or parent domain a cookie was set for, so each name is
+   * expired for the host and for the domain; a cookie scoped to a deeper path survives.
+   */
+  private fun expireCookies(cookies: CookieManager, domain: String) {
+    for (url in listOf("https://$domain", "https://www.$domain", "http://$domain")) {
+      val names = cookies.getCookie(url)?.split(';')
+        ?.mapNotNull { it.substringBefore('=').trim().takeIf(String::isNotEmpty) }
+        ?: continue
+      for (name in names) {
+        cookies.setCookie(url, "$name=; Max-Age=0; Path=/")
+        cookies.setCookie(url, "$name=; Max-Age=0; Path=/; Domain=$domain")
+      }
+    }
+    cookies.flush()
+  }
+
+  /**
    * Each kept cookie is read back as the full `Set-Cookie` line it was stored with, so it
    * returns with its own domain, path, expiry, `HttpOnly` and `SameSite`. Rebuilding those from
    * a bare name=value pair would hand a session cookie to scripts and to every subdomain, so

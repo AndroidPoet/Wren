@@ -122,14 +122,15 @@ object UrlFormatter {
   /**
    * The host, minus a leading `www.`, for the compact omnibox label. Credentials are dropped:
    * `https://bank.com@evil.example/` is a page on evil.example, and a label that began with
-   * "bank.com" would be the spoof the address bar exists to prevent.
+   * "bank.com" would be the spoof the address bar exists to prevent. An internationalised host
+   * is shown in its letters only where [IdnDisplay] finds them unable to pass for another site.
    */
   fun prettyHost(url: String): String {
     if (url.isBlank() || url == NEW_TAB_URL) return ""
     val withoutScheme = url.substringAfter("://", url)
     val authority = withoutScheme.substringBefore('/').substringBefore('?').substringBefore('#')
     val host = authority.substringAfterLast('@')
-    return host.removePrefix("www.").ifBlank { url }
+    return IdnDisplay.forDisplay(host.removePrefix("www.")).ifBlank { url }
   }
 
   fun isSecure(url: String): Boolean = url.startsWith("https://", ignoreCase = true)

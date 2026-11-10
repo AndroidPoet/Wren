@@ -15,6 +15,7 @@ import androidx.core.view.isVisible
 import androidx.fragment.app.FragmentManager
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import dev.androidpoet.wren.R
+import dev.androidpoet.wren.browser.IdnDisplay
 import dev.androidpoet.wren.browser.blocking.TrackerOwners
 import dev.androidpoet.wren.databinding.ItemTrackerGroupBinding
 import dev.androidpoet.wren.databinding.SheetSiteSecurityBinding
@@ -52,6 +53,7 @@ class SiteSecuritySheet : BottomSheetDialogFragment() {
     fun onSetSiteJavascript(enabled: Boolean)
     fun onSetSiteDesktop(enabled: Boolean)
     fun onSetKeepSignedIn(enabled: Boolean)
+    fun onForgetSite()
     fun onReportBrokenSite()
   }
 
@@ -81,7 +83,7 @@ class SiteSecuritySheet : BottomSheetDialogFragment() {
       return
     }
 
-    binding.securityHost.text = info.host
+    binding.securityHost.text = IdnDisplay.forDisplay(info.host)
     binding.securityConnection.setText(
       if (info.isSecure) R.string.connection_secure else R.string.connection_not_secure,
     )
@@ -103,6 +105,10 @@ class SiteSecuritySheet : BottomSheetDialogFragment() {
     }
     binding.securityReportAction.setOnClickListener {
       host.onReportBrokenSite()
+      dismiss()
+    }
+    binding.securityForgetAction.setOnClickListener {
+      host.onForgetSite()
       dismiss()
     }
     binding.siteDesktopSwitch.isChecked = info.isDesktopHere

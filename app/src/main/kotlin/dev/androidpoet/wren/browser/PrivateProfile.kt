@@ -9,6 +9,7 @@ package dev.androidpoet.wren.browser
 import android.content.Context
 import android.webkit.CookieManager
 import android.webkit.ServiceWorkerController
+import android.webkit.WebStorage
 import android.webkit.WebView
 import androidx.webkit.ProfileStore
 import androidx.webkit.WebStorageCompat
@@ -65,6 +66,8 @@ class PrivateProfile @Inject constructor(
     runCatching { WebViewCompat.getProfile(webView).name.startsWith(PREFIX) }.getOrDefault(false)
 
   fun cookieManager(): CookieManager? = profile { it.cookieManager }
+
+  fun webStorage(): WebStorage? = profile { it.webStorage }
 
   fun serviceWorkerController(): ServiceWorkerController? = profile { it.serviceWorkerController }
 

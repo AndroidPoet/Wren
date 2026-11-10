@@ -96,6 +96,17 @@ class TorController @Inject constructor(
   var onBeforeRouteChange: ((toTor: Boolean) -> Unit)? = null
 
   /**
+   * Run before every route change, whichever screen flips it, after [onBeforeRouteChange]. The
+   * application registers the transfers that must stop with the route here: a screen's observer
+   * can be suspended behind Settings at the very moment Settings turns Tor on.
+   */
+  private val routeListeners = java.util.concurrent.CopyOnWriteArrayList<(toTor: Boolean) -> Unit>()
+
+  fun addRouteListener(listener: (toTor: Boolean) -> Unit) {
+    routeListeners += listener
+  }
+
+  /**
    * Whether a page load may start: Tor is off, or the proxy fronts every request and Tor has
    * either built its circuits or given up. A load during bootstrap would only die at the local
    * port; after a failed start it dies there too, which is the point.
@@ -145,6 +156,7 @@ class TorController @Inject constructor(
   fun setEnabled(enabled: Boolean) {
     if (enabled == settings.torMode && enabled == (_state.value.status != TorStatus.OFF)) return
     onBeforeRouteChange?.invoke(enabled)
+    routeListeners.forEach { it(enabled) }
     settings.torMode = enabled
     if (enabled) start() else stop()
   }
@@ -184,9 +196,9 @@ class TorController @Inject constructor(
       TorStatus.OFF, TorStatus.FAILED -> Unit
     }
     if (!isSupported) {
-      // Without a proxy override nothing could be routed, so the mode cannot be honoured at all.
-      settings.torMode = false
-      _state.value = TorState(TorStatus.FAILED, error = "proxy override unsupported")
+      // Without a proxy override nothing can be routed. The mode stays on and the pages stay
+      // blocked: an engine downgrade must not quietly send a Tor user's next page direct.
+      _state.value = TorState(TorStatus.FAILED, error = PROXY_UNSUPPORTED)
       return
     }
     _state.value = TorState(TorStatus.STARTING)
@@ -463,7 +475,10 @@ class TorController @Inject constructor(
     ServerSocket(port, 1, TorProxySelector.LOOPBACK).close()
   }.isSuccess
 
-  private companion object {
+  companion object {
+    /** The failure reason when the engine offers no proxy override; see TorSheet. */
+    const val PROXY_UNSUPPORTED = "proxy override unsupported"
+
     /** Nothing listens here; a proxy pointed at it refuses every connection. */
     const val DEAD_END_PORT = 1
     const val LYREBIRD_LIBRARY = "liblyrebird.so"

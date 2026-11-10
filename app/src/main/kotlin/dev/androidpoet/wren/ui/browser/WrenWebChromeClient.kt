@@ -42,6 +42,8 @@ class WrenWebChromeClient(
   private val onEnterFullscreen: (View, CustomViewCallback) -> Unit,
   private val onExitFullscreen: () -> Unit,
   private val onFileChooserRequest: (ValueCallback<Array<Uri>>, FileChooserParams) -> Boolean,
+  /** True for the one view whose page is on screen and not behind the app lock. */
+  private val isOnScreen: (WebView) -> Boolean,
 ) : WebChromeClient() {
 
   override fun onProgressChanged(view: WebView, newProgress: Int) {
@@ -136,7 +138,7 @@ class WrenWebChromeClient(
   }
 
   private fun canShowDialog(view: WebView): Boolean =
-    view.isAttachedToWindow && (view.context as? Activity)?.isFinishing != true
+    view.isAttachedToWindow && isOnScreen(view) && (view.context as? Activity)?.isFinishing != true
 
   /** A page not on screen gets no dialog: the engine's own would not be secure either. */
   private fun dismissed(result: JsResult): Boolean {

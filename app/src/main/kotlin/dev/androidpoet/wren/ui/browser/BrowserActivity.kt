@@ -36,6 +36,7 @@ import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebView.HitTestResult
 import android.webkit.WebViewClient
@@ -67,6 +68,7 @@ import dev.androidpoet.wren.WrenApp
 import dev.androidpoet.wren.browser.AppLock
 import dev.androidpoet.wren.browser.BrowserTab
 import dev.androidpoet.wren.browser.FileChooserUris
+import dev.androidpoet.wren.browser.IdnDisplay
 import dev.androidpoet.wren.browser.PageSaver
 import dev.androidpoet.wren.browser.PrivacyCleaner
 import dev.androidpoet.wren.browser.PrivateProfile
@@ -104,6 +106,7 @@ import dev.androidpoet.wren.databinding.ActivityBrowserBinding
 import dev.androidpoet.wren.download.AndroidAppFile
 import dev.androidpoet.wren.download.BlobDownloader
 import dev.androidpoet.wren.download.DownloadController
+import dev.androidpoet.wren.download.InAppDownloader
 import dev.androidpoet.wren.settings.SettingsStore
 import dev.androidpoet.wren.ui.home.MostVisitedAdapter
 import dev.androidpoet.wren.ui.home.ShortcutAdapter
@@ -540,12 +543,24 @@ class BrowserActivity :
     incognitoKeyboard = tab.isPrivate || settings.torMode,
   ).also { created ->
     val tabId = tab.id
-    if (tab.isPrivate && privateProfile.attach(created)) {
-      // A private worker lives as long as the private session; one that outlives a change of
-      // route (Tor on or off since it registered) is answered with a block.
-      val onTor = settings.torMode
-      privateProfile.serviceWorkerController()?.let {
-        serviceWorkerBlocker.install(it) { settings.torMode == onTor }
+    if (tab.isPrivate) {
+      if (privateProfile.attach(created)) {
+        // A private worker lives as long as the private session; one that outlives a change
+        // of route (Tor on or off since it registered), or of the Tor identity it was
+        // registered under, is answered with a block.
+        val onTor = settings.torMode
+        val identity = torProfile.identityName
+        privateProfile.serviceWorkerController()?.let {
+          serviceWorkerBlocker.install(it) {
+            settings.torMode == onTor && (!onTor || torProfile.identityName == identity)
+          }
+        }
+      } else {
+        // Without a profile of its own a private tab would carry the normal tabs' cookies, or
+        // under Tor the Tor tabs': signed in where the user expects to be a stranger. It gets
+        // no network instead, and never another profile.
+        created.settings.blockNetworkLoads = true
+        toast(R.string.private_profile_unavailable)
       }
     } else if (settings.torMode) {
       if (torProfile.attach(created)) {
@@ -564,11 +579,6 @@ class BrowserActivity :
         created.settings.blockNetworkLoads = true
         toast(R.string.tor_profile_unavailable)
       }
-    } else if (tab.isPrivate) {
-      // Without a profile of its own a private tab would carry the normal tabs' cookies: signed
-      // in where the user expects to be a stranger. It gets no network instead.
-      created.settings.blockNetworkLoads = true
-      toast(R.string.private_profile_unavailable)
     }
     created.layoutParams = FrameLayout.LayoutParams(
       ViewGroup.LayoutParams.MATCH_PARENT,
@@ -608,6 +618,9 @@ class BrowserActivity :
       onEnterFullscreen = ::showCustomView,
       onExitFullscreen = ::hideCustomView,
       onFileChooserRequest = ::showFileChooser,
+      // Only the page on screen may put up a dialog: a background private page's dialog would
+      // land over a normal tab's unsecured window, and none may appear over the lock.
+      isOnScreen = { view -> view === webView && !(appLock.isArmed && !appLock.isOpen) },
     )
     created.setFindListener { activeMatch, matchCount, isDoneCounting ->
       if (!isDoneCounting || tabId != viewModel.tabManager.activeTabId.value) return@setFindListener
@@ -1759,12 +1772,10 @@ class BrowserActivity :
     pagesOnTor = onTor
     if (onTor) {
       // The pages opened over the open network close rather than reload over Tor: the same
-      // address fetched on both routes joins the Tor session to the one the ISP watched. A
-      // system download or blob spool started direct would likewise keep going; both stop.
+      // address fetched on both routes joins the Tor session to the one the ISP watched. The
+      // transfers started direct were stopped by the route change itself, in WrenApp.
       discardAllWebViews()
       endPrivateSession()
-      downloadController.stopDirectDownloads()
-      blobDownloader.cancelAll()
       privacyScripts.rotateSeed(PrivacyScripts.Mode.TOR)
       torProfile.enterEnglish()
       viewModel.tabManager.closeAll()
@@ -1824,8 +1835,11 @@ class BrowserActivity :
       .setPositiveButton(R.string.tor_new_identity) { _, _ ->
         lifecycleScope.launch {
           // Pages first: a timer in an old page firing after the circuits changed would tie
-          // the new identity to the old one.
+          // the new identity to the old one. Then the identity's name, so the old profile's
+          // workers are refused before the circuits change, and its transfers end with it.
           discardAllWebViews()
+          torProfile.retireIdentity()
+          downloadController.endTorIdentity()
           val rotated = torController.newIdentity()
           clearBrowsingData(
             if (rotated) R.string.tor_new_identity_done else R.string.tor_new_identity_failed,
@@ -2017,6 +2031,61 @@ class BrowserActivity :
     val host = activeHost() ?: return
     settings.setKeptSignedIn(host, enabled)
   }
+
+  override fun onForgetSite() {
+    val tab = viewModel.tabManager.activeTab() ?: return
+    val host = activeHost() ?: return
+    val domain = HostMatcher.registrableDomain(host)
+    AlertDialog.Builder(this)
+      .setTitle(R.string.forget_site)
+      .setMessage(getString(R.string.forget_site_message, IdnDisplay.forDisplay(domain)))
+      .setPositiveButton(R.string.forget_site_confirm) { _, _ -> forgetSite(tab.isPrivate, host) }
+      .setNegativeButton(android.R.string.cancel, null)
+      .showSecure()
+  }
+
+  /**
+   * Brave calls it Shred: one site's data goes, the rest of the session stays. The site's pages
+   * close first so none of them writes back during the wipe; the data goes from the profile the
+   * page was on, since a private or Tor tab's site lives in its own jar.
+   */
+  private fun forgetSite(isPrivate: Boolean, host: String) {
+    val domain = HostMatcher.registrableDomain(host)
+    val storage = when {
+      isPrivate -> privateProfile.webStorage()
+      settings.torMode -> torProfile.webStorage()
+      else -> null
+    } ?: WebStorage.getInstance()
+    val cookies = when {
+      isPrivate -> privateProfile.cookieManager()
+      settings.torMode -> torProfile.cookieManager()
+      else -> null
+    } ?: CookieManager.getInstance()
+    val doomed = viewModel.tabManager.snapshots.value
+      .filter { it.isPrivate == isPrivate && it.url.belongsTo(domain) }
+      .map { it.id }
+      .toSet()
+    doomed.forEach { id ->
+      tabThumbnails.remove(id)
+      mainFrameErrors.remove(id)
+      liveWebViews.remove(id)?.let(::destroyWebView)
+    }
+    viewModel.tabManager.closeWhere { it.id in doomed }
+    lifecycleScope.launch {
+      privacyCleaner.forgetSite(host, storage, cookies) {
+        if (isPrivate) endPrivateSessionIfOver()
+        restoreActiveTab()
+        Toast.makeText(
+          this@BrowserActivity,
+          getString(R.string.site_forgotten, IdnDisplay.forDisplay(domain)),
+          Toast.LENGTH_SHORT,
+        ).show()
+      }
+    }
+  }
+
+  private fun String.belongsTo(domain: String): Boolean =
+    HostMatcher.hostOf(this)?.let { HostMatcher.registrableDomain(it) } == domain
 
   /** The host of the page on screen, never of one that has merely started loading. */
   private fun activeHost(): String? =
@@ -2466,6 +2535,10 @@ class BrowserActivity :
       return
     }
     if (url.startsWith("data:", ignoreCase = true)) {
+      if (url.length > InAppDownloader.MAX_DATA_URL_LENGTH) {
+        toast(R.string.download_failed)
+        return
+      }
       // The address carries no name; only the page knows what its `download="…"` link said.
       source.evaluateJavascript(DATA_NAME_SCRIPT.replace("__URL__", JSONObject.quote(url))) {
         val name = runCatching { JSONObject("{\"n\":$it}").getString("n") }.getOrNull()

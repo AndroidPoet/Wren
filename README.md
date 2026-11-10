@@ -31,7 +31,8 @@
 
 **Privacy**
 - **Clear everything**: one tap closes every tab and deletes history, cookies and cache, with an
-  optional wipe on exit.
+  optional wipe on exit. **Forget this site** in the site panel does the same for one site:
+  cookies, storage, cache, history and icons, and closes its tabs.
 - **Private tabs** on their own WebView profile: no history, cookies or cache written; WebRTC,
   motion sensors, device lists and WebGPU removed; keyboard learning off. On an engine that
   cannot give them a profile they get no network rather than the normal tabs' cookies.
@@ -49,6 +50,9 @@
   off the phone's own network (`localhost`, `192.168.x.x` and the other private ranges), link
   `ping` trackers are removed as the link is tapped, certificate errors are never clicked
   through, and the engine's media-integrity API, which would name the app to a site, is off.
+- International domain names are shown in their own script (`сайт.рф`, `例え.jp`) when the name
+  cannot pass for another: a label that mixes scripts, or is Cyrillic or Greek letters that look
+  Latin under a Latin suffix, stays in punycode.
 
 **Browsing**
 - DuckDuckGo by default; Brave, Startpage, Mojeek, Wikipedia and Google available. `!bangs` work

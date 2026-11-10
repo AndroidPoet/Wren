@@ -14,13 +14,14 @@ const path = require('path');
 const vm = require('vm');
 const source = fs.readFileSync(path.join(__dirname, '..', 'app/src/main/assets/partition.js'), 'utf8');
 
-function realm(origin, ancestors) {
+function realm(origin, ancestors, windowOrigin) {
   const context = vm.createContext({});
   vm.runInContext(`
     window = this;
     Object = Object; Symbol = Symbol; Promise = Promise; Function = Function; Error = Error; WeakMap = WeakMap;
     DOMException = class DOMException extends Error { constructor(m, n) { super(m); this.name = n; } };
     location = { origin: ${JSON.stringify(origin)}, ancestorOrigins: ${JSON.stringify(ancestors)} };
+    ${windowOrigin === undefined ? '' : 'origin = ' + JSON.stringify(windowOrigin) + ';'}
     top = ${ancestors.length ? '{}' : 'this'};
     localStorage = { secret: 1 }; sessionStorage = {}; indexedDB = { open() { return 'req'; } }; caches = { open() {} }; cookieStore = {};
     Navigator = class Navigator { get storage() { return navigator._s; } };
@@ -77,6 +78,30 @@ const rejected = async (ctx, code) => { try { await vm.runInContext(code, ctx); 
   const ukSame = realm('https://img.shop.co.uk', ['https://shop.co.uk']);
   vm.runInContext(source, ukSame);
   check('publicSuffixSameSiteAllowed', vm.runInContext('localStorage.secret', ukSame) === 1);
+
+  // The site is schemeful: an http top with an https frame of the same host is cross-site.
+  const schemes = realm('https://site-a.example', ['http://site-a.example']);
+  vm.runInContext(source, schemes);
+  check('schemeMismatchIsCrossSite', threw(schemes, 'localStorage'));
+  // Every ancestor counts: the site inside another site inside the site is third-party.
+  const chain = realm('https://site-a.example', ['https://site-b.example', 'https://site-a.example']);
+  vm.runInContext(source, chain);
+  check('ownSiteBehindForeignFrameIsCrossSite', threw(chain, 'localStorage'));
+  // Address hosts are whole sites of their own; an IPv6 literal keeps its brackets.
+  const v6 = realm('https://[2001:db8::2]', ['https://[2001:db8::1]']);
+  vm.runInContext(source, v6);
+  check('distinctIpv6HostsAreCrossSite', threw(v6, 'localStorage'));
+  const v6Port = realm('https://[2001:db8::1]:8443', ['https://[2001:db8::1]']);
+  vm.runInContext(source, v6Port);
+  check('ipv6PortDoesNotSplitSite', vm.runInContext('localStorage.secret', v6Port) === 1);
+  // A sandboxed frame runs as an opaque origin whatever its address says: nothing for it.
+  const sandboxed = realm('https://site-a.example', ['https://site-a.example'], 'null');
+  vm.runInContext(source, sandboxed);
+  check('opaqueOriginIsDenied', threw(sandboxed, 'localStorage'));
+  // The origin a frame runs as wins over its address: an about:blank child of the site is the site.
+  const inherited = realm('null', ['https://site-a.example'], 'https://site-a.example');
+  vm.runInContext(source, inherited);
+  check('inheritedOriginIsFirstParty', vm.runInContext('localStorage.secret', inherited) === 1);
 
   // An about:blank child of a third-party frame inherits the denial through the frame accessor.
   const blank = realm('https://tracker.example', ['https://site-a.example']);

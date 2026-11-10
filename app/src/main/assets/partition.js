@@ -28,6 +28,14 @@
   var defineProperty = Object.defineProperty;
   var getOwn = Object.getOwnPropertyDescriptor;
   var nativeToString = Function.prototype.toString;
+  // Natives used at call time, taken before any page script can replace them.
+  var apply = Reflect.apply;
+  var weakGet = WeakMap.prototype.get;
+  var weakSet = WeakMap.prototype.set;
+
+  function each(list, fn) {
+    for (var i = 0; i < list.length; i++) fn(list[i], i);
+  }
 
   function sourcesOf(window) {
     var map = window[SOURCES];
@@ -38,10 +46,10 @@
       var FunctionPrototype = window.Function.prototype;
       var toString = FunctionPrototype.toString;
       var masked = function toString() {
-        var text = map.get(this);
-        return text !== undefined ? text : nativeToString.call(this);
+        var text = apply(weakGet, map, [this]);
+        return text !== undefined ? text : apply(nativeToString, this, []);
       };
-      map.set(masked, nativeToString.call(toString));
+      apply(weakSet, map, [masked, apply(nativeToString, toString, [])]);
       defineProperty(FunctionPrototype, 'toString', { value: masked, writable: true, configurable: true });
     } catch (ignored) {}
     return map;
@@ -50,18 +58,36 @@
   // The registrable domain, by the rule the engine applies to cookies: the last two labels, or
   // three when the second-level label is one of the short public suffixes (co.uk, com.au ...).
   var SHORT_SECOND_LEVEL = /^(co|com|net|org|gov|edu|ac|ltd|plc|me|or|ne|go|gr|sch)$/;
+  // The site is schemeful, as the engine's cookie boundary is: an http page and an https frame
+  // of one host are two sites. An IPv6 host keeps its brackets whole; an address is its own site.
   function siteOf(origin) {
     if (typeof origin !== 'string') return null;
-    var match = /^[a-z][a-z0-9+.-]*:\/\/([^/:?#]+)/i.exec(origin);
+    var match = /^([a-z][a-z0-9+.-]*):\/\/([^/?#]+)/i.exec(origin);
     if (!match) return null;
-    var host = match[1].toLowerCase();
-    if (/^[\d.]+$/.test(host) || host.indexOf(':') >= 0 || host.indexOf('.') < 0) return host;
+    var scheme = match[1].toLowerCase();
+    var authority = match[2];
+    var host;
+    if (authority.charAt(0) === '[') {
+      var close = authority.indexOf(']');
+      if (close < 0) return null;
+      host = authority.slice(0, close + 1).toLowerCase();
+    } else {
+      host = authority.split(':')[0].toLowerCase();
+    }
+    if (!host) return null;
+    if (/^[\d.]+$/.test(host) || host.charAt(0) === '[' || host.indexOf('.') < 0) {
+      return scheme + '://' + host;
+    }
     var labels = host.split('.');
     var keep = labels.length >= 3 && labels[labels.length - 1].length === 2 &&
       SHORT_SECOND_LEVEL.test(labels[labels.length - 2]) ? 3 : 2;
-    return labels.slice(-keep).join('.');
+    return scheme + '://' + labels.slice(-keep).join('.');
   }
 
+  // Third-party when any ancestor is another site, not only the top one: a frame of the site
+  // inside a frame of another site is cross-site to the engine too. The frame's own origin is
+  // the one it runs as, which for an about:blank or srcdoc child is the parent's, and for a
+  // sandboxed or data: frame is opaque, which gets nothing.
   function isThirdParty(window) {
     try {
       if (window.top === window) return false;
@@ -72,10 +98,15 @@
     var ancestors;
     try { ancestors = window.location.ancestorOrigins; } catch (ignored) { return true; }
     if (!ancestors || ancestors.length === 0) return false;
-    var own = siteOf(window.location.origin || window.origin);
-    var top = siteOf(ancestors[ancestors.length - 1]);
-    if (own === null || top === null) return true;
-    return own !== top;
+    var ownOrigin;
+    try { ownOrigin = typeof window.origin === 'string' ? window.origin : window.location.origin; } catch (ignored) { return true; }
+    var own = siteOf(ownOrigin);
+    if (own === null) return true;
+    for (var i = 0; i < ancestors.length; i++) {
+      var ancestor = siteOf(ancestors[i]);
+      if (ancestor === null || ancestor !== own) return true;
+    }
+    return false;
   }
 
   function harden(window) {
@@ -91,9 +122,9 @@
     }
     function hide(fn, original, name) {
       try {
-        sources.set(fn, typeof original === 'function'
-          ? nativeToString.call(original)
-          : 'function ' + (name || '') + '() { [native code] }');
+        apply(weakSet, sources, [fn, typeof original === 'function'
+          ? apply(nativeToString, original, [])
+          : 'function ' + (name || '') + '() { [native code] }']);
       } catch (ignored) {}
     }
     function throwing(owner, name) {
@@ -148,7 +179,7 @@
         rejecting(window.ServiceWorkerContainer.prototype, 'getRegistrations', 'serviceWorker');
       }
     }
-    ['BroadcastChannel', 'SharedWorker'].forEach(function (kind) {
+    each(['BroadcastChannel', 'SharedWorker'], function (kind) {
       var Native = window[kind];
       if (typeof Native !== 'function') return;
       var Wrapped = function () { throw denied(kind); };
@@ -177,17 +208,17 @@
   }
 
   function hardenFrames(window) {
-    ['HTMLIFrameElement', 'HTMLFrameElement', 'HTMLObjectElement'].forEach(function (kind) {
+    each(['HTMLIFrameElement', 'HTMLFrameElement', 'HTMLObjectElement'], function (kind) {
       var element = window[kind];
       var proto = element && element.prototype;
       if (!proto) return;
-      ['contentWindow', 'contentDocument'].forEach(function (name) {
+      each(['contentWindow', 'contentDocument'], function (name) {
         var native = getOwn(proto, name);
         if (!native || !native.get) return;
         var get = native.get;
         try {
           var getter = function () {
-            var value = get.call(this);
+            var value = apply(get, this, []);
             try {
               var child = name === 'contentWindow' ? value : value && value.defaultView;
               if (child) harden(child);
@@ -197,7 +228,7 @@
             return value;
           };
           defineProperty(proto, name, { get: getter, set: native.set, enumerable: native.enumerable, configurable: true });
-          sourcesOf(window).set(getter, nativeToString.call(get));
+          apply(weakSet, sourcesOf(window), [getter, apply(nativeToString, get, [])]);
         } catch (ignored) {}
       });
     });

@@ -72,6 +72,7 @@ class HistoryViewModelTest {
     override suspend fun recordVisit(url: String, title: String) = Unit
     override suspend fun search(query: String, limit: Int): List<HistoryEntry> = emptyList()
     override suspend fun delete(url: String) = Unit
+    override suspend fun deleteMatching(matches: (url: String) -> Boolean) = Unit
     override suspend fun clear() = Unit
   }
 }

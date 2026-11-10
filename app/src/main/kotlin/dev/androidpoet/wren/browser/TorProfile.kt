@@ -10,6 +10,7 @@ import android.content.Context
 import android.os.LocaleList
 import android.webkit.CookieManager
 import android.webkit.ServiceWorkerController
+import android.webkit.WebStorage
 import android.webkit.WebView
 import androidx.webkit.CustomHeader
 import androidx.webkit.Profile
@@ -41,6 +42,9 @@ class TorProfile @Inject constructor(@ApplicationContext private val context: Co
     get() = WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
 
   private var generation = 0
+
+  /** The profile whose identity ended with [retireIdentity] and that [rotate] still owes. */
+  private var retired: String? = null
   private var savedLocales: LocaleList? = null
 
   private val name: String get() = "$PREFIX$generation"
@@ -64,16 +68,29 @@ class TorProfile @Inject constructor(@ApplicationContext private val context: Co
 
   fun cookieManager(): CookieManager? = current { it.cookieManager }
 
+  fun webStorage(): WebStorage? = current { it.webStorage }
+
   fun serviceWorkerController(): ServiceWorkerController? = current { it.serviceWorkerController }
 
   /**
    * Ends the identity: the profile with everything in it is deleted, or emptied where it is
    * still loaded, and the next page gets a new one. Call with no Tor WebView alive.
    */
+  /**
+   * Ends the identity by name only: everything gated on [identityName] - the old profile's
+   * service workers above all - is refused from this moment, before the circuits change.
+   * The profile itself is deleted by the [rotate] that follows.
+   */
+  fun retireIdentity() {
+    if (!isSupported || retired != null) return
+    retired = name
+    generation++
+  }
+
   fun rotate() {
     if (!isSupported) return
-    val old = name
-    generation++
+    val old = retired ?: name.also { generation++ }
+    retired = null
     val deleted = runCatching { ProfileStore.getInstance().deleteProfile(old) }
     if (deleted.isSuccess) {
       if (deleted.getOrThrow()) Timber.i("tor profile deleted")

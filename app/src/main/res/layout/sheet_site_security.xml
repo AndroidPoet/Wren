@@ -169,6 +169,14 @@
       android:textColor="@color/russet_strong" />
 
     <com.google.android.material.button.MaterialButton
+      android:id="@+id/securityForgetAction"
+      style="@style/Widget.MaterialComponents.Button.TextButton"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:text="@string/forget_site"
+      android:textColor="@color/russet_strong" />
+
+    <com.google.android.material.button.MaterialButton
       android:id="@+id/securityReportAction"
       style="@style/Widget.MaterialComponents.Button.TextButton"
       android:layout_width="match_parent"

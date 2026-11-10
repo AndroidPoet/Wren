@@ -80,9 +80,19 @@ class HistoryRepositoryImpl @Inject constructor(
 
   override suspend fun delete(url: String) = withContext(ioDispatcher) { historyDao.delete(url) }
 
+  override suspend fun deleteMatching(matches: (url: String) -> Boolean) = withContext(
+    ioDispatcher,
+  ) {
+    historyDao.getAll().map { it.url }.filter(matches).chunked(DELETE_BATCH).forEach { urls ->
+      historyDao.deleteAll(urls)
+    }
+  }
+
   override suspend fun clear() = withContext(ioDispatcher) { historyDao.clear() }
 
   private companion object {
+    /** Under SQLite's bound-variable limit. */
+    const val DELETE_BATCH = 500
     const val BLANK_PAGE = "about:blank"
 
     /** How many rows to read per row shown, so folding by host still fills the dial. */

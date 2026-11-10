@@ -346,10 +346,15 @@ class RequestContext(rawUrl: String) {
 
   /** The host in lowercase, without credentials, port or trailing dot; empty without a scheme. */
   val host: String
-  val tokens = IntArray(MAX_TOKENS)
+
+  /**
+   * Every token of the address, not the first few hundred: a tracker that could push the
+   * telling part of its path past a fixed count would never meet the rule written for it.
+   */
+  val tokens: IntArray
 
   /** Where each of [tokens] begins in [url]. */
-  val tokenStarts = IntArray(MAX_TOKENS)
+  val tokenStarts: IntArray
   val tokenCount: Int
 
   init {
@@ -396,13 +401,15 @@ class RequestContext(rawUrl: String) {
     hostStart = start
     hostEnd = end
     host = if (scheme < 0 || trimmed <= start) "" else text.substring(start, trimmed)
+    val count = Tokeniser.count(url)
+    tokens = IntArray(count)
+    tokenStarts = IntArray(count)
     tokenCount = Tokeniser.tokenise(url, tokens, tokenStarts)
   }
 
   private companion object {
-    // Generous: a rule for the path or query must still see them behind a long prefix.
-    const val MAX_URL_LENGTH = 32768
-    const val MAX_TOKENS = 512
+    // Far past any address a page has a reason to build; what lies beyond is not inspected.
+    const val MAX_URL_LENGTH = 256 * 1024
 
     fun needsLowercase(text: String): Boolean {
       for (c in text) if (c in 'A'..'Z' || c.code > 127) return true
@@ -415,6 +422,21 @@ class RequestContext(rawUrl: String) {
 internal object Tokeniser {
 
   fun isTokenChar(c: Char): Boolean = c in 'a'..'z' || c in '0'..'9'
+
+  /** How many tokens [tokenise] would write for [text]. */
+  fun count(text: String): Int {
+    var count = 0
+    var inToken = false
+    for (c in text) {
+      if (isTokenChar(c)) {
+        inToken = true
+      } else if (inToken) {
+        count++
+        inToken = false
+      }
+    }
+    return if (inToken) count + 1 else count
+  }
 
   /** Writes each token's hash into [out] and its start into [starts]; returns how many fit. */
   fun tokenise(text: String, out: IntArray, starts: IntArray): Int {

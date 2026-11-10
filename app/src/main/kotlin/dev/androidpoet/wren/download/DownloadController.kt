@@ -260,6 +260,19 @@ class DownloadController @Inject constructor(
    * Tor is coming on: a system download started over the open network would keep transferring
    * from the real address while every page says Tor. It is stopped, like the pages are.
    */
+  /**
+   * Called as the route flips: every transfer that began on the other route ends, paused ones
+   * included. A direct one must not resume through Tor with the clear-net cookies it was
+   * started with, and a Tor one must not resume direct with the Tor jar's.
+   */
+  fun dropOffRoute(torMode: Boolean) {
+    inApp.dropWhere { it.viaTor != torMode }
+    if (torMode) stopDirectDownloads()
+  }
+
+  /** A new identity ends every Tor transfer: its address and range belong to the old one. */
+  fun endTorIdentity() = inApp.dropWhere { it.viaTor }
+
   fun stopDirectDownloads() {
     val manager = downloadManager ?: return
     scope.launch {

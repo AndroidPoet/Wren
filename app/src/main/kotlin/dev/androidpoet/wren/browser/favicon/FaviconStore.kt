@@ -111,6 +111,18 @@ class FaviconStore @Inject constructor(
     }.onFailure { Timber.w(it, "could not cache an icon for %s", host) }
   }
 
+  /** Forgets the icons of [host] and of every host under it. */
+  fun forget(host: String) {
+    synchronized(misses) { misses.removeAll { it == host || it.endsWith(".$host") } }
+    memory.snapshot().keys.filter { it == host || it.endsWith(".$host") }.forEach(memory::remove)
+    runCatching {
+      directory.listFiles()?.filter { file ->
+        val name = file.name.removeSuffix(".png")
+        name == host || name.endsWith(".$host")
+      }?.forEach { it.delete() }
+    }.onFailure { Timber.w(it, "could not forget the icons of %s", host) }
+  }
+
   /** Forgets every icon: the files are named after visited hosts. */
   fun clear() {
     synchronized(misses) { misses.clear() }
@@ -143,7 +155,30 @@ class FaviconStore @Inject constructor(
     return client.newCall(request).execute().use { response ->
       if (response.code != HTTP_OK) return null
       if (response.body.contentLength() > MAX_BYTES) return null
-      response.body.byteStream().use(BitmapFactory::decodeStream)
+      // Read to a bound regardless of what the headers promised, and look at the image's size
+      // before allocating its pixels: a small file can describe a very large picture.
+      val bytes = response.body.byteStream().use { readUpTo(it, MAX_BYTES + 1) } ?: return null
+      val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+      BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+      val side = maxOf(bounds.outWidth, bounds.outHeight)
+      if (bounds.outWidth <= 0 || bounds.outHeight <= 0 || side > MAX_SIDE) return null
+      val options = BitmapFactory.Options().apply {
+        inSampleSize = 1
+        while (side / inSampleSize > MAX_PIXELS * 2) inSampleSize *= 2
+      }
+      BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+    }
+  }
+
+  /** The stream's bytes, or null when there are more than [limit]. */
+  private fun readUpTo(stream: java.io.InputStream, limit: Int): ByteArray? {
+    val out = java.io.ByteArrayOutputStream()
+    val buffer = ByteArray(8 * 1024)
+    while (true) {
+      val read = stream.read(buffer)
+      if (read < 0) return out.toByteArray()
+      if (out.size() + read > limit) return null
+      out.write(buffer, 0, read)
     }
   }
 
@@ -164,6 +199,9 @@ class FaviconStore @Inject constructor(
     const val MEMORY_ENTRIES = 64
     const val MAX_PIXELS = 128
     const val MAX_BYTES = 512 * 1024
+
+    /** An icon wider or taller than this is not an icon. */
+    const val MAX_SIDE = 2048
     const val TIMEOUT_MS = 4000
     const val HTTP_OK = 200
 

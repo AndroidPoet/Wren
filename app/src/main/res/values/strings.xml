@@ -323,6 +323,10 @@
   <!-- Site panel: who was blocked, and sites that keep their login through a clear -->
   <string name="keep_signed_in">Stay signed in here</string>
   <string name="keep_signed_in_summary">Cookies for this site survive Clear browsing data, so you stay signed in. Not while Tor is on.</string>
+  <string name="forget_site">Forget this site</string>
+  <string name="forget_site_message">Signs you out of %1$s and removes its cookies, storage, cache, history and icons. Its tabs close. Your settings for the site stay.</string>
+  <string name="forget_site_confirm">Forget</string>
+  <string name="site_forgotten">%1$s forgotten</string>
   <string name="tracker_owner_other">Other</string>
   <string name="tracker_more_hosts">+%d more</string>
   <plurals name="tracker_host_count">

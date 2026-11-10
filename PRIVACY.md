@@ -15,7 +15,9 @@ them cannot use WebRTC, the motion sensors or list your cameras and microphones,
 keyboard is asked not to learn from what you type in them or in the address bar.
 
 **Clear everything** in the menu closes every tab and deletes your history, cookies and cache.
-**Clear on exit** in Settings wipes cookies and cache whenever you close Wren. Bookmarks and
+**Forget this site** in the site panel does that for one site only: it signs you out of it and
+removes its cookies, storage, cache, history and icons, and closes its tabs; your settings for
+the site stay. **Clear on exit** in Settings wipes cookies and cache whenever you close Wren. Bookmarks and
 settings stay until you delete them yourself. Uninstalling Wren deletes all of it.
 
 ## What leaves your phone
