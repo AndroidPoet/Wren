@@ -267,10 +267,13 @@ class SpeculativeLoader internal constructor(
     if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROFILE_URL_PREFETCH)) return
     urls.take(STARTUP_PREFETCHES).forEach { url ->
       if (!url.startsWith("https://", ignoreCase = true)) return@forEach
+      // Kept, so that a clear or a change of route can stop a slow one; a dropped signal
+      // cancels nothing.
+      val signal = CancellationSignal().also(startupSignals::add)
       runCatching {
         profile.prefetchUrlAsync(
           url,
-          CancellationSignal(),
+          signal,
           executor,
           object : OutcomeReceiverCompat<Void, PrefetchException> {
             override fun onResult(result: Void?) {
@@ -284,7 +287,11 @@ class SpeculativeLoader internal constructor(
     }
   }
 
+  private val startupSignals = mutableListOf<CancellationSignal>()
+
   fun cancel() {
+    startupSignals.forEach { it.cancel() }
+    startupSignals.clear()
     currentSignal?.cancel()
     currentSignal = null
     prerenderSignal?.cancel()

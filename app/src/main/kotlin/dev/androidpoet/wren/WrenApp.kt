@@ -55,6 +55,8 @@ class WrenApp : Application() {
 
   override fun onCreate() {
     super.onCreate()
+    // The autocomplete client lives in a module without settings; its route guard asks here.
+    dev.androidpoet.wren.core.network.TorRoute.isTorMode = { settings.torMode }
     // Applied before the first activity inflates, so there is no flash of the wrong theme.
     AppCompatDelegate.setDefaultNightMode(settings.themeMode)
     if (BuildConfig.DEBUG && Timber.forest().isEmpty()) Timber.plant(Timber.DebugTree())

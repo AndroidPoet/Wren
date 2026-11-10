@@ -231,6 +231,11 @@ class SettingsActivity : AppCompatActivity() {
       write = { settings.sendDoNotTrack = it },
     )
     bindSwitch(
+      view = binding.safeBrowsingSwitch,
+      read = { settings.safeBrowsing },
+      write = { settings.safeBrowsing = it },
+    )
+    bindSwitch(
       view = binding.recordHistorySwitch,
       read = { settings.recordHistory },
       write = { settings.recordHistory = it },

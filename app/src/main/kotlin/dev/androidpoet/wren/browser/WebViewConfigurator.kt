@@ -15,6 +15,7 @@ import android.webkit.WebView
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import androidx.webkit.WebViewMediaIntegrityApiStatusConfig
 import dev.androidpoet.wren.BuildConfig
 import dev.androidpoet.wren.browser.privacy.PrivacyHeaders
 import dev.androidpoet.wren.settings.SettingsStore
@@ -95,15 +96,11 @@ class WebViewConfigurator @Inject constructor(
       allowFileAccessFromFileURLs = false
       allowUniversalAccessFromFileURLs = false
 
-      // Chrome's policy: insecure images, audio and video on an https page are upgraded to
-      // https or dropped, and insecure scripts and frames are always blocked. Blocking every
-      // mixed resource outright breaks the images on a long tail of older sites, so that is
-      // reserved for HTTPS-only mode, where the user has asked for exactly that.
-      mixedContentMode = if (settings.httpsOnly) {
-        WebSettings.MIXED_CONTENT_NEVER_ALLOW
-      } else {
-        WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-      }
+      // An encrypted page loads nothing over plain http. The engine's compatibility mode lets
+      // images, audio and video through unencrypted, where anyone on the network can read and
+      // replace them; Chrome upgrades those to https or drops them, and the engine offers no
+      // upgrade, so the page gets what Chrome gives it when the upgrade fails: a gap.
+      mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
 
       userAgentString = userAgentFor(webView, desktop = desktopWanted(webView))
     }
@@ -131,7 +128,6 @@ class WebViewConfigurator @Inject constructor(
   private fun applyRenderingHints(webView: WebView) {
     // Rasterise a little beyond the viewport so fast flings do not expose blank bands. This is
     // the single biggest scroll-quality win available to a WebView, at the cost of some memory.
-    stripIdentifyingHeaders(webView)
 
     // The browser fetches favicons itself for the home tiles, so WebView downloading them
     // again per navigation is a wasted request on every page.
@@ -165,9 +161,35 @@ class WebViewConfigurator @Inject constructor(
     }
 
     // Safe Browsing checks go to Google through the system, not through the page's proxy, so
-    // they would name every site visited while Tor is on.
+    // they would name every site visited while Tor is on. Outside Tor it is the user's call.
     if (WebViewFeature.isFeatureSupported(WebViewFeature.SAFE_BROWSING_ENABLE)) {
-      WebSettingsCompat.setSafeBrowsingEnabled(webView.settings, !settings.torMode)
+      WebSettingsCompat.setSafeBrowsingEnabled(
+        webView.settings,
+        settings.safeBrowsing && !settings.torMode,
+      )
+    }
+
+    // The media-integrity API lets a site ask Play for a token about the app it runs in, and by
+    // default that token names this app; nothing a page may know. Off, as in Cromite.
+    if (WebViewFeature.isFeatureSupported(WebViewFeature.WEBVIEW_MEDIA_INTEGRITY_API_STATUS)) {
+      runCatching {
+        WebSettingsCompat.setWebViewMediaIntegrityApiStatus(
+          webView.settings,
+          WebViewMediaIntegrityApiStatusConfig.Builder(
+            WebViewMediaIntegrityApiStatusConfig.WEBVIEW_MEDIA_INTEGRITY_API_DISABLED,
+          ).build(),
+        )
+      }
+    }
+
+    // On a managed device a sign-in redirect may be handed to an app the administrator named,
+    // without the gesture and the Tor prompt every other hand-off gets. A browser's navigations
+    // stay in the browser.
+    val appLinkPolicy = WebViewFeature.ENTERPRISE_AUTHENTICATION_APP_LINK_POLICY
+    if (WebViewFeature.isFeatureSupported(appLinkPolicy)) {
+      runCatching {
+        WebSettingsCompat.setEnterpriseAuthenticationAppLinkPolicyEnabled(webView.settings, false)
+      }
     }
 
     // Passkeys and security keys. Browser mode hands the page's own origin to Credential Manager,
@@ -253,21 +275,6 @@ class WebViewConfigurator @Inject constructor(
   }
 
   /**
-   * Asks WebView not to send the app's package name (`X-Requested-With`) to any server. The
-   * engine only honours an empty allow-list once its deprecation of the header has rolled
-   * out; on every WebView measured so far (up to 141) the header still goes to every site,
-   * and nothing an app can call changes that. The call stays so the day the engine flips,
-   * Wren is already quiet. The limit is documented in the README.
-   */
-  private fun stripIdentifyingHeaders(webView: WebView) {
-    if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
-      runCatching {
-        WebSettingsCompat.setRequestedWithHeaderOriginAllowList(webView.settings, emptySet())
-      }
-    }
-  }
-
-  /**
    * Applies the settings that vary by site. JavaScript takes effect for the page about to run;
    * the user agent takes effect from the next request, which is why the sheet reloads after
    * toggling.
@@ -328,7 +335,9 @@ class WebViewConfigurator @Inject constructor(
     // the document on the ones without.
     if (settings.torMode) put(TorProfile.ACCEPT_LANGUAGE, TorProfile.ENGLISH)
     // Extra headers win over the engine's own, so the document request at least carries no
-    // package name; subresources still do (see [stripIdentifyingHeaders]).
+    // package name. Subresources still do: the allow-list API that was to remove it is now
+    // documented as doing nothing, the origin trial behind it having ended, so there is no
+    // call to make. The limit is stated in the README.
     put("X-Requested-With", "")
   }
 

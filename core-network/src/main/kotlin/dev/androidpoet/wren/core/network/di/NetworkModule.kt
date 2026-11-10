@@ -11,6 +11,8 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dev.androidpoet.wren.core.network.DeferredProxySelector
+import dev.androidpoet.wren.core.network.TorRoute
+import dev.androidpoet.wren.core.network.TorRouteGuard
 import dev.androidpoet.wren.core.network.interceptor.HttpRequestInterceptor
 import dev.androidpoet.wren.core.network.service.SuggestClient
 import dev.androidpoet.wren.core.network.service.SuggestService
@@ -34,6 +36,9 @@ internal object NetworkModule {
       .readTimeout(SUGGEST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
       .cookieJar(okhttp3.CookieJar.NO_COOKIES)
       .proxySelector(DeferredProxySelector)
+      // The suggestion is asked for only once Tor is up, but Tor can go up or down between
+      // the check and the connect; the guard reads the route as it is used.
+      .eventListener(TorRouteGuard { TorRoute.isTorMode() })
       .build()
       .also(DeferredProxySelector::track)
   }

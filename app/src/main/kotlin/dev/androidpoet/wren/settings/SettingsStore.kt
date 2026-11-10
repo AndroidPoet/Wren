@@ -75,6 +75,11 @@ class SettingsStore @Inject constructor(
     get() = preferences.getBoolean(KEY_DO_NOT_TRACK, true)
     set(value) = preferences.edit { putBoolean(KEY_DO_NOT_TRACK, value) }
 
+  /** Google's dangerous-site check through the system; always off under Tor regardless. */
+  var safeBrowsing: Boolean
+    get() = preferences.getBoolean(KEY_SAFE_BROWSING, true)
+    set(value) = preferences.edit { putBoolean(KEY_SAFE_BROWSING, value) }
+
   /** Wipes cookies and cache when the browser is left; bookmarks and history stay. */
   var clearOnExit: Boolean
     get() = preferences.getBoolean(KEY_CLEAR_ON_EXIT, false)
@@ -395,6 +400,7 @@ class SettingsStore @Inject constructor(
     private const val KEY_JAVASCRIPT = "javascript_enabled"
     private const val KEY_BLOCK_THIRD_PARTY_COOKIES = "block_third_party_cookies"
     private const val KEY_DO_NOT_TRACK = "do_not_track"
+    private const val KEY_SAFE_BROWSING = "safe_browsing"
     private const val KEY_CLEAR_ON_EXIT = "clear_on_exit"
     private const val KEY_RECORD_HISTORY = "record_history"
     private const val KEY_PRELOAD_PAGES = "preload_pages"

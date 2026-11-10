@@ -501,6 +501,22 @@
         android:textAppearance="@style/TextAppearance.Wren.Caption" />
 
       <com.google.android.material.switchmaterial.SwitchMaterial
+        android:id="@+id/safeBrowsingSwitch"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="48dp"
+        android:text="@string/safe_browsing"
+        android:textColor="@color/ink"
+        android:textSize="15sp" />
+
+      <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingBottom="10dp"
+        android:text="@string/safe_browsing_summary"
+        android:textAppearance="@style/TextAppearance.Wren.Caption" />
+
+      <com.google.android.material.switchmaterial.SwitchMaterial
         android:id="@+id/recordHistorySwitch"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

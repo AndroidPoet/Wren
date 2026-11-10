@@ -54,6 +54,7 @@ class TorProfile @Inject constructor(@ApplicationContext private val context: Co
     return runCatching {
       val profile = ProfileStore.getInstance().getOrCreateProfile(name)
       speakEnglish(profile)
+      ProfileCache.minimise(profile)
       WebViewCompat.setProfile(webView, name)
     }.onFailure { Timber.w(it, "tor profile unavailable") }.isSuccess
   }

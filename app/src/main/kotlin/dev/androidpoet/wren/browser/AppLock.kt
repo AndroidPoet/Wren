@@ -139,7 +139,12 @@ class AppLock internal constructor(
  * up and before the system captures the recents preview, leave the app when the prompt fails.
  * Attach once, from onCreate.
  */
-fun FragmentActivity.applyAppLock(appLock: AppLock, content: View) {
+fun FragmentActivity.applyAppLock(
+  appLock: AppLock,
+  content: View,
+  /** Runs each time the content is shown unlocked, for work that waited behind the lock. */
+  onUnlocked: () -> Unit = {},
+) {
   lifecycle.addObserver(
     object : DefaultLifecycleObserver {
       override fun onStart(owner: LifecycleOwner) {
@@ -148,7 +153,10 @@ fun FragmentActivity.applyAppLock(appLock: AppLock, content: View) {
           activity = this@applyAppLock,
           title = getString(dev.androidpoet.wren.R.string.unlock_title),
           onLocked = { content.visibility = View.INVISIBLE },
-          onUnlocked = { content.visibility = View.VISIBLE },
+          onUnlocked = {
+            content.visibility = View.VISIBLE
+            onUnlocked()
+          },
           onFailed = { finishAffinity() },
           onDisarmed = {
             Toast.makeText(
@@ -172,6 +180,8 @@ fun FragmentActivity.applyAppLock(appLock: AppLock, content: View) {
           supportFragmentManager.fragments
             .filterIsInstance<androidx.fragment.app.DialogFragment>()
             .forEach { it.dismissAllowingStateLoss() }
+          // A page's alert, prompt or sign-in dialog is a window too, and quotes the page.
+          dev.androidpoet.wren.ui.cancelSecureDialogs(this@applyAppLock)
         }
       }
     },

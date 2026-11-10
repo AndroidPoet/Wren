@@ -74,6 +74,15 @@
       } catch (ignored) {}
     });
 
+    // WebGPU names the graphics adapter and its limits: a hardware fingerprint on its own, and
+    // one Tor Browser ships switched off. Private tabs match it; tor.js does the same for Tor.
+    var Navigator = window.Navigator;
+    if (Navigator && Navigator.prototype && 'gpu' in Navigator.prototype) {
+      try {
+        defineProperty(Navigator.prototype, 'gpu', { get: function () { return undefined; }, configurable: true });
+      } catch (ignored) {}
+    }
+
     var MediaDevices = window.MediaDevices;
     if (MediaDevices && MediaDevices.prototype.enumerateDevices) {
       try {

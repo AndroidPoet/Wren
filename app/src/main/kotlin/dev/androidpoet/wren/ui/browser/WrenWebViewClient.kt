@@ -7,9 +7,11 @@
 package dev.androidpoet.wren.ui.browser
 
 import android.graphics.Bitmap
+import android.net.http.SslError
 import android.os.Build
 import android.webkit.HttpAuthHandler
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.SslErrorHandler
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -17,6 +19,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.annotation.RequiresApi
 import dev.androidpoet.wren.browser.UrlFormatter
+import dev.androidpoet.wren.browser.blocking.HostMatcher
 
 /**
  * Navigation policy. Anything that is not an ordinary web page — `mailto:`, `tel:`, `intent:` —
@@ -35,6 +38,8 @@ class WrenWebViewClient(
   private val onHttpAuth: (handler: HttpAuthHandler, host: String, realm: String) -> Unit =
     { handler, _, _ -> handler.cancel() },
   private val onFirstPaint: (url: String) -> Unit = {},
+  /** A certificate the engine would not accept, by host and [SslError] primary code. */
+  private val onSslError: (host: String, primaryError: Int) -> Unit = { _, _ -> },
   /** Returns true once the dead [WebView] has been dealt with; false lets the app die with it. */
   private val onRendererGone: (view: WebView, didCrash: Boolean) -> Boolean = { _, _ -> false },
 ) : WebViewClient() {
@@ -64,6 +69,26 @@ class WrenWebViewClient(
     realm: String,
   ) {
     onHttpAuth(handler, host, realm)
+  }
+
+  /**
+   * A certificate the engine could not verify. The load is cancelled, as the default does, and
+   * never offered through; the reason is kept, because the error that follows says only that
+   * the handshake failed, and an expired certificate and a wrong name deserve different words.
+   */
+  override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
+    handler.cancel()
+    HostMatcher.hostOf(error.url.orEmpty())?.let { onSslError(it, reasonOf(error)) }
+  }
+
+  // The primary error is the highest-numbered one, which puts a plain expiry behind the vaguer
+  // "date invalid" it also sets; the order here is the one that gives the most useful sentence.
+  private fun reasonOf(error: SslError): Int = when {
+    error.hasError(SslError.SSL_IDMISMATCH) -> SslError.SSL_IDMISMATCH
+    error.hasError(SslError.SSL_UNTRUSTED) -> SslError.SSL_UNTRUSTED
+    error.hasError(SslError.SSL_EXPIRED) -> SslError.SSL_EXPIRED
+    error.hasError(SslError.SSL_NOTYETVALID) -> SslError.SSL_NOTYETVALID
+    else -> error.primaryError
   }
 
   override fun onReceivedError(

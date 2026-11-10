@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-package dev.androidpoet.wren.network
+package dev.androidpoet.wren.core.network
 
 import okhttp3.Call
 import okhttp3.Connection

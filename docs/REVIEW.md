@@ -1,7 +1,8 @@
 # Wren privacy review against Tor Browser's design requirements
 
-Date: 2026-11-09, reviewed at Wren 1.0.6 (commit 73838cc) and updated for the 1.0.7, 1.0.8 and
-1.0.9 fixes marked **(1.0.7)** / **(1.0.8)** / **(1.0.9)**. Blaze 1.1.8 to 1.1.11 carry the same engine.
+Date: 2026-11-09, reviewed at Wren 1.0.6 (commit 73838cc) and updated for the 1.0.7, 1.0.8,
+1.0.9 and 1.0.13 fixes marked **(1.0.7)** / **(1.0.8)** / **(1.0.9)** / **(1.0.13)**; section 9 is
+the 1.0.13 round. Blaze 1.1.8 to 1.1.15 carry the same engine.
 
 The yardstick is *The Design and Implementation of the Tor Browser* (torproject.org, design
 document), the only published requirement list for a browser with a Tor mode. Each requirement
@@ -40,7 +41,7 @@ app on Android's system WebView).
 | No history written | Met | `BrowserActivity` history gate | |
 | No session restore under Tor | Met | `restoreSessionIfEmpty` | |
 | Form data and autofill off | Met | `saveFormData=false`, `importantForAutofill` | |
-| Memory-only cache | Partial | `cacheMode=LOAD_DEFAULT` | The Tor profile's cache is written to disk and deleted with the profile. Tor Browser keeps it in memory. A device seized mid-session shows cached pages |
+| Memory-only cache | Partial **(1.0.13)** | `ProfileCache.minimise` | The Tor and private profiles' HTTP cache quota is set to 0, which the engine (`HttpCache.setQuotaBytes`, WebView 151+) takes as the smallest cache it will run with; it still touches disk and is deleted with the profile. Tor Browser keeps it in memory |
 | Keyboard does not learn from Tor and private typing | Met **(1.0.7)** | `WrenWebView`, `activity_browser.xml` | `IME_FLAG_NO_PERSONALIZED_LEARNING` on the omnibox and find field always, and on every Tor and private WebView |
 | Screenshots and recents blocked | Met | `FLAG_SECURE`, `inheritSecureFlag`, `showSecure`, `AppLock.shieldRecents` | Every sheet since 1.0.6; every AlertDialog of the browser window since 1.0.8; the page's own alert/confirm/prompt/beforeunload dialogs and the settings, library and downloads windows while Tor is on since 1.0.9 |
 | Downloads kept inside the app | Partial | `DownloadsFolder` | Files go to the public Downloads folder by design; the record carries `viaTor` |
@@ -123,8 +124,45 @@ shipped in 1.0.7. What remains:
 2. ~~Verify Snowflake and meek~~ Done 2026-11-10: both bootstrap and route a page through Tor; the earlier failure was the emulator's resolver, cured by `-dns-server 8.8.8.8,1.1.1.1`.
 3. **Fonts.** A `@font-face` default stylesheet under Tor naming a few fonts would narrow what a page can measure; it cannot replace the system font stack. Tor Browser for Android does not bundle fonts either (checked 2026-11-10), so this is parity, not a gap behind it.
 4. ~~Keyboard layout~~ Done in 1.0.9.
-5. **Memory-only cache under Tor** and **CSS `device-width`** remain engine-level gaps.
+5. **Memory-only cache under Tor** (reduced to the engine's smallest quota in 1.0.13, not memory-only) and **CSS `device-width`** remain engine-level gaps.
 
 Things that cannot be fixed from an app and are stated in README and PRIVACY: DNS prefetch
 through the phone's resolver, no first-party circuit isolation, no JIT switch,
-`X-Requested-With` on subresources (Chromium main still tests, in `AwNetworkConfigurationTest`, that the header is the package name on main-frame and iframe loads by default; the empty allow-list only counts once that default flips), and the engine's version being the system's.
+`X-Requested-With` on subresources (Chromium main still tests, in `AwNetworkConfigurationTest`, that the header is the package name on main-frame and iframe loads by default; androidx.webkit now documents the allow-list API as deprecated and ineffective, the origin trial to remove the header having ended, so 1.0.13 dropped the call), and the engine's version being the system's.
+
+## 9. Round 9 (1.0.13): audit against Brave, DuckDuckGo, Vanadium, Cromite, IronFox
+
+Two passes on 2026-11-10: a Codex source audit of commit 56db2a7, and a feature comparison with
+Brave, DuckDuckGo Private Browser, Vanadium, Cromite, IronFox, Firefox Focus and Tor Browser for
+Android, each claim checked against the androidx.webkit 1.18 API before it was acted on.
+
+| Item | Status | Where | Notes |
+| --- | --- | --- | --- |
+| First-party fetches refused everywhere | Fixed | `FilterRule.parse` | uBlock filters carries `*$script,1p,domain=~kat.ai…kat.*…kickass.*`; the parser dropped the `kat.*` entries it cannot express and kept the exclusions, so since the 1.0.4 list snapshot every same-site request without an extension and with `Accept: */*` (fetch, XMLHttpRequest, sendBeacon, pings) was answered 403 on every site. A rule that names sites is now dropped when none of the names survive. Found when the ping test below never reached the server |
+| Private tab without a profile | Fixed | `BrowserActivity.createWebView` | On an engine without `MULTI_PROFILE` a private tab ran on the shared cookie jar: signed in where the user expected to be a stranger. It now gets no network, as a Tor tab without its profile does |
+| HTTPS-only and downloads | Fixed | `DownloadController.enqueue` | A long-pressed `http://` download, and a download listener's URL, left in cleartext under HTTPS-only and Tor; the in-app downloader refused only http redirects. The first request is upgraded too |
+| Mixed content | Fixed | `WebViewConfigurator` | `MIXED_CONTENT_COMPATIBILITY_MODE` let images, audio and video load over plain http on an https page. `NEVER_ALLOW` always; Chrome upgrades those or drops them, and the engine offers no upgrade |
+| Cosmetic channel answered for any host | Fixed | `CosmeticFilter.respond` | A page could ask for another host's rules and learn which lists are on and which sites are allowlisted. The frame's own origin, as the engine reports it, is used; an opaque origin gets no answer |
+| Blob chunk bound | Fixed | `BlobDownloader.onChunk` | The 512 MiB total was checked after a chunk was decoded and written; bounded per message and on the total before either |
+| Media Integrity API | Fixed | `WebViewConfigurator` | The default lets a site obtain a Play token that names the app. Disabled, as in Cromite |
+| Enterprise authentication app links | Fixed | `WebViewConfigurator` | A managed device's policy could hand a sign-in redirect to an app without the gesture and the Tor prompt every other hand-off gets. Off |
+| Local network from internet pages | Added | `LocalNetwork` | Subresource requests from an internet page to loopback, 0.0.0.0/8, RFC 1918, 100.64/10, link-local, fc00::/7, `localhost` and `.local` are refused (Chrome 142 prompts; Brave refuses localhost). A name that resolves to a private address is not seen, as in Brave. Verified on the emulator: from https://example.com the previous build opened four TLS connections to a listener on the host's address, 1.0.13 none; the engine itself already refuses them from plain-http pages |
+| Hyperlink auditing | Added | `assets/ping.js` | `ping` attributes removed in the capture phase of click and auxclick, in every frame; tied to "Remove tracking from links". Firefox and Tor Browser never send pings; Chromium has no switch. Verified on the emulator: a real click on a `ping` link sends two POSTs with the setting off and none with it on |
+| Certificate errors | Improved | `WrenWebViewClient.onReceivedSslError` | Still cancelled, never offered through; the error page now says expired, wrong name, untrusted issuer or invalid date instead of one sentence. The engine reports an expired or not-yet-valid certificate as a date error, so that is the text those get; verified on the emulator with expired, wrong-host and self-signed test hosts |
+| Safe Browsing | Switch | Settings | Off in Tor mode as before; a user choice outside it, as Brave, DuckDuckGo and Cromite give |
+| Tor and private cache | Partial | `ProfileCache` | HTTP cache quota 0 on both profiles where `HTTP_CACHE_MANAGER` exists (WebView 151+): the engine's smallest cache, not a memory-only one |
+| New identity ordering | Improved | `BrowserActivity` | Pages are destroyed before storage is cleared (a live page's timer could write back during the wipe); a Tor profile's service worker is gated on the identity it belongs to, so the old identity's worker is blocked the moment the identity changes, before the profile deletion completes |
+| Startup prefetch | Fixed | `SpeculativeLoader` | The startup prefetches' cancellation signals were dropped, so `cancel()` could not reach them; kept, and cancelled when Tor is switched on |
+| Autocomplete client | Fixed | `core-network/NetworkModule` | Gained the route guard the other client had; a Tor toggle between the readiness check and the connect is refused rather than sent direct |
+| App lock | Improved | `AppLock`, `SecureWindows` | An address another app sends while locked waits for the unlock instead of loading behind it; page dialogs are cancelled when the lock comes down |
+| WebGPU in private tabs | Added | `assets/private.js` | `navigator.gpu` removed, as under Tor |
+| External app hand-off | Fixed | `BrowserActivity.launchExternal` | A target that demands a permission threw `SecurityException`, which would have crashed the app; treated as no app |
+| `X-Requested-With` | Documented | README, PRIVACY | The allow-list API is deprecated and ineffective; the dead call is gone and the docs say the header is permanent on subresources |
+
+Recorded and not changed:
+
+- `partition.js` decides same-site by the last two labels (three for short second-level suffixes), not by the Public Suffix List, so two tenants of `github.io` or `blogspot.com` are one site to it. The native side has the list (`PublicSuffixes`); a document-start script cannot afford it in every frame. The engine's own cookie blocking, not the script, is the boundary that matters for that case.
+- Reader mode simplifies the page in place; the page's scripts, timers and handlers stay alive behind it. An inert reader needs a second, script-free WebView.
+- The filter engine classifies a request by its extension before its headers, never infers `ping`, skips main documents, applies host lists to third parties only, and drops regex rules and unsupported modifiers; `shouldInterceptRequest` also sees only the first URL of a redirect chain. These are the engine's and the design's limits.
+- A child frame reached through `frames[0]` rather than `contentWindow` may show its natives before the engine injects the shims; modelled in a harness, not reproduced in a WebView.
+- Left against the compared browsers: Onion-Location, a Safer level between Standard and Safest, per-site forget-on-close (Brave's Shred), CNAME-cloaking classification (DuckDuckGo), and IDN display beyond punycode.

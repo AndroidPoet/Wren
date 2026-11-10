@@ -7,7 +7,7 @@
 package dev.androidpoet.wren
 
 import com.google.common.truth.Truth.assertThat
-import dev.androidpoet.wren.network.TorRouteGuard
+import dev.androidpoet.wren.core.network.TorRouteGuard
 import org.junit.Test
 import java.net.InetAddress
 import java.net.InetSocketAddress

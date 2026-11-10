@@ -118,7 +118,7 @@
   <string name="burn_action">Clear</string>
   <string name="https_upgrade">Upgrade to HTTPS</string>
   <string name="https_only">HTTPS-only mode</string>
-  <string name="https_only_summary">Refuses unencrypted pages and mixed content outright instead of falling back. Sites you excuse on the error screen stay allowed until you close Wren.</string>
+  <string name="https_only_summary">Refuses unencrypted pages and downloads outright instead of falling back. Sites you excuse on the error screen stay allowed until you close Wren.</string>
   <string name="https_only_blocked_page" translatable="false"><![CDATA[<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Blocked</title><style>body{font-family:sans-serif;margin:0;padding:48px 24px;background:#fbf7f1;color:#2b2320}h1{font-size:20px;margin:0 0 12px}p{line-height:1.5;color:#5a4e48}code{word-break:break-all}</style></head><body><h1>Insecure connection refused</h1><p>HTTPS-only mode is on, and <code>%1$s</code> was asked for over plain HTTP. Nothing was sent.</p><p>To allow this site for the rest of the session, open it from the address bar and choose to continue on its error screen, or turn HTTPS-only mode off in Settings.</p></body></html>]]></string>
   <string name="https_upgrade_summary">Try an encrypted connection first and fall back only if the site cannot serve one.</string>
   <string name="error_title">Can\'t reach this site</string>
@@ -128,6 +128,10 @@
   <string name="error_timeout">The site took too long to respond.</string>
   <string name="error_connect">The connection was refused or dropped before the page arrived.</string>
   <string name="error_ssl">The site\'s security certificate could not be verified, so Wren did not load it.</string>
+  <string name="error_ssl_expired">The site\'s security certificate has expired, so Wren did not load it.</string>
+  <string name="error_ssl_mismatch">The site\'s security certificate was issued for a different name, so Wren did not load it. Someone on this network may be posing as the site.</string>
+  <string name="error_ssl_untrusted">The site\'s security certificate was issued by an authority this phone does not trust, so Wren did not load it.</string>
+  <string name="error_ssl_date">The site\'s security certificate is not valid at this time, so Wren did not load it. If the phone\'s clock is wrong, this happens on every site.</string>
   <string name="error_generic">The page could not be loaded.</string>
   <string name="error_no_https">The site did not answer over an encrypted connection. Either it has none, or something on this network is blocking it. Without encryption, anyone on this network can read and change the page.</string>
   <string name="error_continue_insecure">Continue without encryption</string>
@@ -244,6 +248,8 @@
   <string name="block_third_party_cookies_summary">Stops embedded ads and widgets from reading cookies set by other sites.</string>
   <string name="do_not_track">Send Do Not Track</string>
   <string name="do_not_track_summary">Adds DNT and Global Privacy Control headers. Honouring them is up to the site.</string>
+  <string name="safe_browsing">Safe Browsing</string>
+  <string name="safe_browsing_summary">Warns before known dangerous sites. Short hashed prefixes of the addresses you visit go to Google through Android. Always off in Tor mode.</string>
   <string name="record_history">Save history</string>
   <string name="record_history_summary">Keep a local list of pages you visit. Private tabs are never saved.</string>
   <string name="clear_on_exit">Clear on exit</string>
@@ -279,6 +285,7 @@
   <string name="page_leave">Leave</string>
   <string name="page_stay">Stay</string>
   <string name="tor_profile_unavailable">Tor storage could not be set up for this page, so it was given no network</string>
+  <string name="private_profile_unavailable">This WebView cannot keep a private tab apart from your other tabs, so it was given no network</string>
   <string name="tor_external_app_title">Open in another app?</string>
   <string name="tor_external_app_message">The other app will fetch this from your own connection, not through Tor.</string>
   <string name="tor_external_app_open">Open</string>

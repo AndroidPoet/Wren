@@ -100,6 +100,9 @@ class PrivacyScripts @Inject constructor(
   /** Third-party frames get no storage, as Chrome gives them none with its cookies blocked. */
   private val partitionScript: String by lazy { read("partition.js") }
 
+  /** Link `ping` trackers removed as the link is tapped; see the asset. */
+  private val pingScript: String by lazy { read("ping.js") }
+
   private class Handlers {
     var tor: ScriptHandler? = null
     var private: ScriptHandler? = null
@@ -110,6 +113,7 @@ class PrivacyScripts @Inject constructor(
     var referrer: ScriptHandler? = null
     var gpc: ScriptHandler? = null
     var partition: ScriptHandler? = null
+    var pings: ScriptHandler? = null
   }
 
   private val handlers = WeakHashMap<WebView, Handlers>()
@@ -156,6 +160,9 @@ class PrivacyScripts @Inject constructor(
       installed.partition,
       settings.blockThirdPartyCookies || settings.torMode,
     ) { partitionScript }
+    installed.pings = sync(webView, installed.pings, settings.stripTrackingParameters) {
+      pingScript
+    }
     installed.tor = sync(webView, installed.tor, settings.torMode) { torScript }
     installed.private = sync(webView, installed.private, isPrivate || settings.torMode) {
       privateScript

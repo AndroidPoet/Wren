@@ -7,6 +7,7 @@
 package dev.androidpoet.wren.network
 
 import dev.androidpoet.wren.core.network.DeferredProxySelector
+import dev.androidpoet.wren.core.network.TorRouteGuard
 import dev.androidpoet.wren.settings.SettingsStore
 import okhttp3.CookieJar
 import okhttp3.OkHttpClient

@@ -127,6 +127,20 @@ class FilterRuleTest {
   }
 
   @Test
+  fun `a rule scoped to wildcard sites does not widen to the whole web`() {
+    // uBlock filters carries `*$script,1p,domain=~kat.ai|...|kat.*|kickass.*`: with the `kat.*`
+    // entries dropped, the leftover exclusions once made it block every first-party script.
+    assertThat(FilterRule.parse("*\$script,1p,domain=~a.com|b.*")).isNull()
+    assertThat(FilterRule.parse("*\$script,1p,domain=b.*")).isNull()
+    val partlyExpressible = FilterRule.parse("||x.com/y\$script,domain=a.com|b.*")
+    assertThat(partlyExpressible).isNotNull()
+    assertThat(partlyExpressible!!.domains!!.toList()).containsExactly("a.com")
+    val onlyExclusions = FilterRule.parse("||x.com/y\$script,domain=~a.com|~b.*")
+    assertThat(onlyExclusions).isNotNull()
+    assertThat(onlyExclusions!!.excludedDomains!!.toList()).containsExactly("a.com")
+  }
+
+  @Test
   fun `document exceptions are recognised by host`() {
     assertThat(
       FilterRule.documentExceptionHost("@@||example.com^\$document"),

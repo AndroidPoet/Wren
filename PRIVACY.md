@@ -28,7 +28,7 @@ Wren only makes these connections:
 | Search suggestions | The search engine you chose (DuckDuckGo by default) | Only if turned on in Settings, then while you type |
 | Filter-list updates | The filter-list hosts: easylist.to, secure.fanboy.co.nz, raw.githubusercontent.com and, for the regional lists you turn on, easylist-downloads.adblockplus.org | On the first launch (the bundled lists are replaced by current ones), when a list is over a week old, or when you tap Update now |
 | Site icons for the home page | The site the icon belongs to | Unless turned off in Settings |
-| Safe Browsing checks | Google, through Android's WebView; only short hashed prefixes of addresses are sent | Always, except in Tor mode |
+| Safe Browsing checks | Google, through Android's WebView; only short hashed prefixes of addresses are sent | Unless turned off in Settings; always off in Tor mode |
 | Passkey sign-ins | Your phone's password manager | Only when a site asks you to sign in with a passkey; off in Tor mode |
 | Downloads | The site hosting the file; through Tor in Tor mode | When you download a file |
 | Translate page | Google Translate | Only when you choose Translate page from the menu |
@@ -45,7 +45,8 @@ Wren runs on Android's system WebView, which is the Chromium engine shipped and 
 or your phone maker. The engine's version, security patches and internal isolation are outside
 Wren's control. Tor mode routes all of Wren's traffic through Tor, keeps Tor pages in their own
 storage profile that is deleted when Tor is turned off or a new identity is requested, records
-no history for them, gives each host its own circuit, runs downloads through Tor, removes
+no history for them, keeps their disk cache at the smallest size the engine allows, gives each
+host its own circuit, runs downloads through Tor, removes
 WebRTC and the motion sensors, forces third-party cookies off, shows pages a UTC clock with
 100 ms precision and answers in English, letterboxes pages to 100 px steps so the viewport does
 not name the phone, asks the keyboard not to learn from what is typed, offers a Safest level
@@ -61,7 +62,7 @@ identity deletes the Tor profile and leaves the clear-net one alone. One lookup 
 the phone's DNS rather than through Tor, and no app can turn that off; Tor over a VPN or a
 private DNS server moves that disclosure away from your ISP. Web Workers get the clock, canvas and
 locale shims through a bootstrap; WebRTC is not reachable from a worker. The engine adds an `X-Requested-With` header naming
-Wren to the requests pages make, which no app can switch off yet; Wren removes it from the page
+Wren to the requests pages make, which no app can switch off; Wren removes it from the page
 request itself and sends Chrome's reduced user agent, so sites learn the browser but not the
 phone. Wren has not been independently audited. If your safety depends on anonymity, use Tor
 Browser for Android.

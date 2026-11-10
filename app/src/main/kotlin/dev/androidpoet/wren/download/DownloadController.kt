@@ -116,6 +116,35 @@ class DownloadController @Inject constructor(
       return inApp.saveDataUrl(url, isPrivate, suggestedName, apkAllowed)
     }
     if (!url.startsWith("http")) return null
+    // HTTPS-only mode and Tor mode never fetch a document over plain http, and a file is a
+    // document: neither downloader below passes the navigation policy, so the upgrade is here.
+    val secured = if (settings.httpsOnly || settings.torMode) {
+      dev.androidpoet.wren.browser.privacy.HttpsUpgrader.upgrade(url) ?: url
+    } else {
+      url
+    }
+    return enqueueSecured(
+      secured,
+      userAgent,
+      contentDisposition,
+      mimeType,
+      pageUrl,
+      isPrivate,
+      suggestedName,
+      apkAllowed,
+    )
+  }
+
+  private fun enqueueSecured(
+    url: String,
+    userAgent: String?,
+    contentDisposition: String?,
+    mimeType: String?,
+    pageUrl: String?,
+    isPrivate: Boolean,
+    suggestedName: String?,
+    apkAllowed: Boolean,
+  ): Long? {
     // A private page's download carries the private jar's cookies, never the normal one's;
     // without a private jar it carries none.
     val jar = if (isPrivate) privateProfile.cookieManager() else CookieManager.getInstance()

@@ -174,19 +174,24 @@ class FilterRule(
             }
             "domain", "from" -> {
               if (value.isEmpty()) return null
+              var namedASite = false
               for (entry in value.split('|')) {
                 val negatedEntry = entry.startsWith("~")
                 val domain = (if (negatedEntry) entry.substring(1) else entry).lowercase()
-                if (domain.isEmpty() || domain.contains('*')) continue
+                if (domain.isEmpty()) continue
+                if (!negatedEntry) namedASite = true
+                // `site.*` names every public suffix at once; the engine cannot express it.
+                if (domain.contains('*')) continue
                 if (negatedEntry) {
                   excluded = (excluded ?: ArrayList()).also { it.add(domain) }
                 } else {
                   included = (included ?: ArrayList()).also { it.add(domain) }
                 }
               }
-              // Every entry was one the engine cannot express: the rule would apply everywhere.
-              if (included == null && excluded == null) return null
-              if (included == null && !value.contains('~')) return null
+              // A rule scoped to named sites must not outlive the names: with every positive
+              // entry dropped, `*$script,1p,domain=~a.com|b.*` would block first-party scripts
+              // on the whole web instead of on b.* alone.
+              if (included == null && (excluded == null || namedASite)) return null
             }
             in UNSUPPORTED_OPTIONS -> return null
             else -> {

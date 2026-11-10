@@ -53,7 +53,7 @@ class PrivateProfile @Inject constructor(
     if (!isSupported) return false
     val profileName = name
     return runCatching {
-      ProfileStore.getInstance().getOrCreateProfile(profileName)
+      ProfileCache.minimise(ProfileStore.getInstance().getOrCreateProfile(profileName))
       WebViewCompat.setProfile(webView, profileName)
       attached.add(profileName)
     }.onFailure { Timber.w(it, "private profile unavailable") }

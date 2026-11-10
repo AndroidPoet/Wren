@@ -77,14 +77,19 @@ class CosmeticFilter @Inject constructor(
         webView,
         CHANNEL,
         ALLOWED_ORIGINS,
-      ) { _, message, _, _, reply -> respond(message.data.orEmpty(), reply) }
+      ) { _, message, origin, _, reply -> respond(origin.host, message.data.orEmpty(), reply) }
       listeners[webView] = true
     }.onFailure { Timber.w(it, "could not install the cosmetic channel") }
   }
 
-  private fun respond(raw: String, reply: JavaScriptReplyProxy) {
+  /**
+   * The host is the asking frame's own origin as the engine reports it, never one the message
+   * names: a page that could ask for any host's rules would learn which lists are on and which
+   * sites are allowlisted, a fingerprint of this user. An opaque origin gets no answer.
+   */
+  private fun respond(origin: String?, raw: String, reply: JavaScriptReplyProxy) {
     val message = runCatching { JSONObject(raw) }.getOrNull()
-    val host = (message?.optString("h") ?: raw).trim().lowercase()
+    val host = origin.orEmpty().trim().lowercase()
     if (host.isEmpty() || host.length > 253) return
     if (!settings.blockAds || settings.isAllowlisted(host)) return
     val cosmetics = blocklist.engineOrNull?.cosmetics ?: return

@@ -33,7 +33,8 @@
 - **Clear everything**: one tap closes every tab and deletes history, cookies and cache, with an
   optional wipe on exit.
 - **Private tabs** on their own WebView profile: no history, cookies or cache written; WebRTC,
-  motion sensors and device lists removed; keyboard learning off.
+  motion sensors, device lists and WebGPU removed; keyboard learning off. On an engine that
+  cannot give them a profile they get no network rather than the normal tabs' cookies.
 - **Tor mode** through the Guardian Project's tor-android, with obfs4, Snowflake and meek bridges
   (Tor Browser's built-in ones, or your own lines) for networks that block Tor.
 - **App lock** using the device's own screen lock.
@@ -44,6 +45,10 @@
   caches or files, which join two sites the same way), Attribution Reporting off, `DNT`
   and Global Privacy Control exposed to pages, form data never saved, location and camera/mic
   requests denied.
+- Mixed content blocked: an encrypted page loads nothing over plain HTTP. Internet pages are kept
+  off the phone's own network (`localhost`, `192.168.x.x` and the other private ranges), link
+  `ping` trackers are removed as the link is tapped, certificate errors are never clicked
+  through, and the engine's media-integrity API, which would name the app to a site, is off.
 
 **Browsing**
 - DuckDuckGo by default; Brave, Startpage, Mojeek, Wikipedia and Google available. `!bangs` work
@@ -62,7 +67,7 @@ Wren has no backend. The only network traffic is:
 | Search suggestions from your chosen engine | Only if turned on in Settings, then while typing |
 | Filter-list downloads | Shortly after launch when a list is over a week old (so also on first launch), or when you tap Update now in Settings |
 | Speed-dial site icons | Can be turned off |
-| Safe Browsing checks (hashed address prefixes, to Google through Android) | Always, except in Tor mode |
+| Safe Browsing checks (hashed address prefixes, to Google through Android) | Unless turned off in Settings; always off in Tor mode |
 | Passkey sign-ins, through your phone's password manager | Only when a site asks you to sign in with one |
 | Tor | Only if you turn it on |
 
@@ -110,13 +115,15 @@ engine. Before relying on it for anything sensitive, know the limits:
   resolver, and so roughly which network, a Tor visitor is on. Tor over a VPN, or a private DNS
   server, moves that disclosure from your ISP to that provider; nothing in Wren can close it.
 - **The engine names the app.** Android's WebView adds an `X-Requested-With: dev.androidpoet.wren`
-  header to the requests pages make, and no app can turn that off until Chromium finishes
-  removing it. Wren strips it from the page request itself, but images, scripts and fetches
-  still carry it, so a site can tell it is talking to Wren. The user agent and client hints are
+  header to the requests pages make, and no app can turn that off: Chromium ended the trial
+  that was to remove it, and androidx.webkit now documents the allow-list API that was meant
+  to control it as doing nothing. Wren strips it from the page request itself, but images,
+  scripts and fetches still carry it, so a site can tell it is talking to Wren. The user agent
+  and client hints are
   Chrome's reduced ones (`Android 10; K`, no device model or build), so the phone itself is not
   named.
 - **Safe Browsing talks to Google.** Short hashed prefixes of addresses go to Google through
-  Android, except in Tor mode. There is no switch for it yet.
+  Android. It is off in Tor mode and can be turned off in Settings.
 - **The privacy signal headers need a recent engine.** Pages can always read Global Privacy
   Control and Do Not Track from JavaScript. As `Sec-GPC` and `DNT` request headers they ride on
   every request only where the WebView lets an app add a header per profile, which Chromium

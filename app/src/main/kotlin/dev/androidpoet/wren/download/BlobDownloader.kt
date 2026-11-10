@@ -144,6 +144,13 @@ class BlobDownloader @Inject constructor(
 
   private fun onChunk(id: String, base64: String) {
     val transfer = transfers[id] ?: return
+    // Bounded before anything is decoded or written: the reader sends slices of CHUNK bytes,
+    // so a larger message is not the reader's, and the total is checked on what is about to
+    // land rather than after it has.
+    if (base64.length > MAX_CHUNK_BASE64 || transfer.bytes + base64.length / 4L * 3 > MAX_BYTES) {
+      abort(id, "blob too large")
+      return
+    }
     runCatching {
       val bytes = Base64.decode(base64, Base64.DEFAULT)
       transfer.stream.write(bytes)
@@ -218,6 +225,9 @@ class BlobDownloader @Inject constructor(
     val EVENT_NAME: String = "e" + UUID.randomUUID().toString().replace("-", "")
     val ALL_ORIGINS = setOf("*")
     const val MAX_BYTES = 512L * 1024 * 1024
+
+    /** A 512 KiB slice as base64, with room for the padding. */
+    const val MAX_CHUNK_BASE64 = 512 * 1024 / 3 * 4 + 8
 
     val READER_SCRIPT = """
       (function () {

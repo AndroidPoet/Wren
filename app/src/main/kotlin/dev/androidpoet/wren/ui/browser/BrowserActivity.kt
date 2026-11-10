@@ -86,6 +86,7 @@ import dev.androidpoet.wren.browser.blocking.ContentBlocker
 import dev.androidpoet.wren.browser.blocking.CosmeticFilter
 import dev.androidpoet.wren.browser.blocking.FilterListManager
 import dev.androidpoet.wren.browser.blocking.HostMatcher
+import dev.androidpoet.wren.browser.blocking.LocalNetwork
 import dev.androidpoet.wren.browser.blocking.ServiceWorkerBlocker
 import dev.androidpoet.wren.browser.favicon.FaviconStore
 import dev.androidpoet.wren.browser.privacy.HttpsUpgrader
@@ -236,6 +237,12 @@ class BrowserActivity :
 
   /** Addresses Tor mode forced onto https, so a failure can be explained as the site's. */
   private val torForcedHttps = mutableSetOf<String>()
+
+  /** The last certificate problem seen per host, so the error page can say which it was. */
+  private val sslErrorsByHost = mutableMapOf<String, Int>()
+
+  /** An address another app sent while the lock was down; opened once it lifts. */
+  private var heldByLock: Intent? = null
   private var appliedNightMode = 0
   private var blockedTotal = 0
 
@@ -363,7 +370,7 @@ class BrowserActivity :
     appliedNightMode = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
     binding = ActivityBrowserBinding.inflate(layoutInflater)
     setContentView(binding.root)
-    applyAppLock(appLock, binding.root)
+    applyAppLock(appLock, binding.root, onUnlocked = ::releaseHeldIntent)
     setupTvCursor()
     applyAddressBarPosition()
     // The layout paints its own background everywhere; the window's is pure overdraw.
@@ -436,7 +443,20 @@ class BrowserActivity :
     handleIntent(intent, isColdStart = false)
   }
 
+  private fun releaseHeldIntent() {
+    val held = heldByLock ?: return
+    heldByLock = null
+    handleIntent(held, isColdStart = false)
+  }
+
   private fun handleIntent(intent: Intent?, isColdStart: Boolean, replayed: Boolean = false) {
+    // Behind the lock nothing is opened: an address another app sent waits for the unlock, or
+    // the page would load, and go into history, before the owner has shown their face.
+    if (intent != null && !replayed && appLock.isArmed && !appLock.isOpen) {
+      heldByLock = intent
+      handleIntent(null, isColdStart)
+      return
+    }
     // The intent filter only constrains implicit intents; an explicit one can carry any scheme,
     // and javascript: or file: handed in from another app must never reach a tab.
     val url = if (replayed) {
@@ -530,8 +550,13 @@ class BrowserActivity :
     } else if (settings.torMode) {
       if (torProfile.attach(created)) {
         // A worker of this profile that outlives the route is answered with a block.
+        // A worker of this profile that outlives the route, or the identity, is answered with a
+        // block: a new identity must not be introduced by the old identity's worker.
+        val identity = torProfile.identityName
         torProfile.serviceWorkerController()?.let {
-          serviceWorkerBlocker.install(it) { settings.torMode }
+          serviceWorkerBlocker.install(it) {
+            settings.torMode && torProfile.identityName == identity
+          }
         }
       } else {
         // Without its own profile the page would run on the clear-net jar over Tor, joining the
@@ -539,6 +564,11 @@ class BrowserActivity :
         created.settings.blockNetworkLoads = true
         toast(R.string.tor_profile_unavailable)
       }
+    } else if (tab.isPrivate) {
+      // Without a profile of its own a private tab would carry the normal tabs' cookies: signed
+      // in where the user expects to be a stranger. It gets no network instead.
+      created.settings.blockNetworkLoads = true
+      toast(R.string.private_profile_unavailable)
     }
     created.layoutParams = FrameLayout.LayoutParams(
       ViewGroup.LayoutParams.MATCH_PARENT,
@@ -556,6 +586,7 @@ class BrowserActivity :
       onMainFrameError = { url, code -> onMainFrameError(tabId, url, code) },
       onHttpAuth = ::promptHttpAuth,
       onFirstPaint = { url -> onFirstPaint(tabId, url) },
+      onSslError = { host, reason -> onSslError(tabId, host, reason) },
       onRendererGone = { view, didCrash -> onRendererGone(tabId, view, didCrash) },
     )
     created.webChromeClient = WrenWebChromeClient(
@@ -1076,8 +1107,32 @@ class BrowserActivity :
     settings.torMode && torController.state.value.status == TorStatus.FAILED -> R.string.tor_failed
     settings.torMode && !torController.state.value.isOn -> R.string.error_tor_connecting
     settings.torMode && url in torForcedHttps -> R.string.error_tor_plain_http
+    code == WebViewClient.ERROR_FAILED_SSL_HANDSHAKE -> sslReason(url)
     else -> errorReason(code)
   }
+
+  /**
+   * The engine cancels the load and says nothing more: no `onReceivedError` follows a refused
+   * certificate, and the tab would sit blank behind a lock icon. When the certificate was the
+   * document's own, the error page is shown here; a subresource's bad certificate only fails
+   * that resource, as in any browser.
+   */
+  private fun onSslError(tabId: Long, host: String, reason: Int) {
+    sslErrorsByHost[host] = reason
+    val url = viewModel.tabManager.tab(tabId)?.url ?: return
+    if (HostMatcher.hostOf(url) != host) return
+    onMainFrameError(tabId, url, WebViewClient.ERROR_FAILED_SSL_HANDSHAKE)
+  }
+
+  private fun sslReason(url: String): Int =
+    when (HostMatcher.hostOf(url)?.let(sslErrorsByHost::get)) {
+      android.net.http.SslError.SSL_EXPIRED -> R.string.error_ssl_expired
+      android.net.http.SslError.SSL_IDMISMATCH -> R.string.error_ssl_mismatch
+      android.net.http.SslError.SSL_UNTRUSTED -> R.string.error_ssl_untrusted
+      android.net.http.SslError.SSL_NOTYETVALID, android.net.http.SslError.SSL_DATE_INVALID ->
+        R.string.error_ssl_date
+      else -> R.string.error_ssl
+    }
 
   private fun errorReason(code: Int): Int = when (code) {
     WebViewClient.ERROR_HOST_LOOKUP -> R.string.error_host_lookup
@@ -1246,6 +1301,12 @@ class BrowserActivity :
     // prefetch/prerender cache on activation and turns a warm navigation cold.
     if (request.isForMainFrame) return refuseInsecureDocument(request)
     val pageUrl = viewModel.tabManager.tab(tabId)?.url.orEmpty()
+    val requestUrl = request.url?.toString().orEmpty()
+    if (LocalNetwork.isCrossing(pageUrl, requestUrl)) {
+      HostMatcher.hostOf(requestUrl)?.let { host -> blockStats.recordBlocked(tabId, host) }
+      Timber.v("local network refused to %s", requestUrl)
+      return LocalNetwork.refusal()
+    }
     val response = contentBlocker.intercept(request, pageUrl) ?: return null
     HostMatcher.hostOf(request.url?.toString().orEmpty())?.let { host ->
       blockStats.recordBlocked(tabId, host)
@@ -1735,6 +1796,8 @@ class BrowserActivity :
         .showSecure()
       return
     }
+    // A prefetch still running from the clear-net start must not finish beside the tunnel.
+    if (enabled) speculativeLoader.cancel()
     torController.setEnabled(enabled)
   }
 
@@ -2277,9 +2340,10 @@ class BrowserActivity :
     torIdentityOnly: Boolean = false,
   ) {
     lifecycleScope.launch {
-      if (!torIdentityOnly) privacyCleaner.clearAll(webView, includeHistory = true)
-      // Every page goes, private ones first so their profile can be deleted underneath them.
+      // Every page goes first: a timer in a page still alive would write back into storage
+      // while it is being emptied. Private ones first so their profile can be deleted under them.
       discardAllWebViews()
+      if (!torIdentityOnly) privacyCleaner.clearAll(webView, includeHistory = true)
       endPrivateSession()
       // A fresh fingerprint seed: the canvas hash must not survive the identity it belonged to.
       if (torIdentityOnly) {
@@ -2521,6 +2585,11 @@ class BrowserActivity :
         // Handing the address back to the engine would only put it in the omnibox as a page.
         toast(R.string.no_app_for_link)
       }
+      true
+    } catch (e: SecurityException) {
+      // A target that demands a permission this app lacks is the same as no target at all.
+      Timber.w(e, "not allowed to open %s", url)
+      toast(R.string.no_app_for_link)
       true
     }
   }
