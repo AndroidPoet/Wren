@@ -110,7 +110,7 @@ app on Android's system WebView).
 | Global Privacy Control and DNT | Met | `Sec-GPC` and `DNT` headers plus the `navigator` properties (`gpc.js`). The per-profile headers need WebView 142 or newer (Chromium commit 61ccfbb41e, "available in M142"); on WebView 133 a page's own `fetch` was seen without them, only the address-bar loads carry them there |
 | Tracker and ad blocking | Met | EasyList, EasyPrivacy, hosts, cosmetic and scriptlet rules |
 | WebRTC IP leak | Met in private tabs **(1.0.7)**, Engine in normal tabs | WebRTC removed in private and Tor tabs. In a normal tab a page can collect ICE candidates; Chromium's mDNS obfuscation covers local addresses |
-| Fingerprinting resistance (screen, fonts) | Partial | Fonts remain; screen closed under Tor (section 4) |
+| Fingerprinting resistance (screen, fonts) | Partial | Fonts remain, as in Tor Browser for Android, which ships no bundled fonts either (`tor-browser-build/projects/browser/config` enables the fonts project only off Android); screen closed under Tor (section 4) |
 | Miscellaneous (IP via prefetch, link rel=preconnect) | Partial | Page preload off in private and Tor |
 
 ## 8. What to build next, in order of payoff
@@ -121,7 +121,7 @@ shipped in 1.0.7. What remains:
 
 1. ~~Run the PrivacyTests harness~~ Done in 1.0.9: the engine did not partition third-party storage; `partition.js` now denies it.
 2. ~~Verify Snowflake and meek~~ Done 2026-11-10: both bootstrap and route a page through Tor; the earlier failure was the emulator's resolver, cured by `-dns-server 8.8.8.8,1.1.1.1`.
-3. **Fonts.** A `@font-face` default stylesheet under Tor naming a few fonts would narrow what a page can measure; it cannot replace the system font stack.
+3. **Fonts.** A `@font-face` default stylesheet under Tor naming a few fonts would narrow what a page can measure; it cannot replace the system font stack. Tor Browser for Android does not bundle fonts either (checked 2026-11-10), so this is parity, not a gap behind it.
 4. ~~Keyboard layout~~ Done in 1.0.9.
 5. **Memory-only cache under Tor** and **CSS `device-width`** remain engine-level gaps.
 
