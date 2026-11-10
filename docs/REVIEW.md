@@ -97,7 +97,7 @@ app on Android's system WebView).
 | Security levels (safer / safest) | Partial **(1.0.7)** | Safest switch on the Tor sheet: JavaScript off on every Tor page from its first byte (1.0.8) and web fonts blocked by file extension (`ContentBlocker`; the engine does not pass `Sec-Fetch-Dest` to the interceptor, so a font served without an extension loads), media already click-to-play. No JIT switch exists in the engine |
 | Update checks over Tor | Met | There are none: GitHub, F-Droid and Obtainium carry updates |
 | Outdated engine visible | Met | `warnIfWebViewStale` |
-| Censorship circumvention | Met | obfs4, Snowflake, meek bridges (1.0.6). All three built-in sets bootstrap to 100% and `check.torproject.org` answers `IsTor: true` through them (Snowflake in about four minutes, meek in under twenty seconds, on an API 36 emulator with public DNS, 2026-11-10) |
+| Censorship circumvention | Met | obfs4, Snowflake, meek bridges (1.0.6). All three built-in sets bootstrap to 100% and `check.torproject.org` answers `IsTor: true` through them (Snowflake in about four minutes, meek in under twenty seconds, on an API 36 emulator with public DNS, 2026-11-10). Packet capture under Snowflake: Lyrebird opens TLS to the CDN front, UDP to one listed STUN server and WebRTC to the volunteer proxy; the app and Tor open nothing outside loopback |
 
 ## 7. PrivacyTests.org categories (outside Tor)
 

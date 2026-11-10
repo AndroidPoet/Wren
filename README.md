@@ -98,8 +98,9 @@ engine. Before relying on it for anything sensitive, know the limits:
   Tor for new circuits. Web Workers are started from a bootstrap that installs the clock, canvas
   and locale shims before the page's script runs in them. If Tor fails to connect, Wren points every tab at a
   closed port rather than falling back to the open network. Bridges run through Lyrebird,
-  Tor Browser's pluggable-transport binary; Snowflake and meek need an ordinary DNS lookup of
-  their front domain before the first byte goes through Tor, as in Tor Browser. Downloads,
+  Tor Browser's pluggable-transport binary; before the first byte goes through Tor, meek
+  reaches its content-delivery front over the open network, and Snowflake its front, a STUN
+  server from the bridge line and a volunteer's WebRTC proxy, as in Tor Browser. Downloads,
   site icons and filter-list updates use a client of Wren's own that refuses, under Tor, any
   connection that is not the tunnel: Android's built-in HTTP client silently falls back to a
   direct connection when a proxy fails, so it is not used anywhere.

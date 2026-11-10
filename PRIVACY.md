@@ -50,8 +50,9 @@ WebRTC and the motion sensors, forces third-party cookies off, shows pages a UTC
 100 ms precision and answers in English, letterboxes pages to 100 px steps so the viewport does
 not name the phone, asks the keyboard not to learn from what is typed, offers a Safest level
 with JavaScript off and web fonts blocked, and can reach Tor through obfs4,
-Snowflake or meek bridges where Tor is blocked (Snowflake and meek look up their front domain
-through the phone's DNS first, as Tor Browser does), but it does not make you
+Snowflake or meek bridges where Tor is blocked (before Tor is reached, meek talks to a content
+delivery front over your normal connection, and Snowflake talks to its front, to a STUN server
+named in the bridge line and to a volunteer's WebRTC proxy, as Tor Browser does), but it does not make you
 indistinguishable from other users the way Tor Browser does: the canvas is blank under Tor as
 in Tor Browser, but the fonts stay visible and audio and WebGL carry per-site noise, stable for
 the session and separate for normal, private and Tor pages, rather than the same answer for
