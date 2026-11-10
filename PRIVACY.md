@@ -1,6 +1,6 @@
 # Wren privacy policy
 
-Last updated: 9 November 2026
+Last updated: 10 November 2026
 
 Wren is an Android web browser made by AndroidPoet. It has no account, no analytics, no ads and
 no servers of its own. Nothing about you or your browsing is sent to us, because there is nowhere
@@ -26,7 +26,7 @@ Wren only makes these connections:
 | --- | --- | --- |
 | The pages you open | The sites you visit | Always |
 | Search suggestions | The search engine you chose (DuckDuckGo by default) | Only if turned on in Settings, then while you type |
-| Filter-list updates | The filter-list hosts, such as easylist.to | When a list is over a week old, or when you tap Update now |
+| Filter-list updates | The filter-list hosts: easylist.to, secure.fanboy.co.nz, raw.githubusercontent.com and, for the regional lists you turn on, easylist-downloads.adblockplus.org | On the first launch (the bundled lists are replaced by current ones), when a list is over a week old, or when you tap Update now |
 | Site icons for the home page | The site the icon belongs to | Unless turned off in Settings |
 | Safe Browsing checks | Google, through Android's WebView; only short hashed prefixes of addresses are sent | Always, except in Tor mode |
 | Passkey sign-ins | Your phone's password manager | Only when a site asks you to sign in with a passkey; off in Tor mode |
