@@ -127,4 +127,4 @@ shipped in 1.0.7. What remains:
 
 Things that cannot be fixed from an app and are stated in README and PRIVACY: DNS prefetch
 through the phone's resolver, no first-party circuit isolation, no JIT switch,
-`X-Requested-With` on subresources, and the engine's version being the system's.
+`X-Requested-With` on subresources (Chromium main still tests, in `AwNetworkConfigurationTest`, that the header is the package name on main-frame and iframe loads by default; the empty allow-list only counts once that default flips), and the engine's version being the system's.
