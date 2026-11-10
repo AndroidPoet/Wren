@@ -53,6 +53,7 @@
   <application
     android:name=".WrenApp"
     android:allowBackup="false"
+    android:dataExtractionRules="@xml/data_extraction_rules"
     android:banner="@drawable/tv_banner"
     android:hardwareAccelerated="true"
     android:icon="@mipmap/ic_launcher"

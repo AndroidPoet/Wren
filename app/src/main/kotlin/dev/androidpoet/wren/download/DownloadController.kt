@@ -149,9 +149,11 @@ class DownloadController @Inject constructor(
     // without a private jar it carries none.
     val jar = if (isPrivate) privateProfile.cookieManager() else CookieManager.getInstance()
     val cookies = jar?.getCookie(url)?.takeIf { it.isNotBlank() }
-    if (settings.torMode || cookies != null) {
+    if (settings.torMode || cookies != null || isPrivate) {
       // The system manager replays the Cookie header on every redirect, to whatever host the
       // chain ends on; the in-app downloader follows redirects by hand and scopes cookies.
+      // A private tab's download stays in-app too: the system manager keeps its own record of
+      // the address and puts the page's host in a lock-screen notification, past the session.
       return inApp.start(
         InAppDownloader.Request(
           url,
@@ -257,22 +259,34 @@ class DownloadController @Inject constructor(
   fun resume(download: Download): Boolean = inApp.resume(download.id)
 
   /**
-   * Tor is coming on: a system download started over the open network would keep transferring
-   * from the real address while every page says Tor. It is stopped, like the pages are.
-   */
-  /**
    * Called as the route flips: every transfer that began on the other route ends, paused ones
    * included. A direct one must not resume through Tor with the clear-net cookies it was
-   * started with, and a Tor one must not resume direct with the Tor jar's.
+   * started with, and a Tor one must not resume direct with the Tor jar's. Leaving Tor also
+   * forgets the Tor downloads, as a new identity does.
    */
   fun dropOffRoute(torMode: Boolean) {
     inApp.dropWhere { it.viaTor != torMode }
-    if (torMode) stopDirectDownloads()
+    if (torMode) stopDirectDownloads() else forgetTor()
   }
 
-  /** A new identity ends every Tor transfer: its address and range belong to the old one. */
-  fun endTorIdentity() = inApp.dropWhere { it.viaTor }
+  /**
+   * A new identity ends every Tor transfer, and the list forgets them: an address in it names
+   * a site the old identity visited, which Tor Browser does not keep past New Identity either.
+   * The files stay where they were saved.
+   */
+  fun endTorIdentity() {
+    inApp.dropWhere { it.viaTor }
+    forgetTor()
+  }
 
+  fun forgetTor() {
+    scope.launch { repository.clearTor() }
+  }
+
+  /**
+   * Tor is coming on: a system download started over the open network would keep transferring
+   * from the real address while every page says Tor. It is stopped, like the pages are.
+   */
   fun stopDirectDownloads() {
     val manager = downloadManager ?: return
     scope.launch {

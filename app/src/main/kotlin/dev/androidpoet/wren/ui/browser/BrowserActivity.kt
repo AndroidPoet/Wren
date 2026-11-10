@@ -12,6 +12,7 @@ import android.app.SearchManager
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -19,6 +20,7 @@ import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.speech.RecognizerIntent
 import android.text.SpannableString
 import android.text.Spanned
@@ -106,6 +108,7 @@ import dev.androidpoet.wren.databinding.ActivityBrowserBinding
 import dev.androidpoet.wren.download.AndroidAppFile
 import dev.androidpoet.wren.download.BlobDownloader
 import dev.androidpoet.wren.download.DownloadController
+import dev.androidpoet.wren.download.DownloadNames
 import dev.androidpoet.wren.download.InAppDownloader
 import dev.androidpoet.wren.settings.SettingsStore
 import dev.androidpoet.wren.ui.home.MostVisitedAdapter
@@ -594,7 +597,7 @@ class BrowserActivity :
       onIntercept = { request -> interceptRequest(tabId, request) },
       onRewriteUrl = { url -> rewriteUrl(tabId, url) },
       onMainFrameError = { url, code -> onMainFrameError(tabId, url, code) },
-      onHttpAuth = ::promptHttpAuth,
+      onHttpAuth = { handler, host, realm -> promptHttpAuth(tabId, handler, host, realm) },
       onFirstPaint = { url -> onFirstPaint(tabId, url) },
       onSslError = { host, reason -> onSslError(tabId, host, reason) },
       onRendererGone = { view, didCrash -> onRendererGone(tabId, view, didCrash) },
@@ -621,6 +624,9 @@ class BrowserActivity :
       // Only the page on screen may put up a dialog: a background private page's dialog would
       // land over a normal tab's unsecured window, and none may appear over the lock.
       isOnScreen = { view -> view === webView && !(appLock.isArmed && !appLock.isOpen) },
+      prepareTransport = { transport ->
+        privacyScripts.updateFor(transport, viewModel.tabManager.tab(tabId)?.isPrivate == true)
+      },
     )
     created.setFindListener { activeMatch, matchCount, isDoneCounting ->
       if (!isDoneCounting || tabId != viewModel.tabManager.activeTabId.value) return@setFindListener
@@ -743,17 +749,24 @@ class BrowserActivity :
     // Only a fetchable http image can be saved; a blob: or data: image has no address.
     val saveableImage = imageUrl?.takeIf { it.startsWith("http") }
     if (linkUrl == null && saveableImage == null) return
+    // What a private page opens stays private: a normal tab would carry the normal cookies to
+    // the address and write it to history.
+    val fromPrivate = viewModel.tabManager.activeTab()?.isPrivate == true
 
     val actions = buildList<Pair<Int, () -> Unit>> {
       if (linkUrl != null) {
-        add(R.string.open_in_new_tab to { openTab(linkUrl, isPrivate = false) })
-        add(R.string.open_in_private_tab to { openTab(linkUrl, isPrivate = true) })
+        if (fromPrivate) {
+          add(R.string.open_in_private_tab to { openTab(linkUrl, isPrivate = true) })
+        } else {
+          add(R.string.open_in_new_tab to { openTab(linkUrl, isPrivate = false) })
+          add(R.string.open_in_private_tab to { openTab(linkUrl, isPrivate = true) })
+        }
         add(R.string.copy_link to { copyToClipboard(linkUrl) })
         add(R.string.share_link to { shareUrl(linkUrl, linkUrl) })
         add(R.string.download_link to { downloadUrl(linkUrl) })
       }
       if (saveableImage != null) {
-        add(R.string.open_image to { openTab(saveableImage, isPrivate = false) })
+        add(R.string.open_image to { openTab(saveableImage, isPrivate = fromPrivate) })
         add(R.string.save_image to { downloadUrl(saveableImage) })
         add(R.string.copy_image_link to { copyToClipboard(saveableImage) })
       }
@@ -995,6 +1008,8 @@ class BrowserActivity :
   private fun endPrivateSession() {
     privateProfile.destroy()
     downloadController.forgetPrivate()
+    // Under Tor the choices belong to the Tor session as well, which outlives the private tabs.
+    if (!settings.torMode) settings.forgetSessionSiteChoices()
     privacyScripts.rotateSeed(PrivacyScripts.Mode.PRIVATE)
   }
 
@@ -1020,15 +1035,27 @@ class BrowserActivity :
 
   private fun offerUndoClose() {
     val closed = viewModel.tabManager.consumeLastClosed() ?: return
-    com.google.android.material.snackbar.Snackbar
+    // A page closed on one route must not reopen on the other: the same address fetched over
+    // Tor and over the open network joins the two at that site.
+    val closedOnTor = settings.torMode
+    undoClose = com.google.android.material.snackbar.Snackbar
       .make(
         binding.root,
         R.string.tab_closed,
         com.google.android.material.snackbar.Snackbar.LENGTH_LONG,
       )
-      .setAction(R.string.undo) { openTab(closed.url, isPrivate = false) }
+      .setAction(R.string.undo) {
+        if (settings.torMode == closedOnTor) openTab(closed.url, isPrivate = false)
+      }
       .setAnchorView(binding.menuButton)
-      .show()
+      .also { it.show() }
+  }
+
+  private var undoClose: com.google.android.material.snackbar.Snackbar? = null
+
+  private fun dismissUndoClose() {
+    undoClose?.dismiss()
+    undoClose = null
   }
 
   /** Applied to everything that navigates: typed, tapped, or followed by the page. */
@@ -1072,7 +1099,13 @@ class BrowserActivity :
   }
 
   /** A site behind HTTP authentication: the one dialog a browser cannot do without. */
-  private fun promptHttpAuth(handler: HttpAuthHandler, host: String, realm: String) {
+  private fun promptHttpAuth(tabId: Long, handler: HttpAuthHandler, host: String, realm: String) {
+    // Only the page on screen may ask, and never behind the lock: a background tab's request
+    // would put its host over another tab, and whatever was typed would go to its server.
+    if (!isActiveTab(tabId) || (appLock.isArmed && !appLock.isOpen)) {
+      handler.cancel()
+      return
+    }
     val content = layoutInflater.inflate(R.layout.dialog_http_auth, null)
     val username = content.findViewById<android.widget.EditText>(R.id.authUsername)
     val password = content.findViewById<android.widget.EditText>(R.id.authPassword)
@@ -1240,6 +1273,7 @@ class BrowserActivity :
   // region page callbacks
 
   private fun onPageStarted(tabId: Long, url: String) {
+    recentDownloads.remove(tabId)
     if (mainFrameErrors.remove(tabId) != null && isActiveTab(tabId)) renderErrorView()
     // Blocked counts belong to the document that collected them.
     if (url != viewModel.tabManager.tab(tabId)?.url) blockStats.reset(tabId)
@@ -1770,6 +1804,7 @@ class BrowserActivity :
     val onTor = settings.torMode
     if (onTor == pagesOnTor) return
     pagesOnTor = onTor
+    dismissUndoClose()
     if (onTor) {
       // The pages opened over the open network close rather than reload over Tor: the same
       // address fetched on both routes joins the Tor session to the one the ISP watched. The
@@ -1839,6 +1874,7 @@ class BrowserActivity :
           // workers are refused before the circuits change, and its transfers end with it.
           discardAllWebViews()
           torProfile.retireIdentity()
+          settings.forgetSessionSiteChoices()
           downloadController.endTorIdentity()
           val rotated = torController.newIdentity()
           clearBrowsingData(
@@ -1950,7 +1986,11 @@ class BrowserActivity :
       // Blocking is off everywhere; per-site is meaningless until it is back on.
       settings.blockAds = true
     } else {
-      settings.setAllowlisted(host, !settings.isAllowlisted(host))
+      settings.setAllowlisted(
+        host,
+        !settings.isAllowlisted(host),
+        sessionOnly = sessionOnlySiteChoice(),
+      )
     }
     webView?.let { view ->
       // Cosmetic rules are fixed for the life of a document, so the change lands on reload.
@@ -2017,20 +2057,24 @@ class BrowserActivity :
 
   override fun onSetSiteJavascript(enabled: Boolean) {
     val host = activeHost() ?: return
-    settings.setJsDisabledFor(host, !enabled)
+    settings.setJsDisabledFor(host, !enabled, sessionOnly = sessionOnlySiteChoice())
     applySiteSettingsAndReload()
   }
 
   override fun onSetSiteDesktop(enabled: Boolean) {
     val host = activeHost() ?: return
-    settings.setDesktopSite(host, enabled)
+    settings.setDesktopSite(host, enabled, sessionOnly = sessionOnlySiteChoice())
     applySiteSettingsAndReload()
   }
 
   override fun onSetKeepSignedIn(enabled: Boolean) {
     val host = activeHost() ?: return
-    settings.setKeptSignedIn(host, enabled)
+    settings.setKeptSignedIn(host, enabled, sessionOnly = sessionOnlySiteChoice())
   }
+
+  /** A choice made in a private or Tor tab lasts for that session and never reaches the disk. */
+  private fun sessionOnlySiteChoice(): Boolean =
+    settings.torMode || viewModel.tabManager.activeTab()?.isPrivate == true
 
   override fun onForgetSite() {
     val tab = viewModel.tabManager.activeTab() ?: return
@@ -2411,8 +2455,13 @@ class BrowserActivity :
     lifecycleScope.launch {
       // Every page goes first: a timer in a page still alive would write back into storage
       // while it is being emptied. Private ones first so their profile can be deleted under them.
+      dismissUndoClose()
+      settings.forgetSessionSiteChoices()
       discardAllWebViews()
-      if (!torIdentityOnly) privacyCleaner.clearAll(webView, includeHistory = true)
+      if (!torIdentityOnly) {
+        privacyCleaner.clearAll(webView, includeHistory = true)
+        downloadController.forgetTor()
+      }
       endPrivateSession()
       // A fresh fingerprint seed: the canvas hash must not survive the identity it belonged to.
       if (torIdentityOnly) {
@@ -2483,10 +2532,41 @@ class BrowserActivity :
     contentDisposition: String,
     mimeType: String,
   ) {
-    confirmIfAndroidApp(url, contentDisposition, mimeType) {
-      startDownload(source, tabId, url, userAgent, contentDisposition, mimeType)
+    // A page out of sight, or behind the lock, saves nothing: the user cannot see what it is.
+    if (!isActiveTab(tabId) || (appLock.isArmed && !appLock.isOpen)) {
+      Timber.w("download from a page not on screen refused: %s", url)
+      return
     }
+    val start = {
+      confirmIfAndroidApp(url, contentDisposition, mimeType) {
+        startDownload(source, tabId, url, userAgent, contentDisposition, mimeType)
+      }
+    }
+    // One download per page goes straight through; a page that asks again soon after, as a
+    // script looping over links would, is asked about by name. Chrome asks the same.
+    val now = SystemClock.elapsedRealtime()
+    val previous = recentDownloads.put(tabId, now)
+    if (previous == null || now - previous > REPEAT_DOWNLOAD_WINDOW_MS) {
+      start()
+      return
+    }
+    val pageHost = UrlFormatter.prettyHost(viewModel.tabManager.tab(tabId)?.url.orEmpty())
+    AlertDialog.Builder(this)
+      .setTitle(R.string.repeat_download_title)
+      .setMessage(
+        getString(
+          R.string.repeat_download_message,
+          pageHost,
+          DownloadNames.choose(url, contentDisposition, mimeType),
+        ),
+      )
+      .setPositiveButton(R.string.repeat_download_allow) { _, _ -> start() }
+      .setNegativeButton(android.R.string.cancel, null)
+      .showSecure()
   }
+
+  /** When each tab's page last started a download; a navigation starts the count again. */
+  private val recentDownloads = HashMap<Long, Long>()
 
   /** An app file installs code, not content; a page offering one gets a second look first. */
   private fun confirmIfAndroidApp(
@@ -2632,17 +2712,46 @@ class BrowserActivity :
         }
       }
     }.getOrNull() ?: return false
+    // An intent that comes back to this app would open its address as a new normal tab: a
+    // private page could join itself to the normal cookies and history in one tap. It is a
+    // navigation of this tab instead, and a chooser that would list this app leaves it out.
+    val ours = ComponentName(this, BrowserActivity::class.java)
+    val resolved = intent.resolveActivity(packageManager)
+    if (intent.`package` == packageName || resolved == ours) {
+      val address = intent.dataString
+      if (address != null && UrlFormatter.isWebUrl(
+          address,
+        )
+      ) {
+        loadUrl(address)
+      } else {
+        toast(R.string.no_app_for_link)
+      }
+      return true
+    }
+    val answerers = packageManager.queryIntentActivities(
+      intent,
+      0,
+    ).map { it.activityInfo.packageName }
+    val handOff = if (packageName in answerers && resolved?.packageName !in answerers) {
+      Intent.createChooser(intent, null).apply {
+        putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, arrayOf(ours))
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+      }
+    } else {
+      intent
+    }
     if (settings.torMode) {
       // Another app fetches whatever it is handed from the real address; the user decides.
       AlertDialog.Builder(this)
         .setTitle(R.string.tor_external_app_title)
         .setMessage(R.string.tor_external_app_message)
-        .setPositiveButton(R.string.tor_external_app_open) { _, _ -> launchExternal(intent, url) }
+        .setPositiveButton(R.string.tor_external_app_open) { _, _ -> launchExternal(handOff, url) }
         .setNegativeButton(android.R.string.cancel, null)
         .showSecure()
       return true
     }
-    return launchExternal(intent, url)
+    return launchExternal(handOff, url)
   }
 
   private fun launchExternal(intent: Intent, url: String): Boolean {
@@ -3021,6 +3130,9 @@ class BrowserActivity :
   }
 
   private companion object {
+    /** A page's second download inside this window is asked about first. */
+    const val REPEAT_DOWNLOAD_WINDOW_MS = 10_000L
+
     const val DISABLED_ALPHA = 0.35f
     const val DIM_PILL_ALPHA = 0.55f
     const val TOR_CHECK_URL = "https://check.torproject.org/"

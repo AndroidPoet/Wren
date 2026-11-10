@@ -13,7 +13,9 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const source = fs.readFileSync(path.join(__dirname, '..', 'app/src/main/assets/tor.js'), 'utf8');
+const CLOCK = 1234567;
+const source = fs.readFileSync(path.join(__dirname, '..', 'app/src/main/assets/tor.js'), 'utf8')
+  .replace('__CLOCK__', String(CLOCK));
 
 // A realm shaped like a page's window: the clocks and the screen as WebView exposes them.
 function realm(width, height) {
@@ -24,6 +26,9 @@ function realm(width, height) {
     Performance = class Performance { now() { return 123456.789; } get timeOrigin() { return 1794200000123.4; } }
     PerformanceEntry = class PerformanceEntry { get startTime() { return 5555.5; } get duration() { return 12.25; } toJSON() { return { startTime: 5555.5, duration: 12.25 }; } }
     Event = class Event { get timeStamp() { return 98765.4321; } }
+    Animation = class Animation { constructor() { this._t = 1234.567; } get currentTime() { return this._t; } set currentTime(v) { this._t = v; } get startTime() { return 4321.987; } };
+    LargestContentfulPaint = class LargestContentfulPaint extends PerformanceEntry { get renderTime() { return 2345.678; } };
+    HTMLVideoElement = class HTMLVideoElement { requestVideoFrameCallback(cb) { cb(3456.789, { presentationTime: 3457.123, mediaTime: 1.5 }); return 1; } };
     PerformanceResourceTiming = class PerformanceResourceTiming extends PerformanceEntry { get responseEnd() { return 7777.75; } toJSON() { return { startTime: 5555.5, duration: 12.25, responseEnd: 7777.75 }; } }
     PerformanceTiming = class PerformanceTiming { get navigationStart() { return 1794200000123.4; } }
     AudioContext = class AudioContext { getOutputTimestamp() { return { contextTime: 1.2345678, performanceTime: 4444.4444 }; } }
@@ -43,6 +48,10 @@ function realm(width, height) {
     };
     Blob = class Blob extends hostBlob { constructor(parts, opts) { super(parts, opts); this.__text = parts.join(''); } }; JSON = JSON; TypeError = TypeError; WeakMap = WeakMap;
     location = { href: 'https://example.org/app/page.html' };
+    __modules = [];
+    Worklet = class Worklet { addModule(url) { __modules.push(String(url)); return Promise.resolve(); } };
+    AudioWorklet = class AudioWorklet extends Worklet {};
+    PaintWorklet = class PaintWorklet extends Worklet {};
     Worker = class Worker { constructor(url, options) { this.url = String(url); this.options = options; } static get builtIn() { return 1; } };
     HTMLIFrameElement = class HTMLIFrameElement { constructor(child) { this._child = child; } get contentWindow() { return this._child; } get contentDocument() { return this._child && { defaultView: this._child }; } }
     performance = new Performance();
@@ -103,6 +112,11 @@ check('entryStartTimeIsCoarse', nearby(run('new PerformanceEntry().startTime'), 
 check('entryJsonIsCoarse', nearby(run('new PerformanceEntry().toJSON().startTime'), 5555.5));
 check('resourceTimingIsCoarse', nearby(run('new PerformanceResourceTiming().responseEnd'), 7777.75) &&
   nearby(run('new PerformanceResourceTiming().toJSON().responseEnd'), 7777.75));
+check('animationTimesAreCoarse', nearby(run('new Animation().currentTime'), 1234.567) && nearby(run('new Animation().startTime'), 4321.987));
+check('animationTimeStillSettable', run('var a = new Animation(); a.currentTime = 500; a._t') === 500);
+check('paintTimeIsCoarse', nearby(run('new LargestContentfulPaint().renderTime'), 2345.678));
+check('videoFrameTimesAreCoarse', run('var got; new HTMLVideoElement().requestVideoFrameCallback(function (n, m) { got = [n, m.presentationTime, m.mediaTime]; }); got').every(
+  (v, i) => i === 2 ? v === 1.5 : onGrid(v)));
 check('legacyTimingIsCoarse', onGrid(run('new PerformanceTiming().navigationStart')));
 check('outputTimestampIsCoarse', nearby(run('new AudioContext().getOutputTimestamp().performanceTime'), 4444.4444) &&
   run('new AudioContext().getOutputTimestamp().contextTime * 1000 % 100 === 0'));
@@ -113,6 +127,17 @@ check('temporalZoneIsUtc', run('Temporal.Now.timeZoneId()') === 'UTC' && run('Te
 check('temporalInstantIsCoarse', onGrid(run('Temporal.Now.instant().ms')) && onGrid(run('Temporal.Now.zonedDateTimeISO().ms')));
 check('dateNowMonotonic', run('var a = Date.now(), ok = true; for (var i = 0; i < 2000; i++) { var b = Date.now(); if (b < a) ok = false; a = b; } ok'));
 // A page that swaps Math.floor for a recorder must not see the raw inputs.
+// One rounding per identity: every realm rounds the same instant the same way, so reading the
+// clock in many frames averages nothing back. Drawn per realm, half of these would differ.
+check('everyRealmRoundsAlike', (() => {
+  for (let i = 0; i < 16; i++) {
+    const other = realm(412, 915);
+    vm.runInContext(source, other);
+    if (vm.runInContext('performance.now()', other) !== run('performance.now()')) return false;
+  }
+  return true;
+})());
+check('workerBootstrapCarriesClock', Object.values(run('new Worker("clock.js"); __workerBodies')).some((b) => b && b.indexOf(', ' + CLOCK + ');') >= 0));
 check('floorSwapSeesNothing', run('var seen = []; var f = Math.floor; Math.floor = function (v) { seen.push(v); return f(v); }; performance.now(); Date.now(); Math.floor = f; seen.length') === 0);
 
 // The screen is the viewport, from the prototype as much as from the instance.
@@ -139,6 +164,11 @@ check('unmappedKeyCodeIsEmpty', run('new KeyboardEvent("\u00e9", "Digit2").code'
 // Everything locale-sensitive answers as en-US unless the page names a locale.
 check('intlLocaleIsEnglish', run('new Intl.NumberFormat().resolvedOptions().locale') === 'en-US' &&
   run('Intl.DateTimeFormat().resolvedOptions().locale') === 'en-US' && run('new Intl.Collator().resolvedOptions().locale') === 'en-US');
+check('emptyLocaleListIsEnglish', run('new Intl.NumberFormat([]).resolvedOptions().locale') === 'en-US' &&
+  run('new Intl.DateTimeFormat([]).resolvedOptions().locale') === 'en-US' && run('(1234.5).toLocaleString([])') === '1,234.5');
+check('unsupportedLocaleIsEnglish', run('new Intl.Collator("qaa").resolvedOptions().locale') === 'en-US' &&
+  run('new Intl.DateTimeFormat("zxx").resolvedOptions().locale') === 'en-US');
+check('malformedLocaleStillThrows', run('try { new Intl.NumberFormat("not a tag!"); "ok" } catch (e) { e.name }') === 'RangeError');
 check('intlNamedLocaleKept', run('new Intl.NumberFormat("de-DE").resolvedOptions().locale') === 'de-DE');
 check('toLocaleStringIsEnglish', run('(1234567.5).toLocaleString()') === '1,234,567.5' &&
   run('new Date(Date.UTC(2026, 0, 2, 15)).toLocaleString()') === '1/2/2026, 3:00:00 PM');
@@ -166,8 +196,13 @@ check('workerBootstrapCarriesScript', (() => {
   const body = run('__workerBodies[' + JSON.stringify(url) + ']');
   return typeof body === 'string' && body.indexOf('Symbol.for(\'wren.tor\')') > 0 && body.indexOf('(self, true, ') > 0 &&
     body.indexOf('importScripts("https://example.org/app/worker.js")') > 0 && body.indexOf('resolveAgainst') > 0 &&
-    body.indexOf(', "https://example.org/app/worker.js");') > 0;
+    body.indexOf(', "https://example.org/app/worker.js", ' + CLOCK + ');') > 0;
 })());
+// An audio worklet loads the shims before the page's first module, once per worklet; a worklet
+// of another kind is left alone. The bootstrap then runs in a worklet-shaped realm.
+let workletOrder = null;
+run('var aw = new AudioWorklet(); aw.addModule("a.js").then(function () { return aw.addModule("b.js"); }).then(function () { new PaintWorklet().addModule("p.js"); })');
+const workletDone = new Promise((resolve) => setTimeout(() => { workletOrder = run('__modules.slice()'); resolve(); }, 50));
 check('workerWithoutNewThrows', (() => { try { run('Worker("w.js")'); return false; } catch (e) { return e instanceof TypeError || /new/.test(String(e)); } })());
 
 // A child frame reached through its element gets the same treatment, with its own natives.
@@ -185,6 +220,16 @@ child.grandchildRealm = grandchild;
 check('grandchildViaDocumentHardened',
   vm.runInContext('new HTMLIFrameElement(grandchildRealm).contentDocument.defaultView.Date.parse("2026/01/01")', child) === Date.UTC(2026, 0, 1));
 
+workletDone.then(() => {
+check('audioWorkletBootstrapsFirst', workletOrder.length === 4 && /^blob:/.test(workletOrder[0]) &&
+  /a\.js$/.test(workletOrder[1]) && /b\.js$/.test(workletOrder[2]) && /p\.js$/.test(workletOrder[3]));
+const workletBody = run('__workerBodies[' + JSON.stringify(workletOrder[0]) + ']');
+const scope = vm.createContext({});
+vm.runInContext('globalThis.Date = Date; Intl = Intl; Math = Math; Object = Object; Reflect = Reflect; Symbol = Symbol; Function = Function; JSON = JSON; WeakMap = WeakMap; String = String; Array = Array; Number = Number; Promise = Promise;', scope);
+let workletRan = true;
+try { vm.runInContext(workletBody, scope); } catch (e) { workletRan = false; console.log('  worklet bootstrap threw: ' + e); }
+check('audioWorkletRealmIsUtc', workletRan && vm.runInContext('new Date().getTimezoneOffset()', scope) === 0 &&
+  vm.runInContext('Intl.DateTimeFormat().resolvedOptions().timeZone', scope) === 'UTC');
 let failed = 0;
 for (const [name, ok] of checks) {
   console.log((ok ? 'ok   ' : 'FAIL ') + name);
@@ -192,3 +237,4 @@ for (const [name, ok] of checks) {
 }
 if (failed) { console.log(failed + ' check(s) failed'); process.exit(1); }
 console.log('all ' + checks.length + ' checks passed');
+});

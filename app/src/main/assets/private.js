@@ -25,6 +25,9 @@
   var MARK = Symbol.for('wren.private');
   // Natives used at call time, taken before any page script can replace them.
   var apply = Reflect.apply;
+  var weakSet = WeakMap.prototype.set;
+  var homeRealm = window;
+  var nativeToString = Function.prototype.toString;
 
   function each(list, fn) {
     for (var i = 0; i < list.length; i++) fn(list[i], i);
@@ -102,6 +105,26 @@
   }
 
   function hardenFrames(window) {
+    // A popup from window.open() starts as a blank document of the opener's own origin that the
+    // opener scripts directly; the engine injects nothing into it. It gets what a frame gets.
+    var nativeOpen = window.open;
+    if (typeof nativeOpen === 'function') {
+      var open = function open() {
+        var opened = apply(nativeOpen, this, arguments);
+        try {
+          if (opened) harden(opened);
+        } catch (ignored) {
+          // Another origin: the engine injects into that document itself.
+        }
+        return opened;
+      };
+      try {
+        defineProperty(window, 'open', { value: open, writable: true, enumerable: true, configurable: true });
+      // The wrapper is a function of this realm: the map this realm's toString reads must know it.
+      var sources = window[Symbol.for('wren.sources')] || homeRealm[Symbol.for('wren.sources')];
+      if (sources) apply(weakSet, sources, [open, apply(nativeToString, nativeOpen, [])]);
+      } catch (ignored) {}
+    }
     each(['HTMLIFrameElement', 'HTMLFrameElement', 'HTMLObjectElement'], function (kind) {
       var element = window[kind];
       var proto = element && element.prototype;

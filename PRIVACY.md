@@ -9,8 +9,11 @@ for it to go.
 ## What stays on your phone
 
 Your history, bookmarks, open tabs, settings, downloads, site icons and filter lists are stored
-only on your phone, in Wren's private storage. Wren turns off Android's app backup, so none of it
-is copied to a cloud backup. Private tabs write no history, cookies or cache at all, pages in
+only on your phone, in Wren's private storage. Wren turns off Android's app backup and its
+device-to-device transfer, so none of it is copied to a cloud backup or to a new phone. Private
+tabs write no history, cookies or cache at all, a file downloaded from one is saved by Wren
+itself rather than by Android's download manager, a site setting changed in one lasts only until
+the private session ends, pages in
 them cannot use WebRTC, the motion sensors or list your cameras and microphones, and the
 keyboard is asked not to learn from what you type in them or in the address bar.
 
@@ -48,7 +51,9 @@ or your phone maker. The engine's version, security patches and internal isolati
 Wren's control. Tor mode routes all of Wren's traffic through Tor, keeps Tor pages in their own
 storage profile that is deleted when Tor is turned off or a new identity is requested, records
 no history for them, keeps their disk cache at the smallest size the engine allows, gives each
-host its own circuit, runs downloads through Tor, removes
+host its own circuit, runs downloads through Tor and forgets their records in the downloads
+list when Tor is turned off or a new identity is requested, keeps a site setting changed under
+Tor only until then too, removes
 WebRTC and the motion sensors, forces third-party cookies off, shows pages a UTC clock with
 100 ms precision and answers in English, letterboxes pages to 100 px steps so the viewport does
 not name the phone, asks the keyboard not to learn from what is typed, offers a Safest level

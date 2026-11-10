@@ -33,7 +33,8 @@
 
   // The whole shim is one function so its source can be carried into a worker verbatim.
   // `base` is the real address of a bootstrapped worker's script, for the workers it creates.
-  function install(window, inWorker, source, base) {
+  // [secret] places the clock's rounding; one per identity, the same in every frame and worker.
+  function install(window, inWorker, source, base, secret) {
     // Natives captured before any page script can replace them: a page that swaps Math.floor
     // for a recorder would otherwise read every unrounded input.
     var floor = Math.floor;
@@ -43,6 +44,10 @@
     var finite = isFinite;
     var stringify = JSON.stringify;
     var fill = Uint8Array.prototype.fill;
+    var then = Promise.prototype.then;
+    var getPrototypeOf = Object.getPrototypeOf;
+    var stringReplace = String.prototype.replace;
+    var stringMatch = String.prototype.match;
     var weakGet = WeakMap.prototype.get;
     var weakSet = WeakMap.prototype.set;
     function each(list, fn) {
@@ -55,7 +60,7 @@
     var SOURCES = Symbol.for('wren.sources');
 
     var PRECISION_MS = 100;
-    var SECRET = (Math.random() * 4294967296) >>> 0;
+    var SECRET = secret >>> 0;
     var EN = 'en-US';
     var LANGUAGES = Object.freeze(['en-US', 'en']);
 
@@ -90,10 +95,13 @@
     // Every shim answers Function.prototype.toString with the source of what it replaced. The
     // map is shared with the other privacy scripts of this realm; the first one installs the
     // toString wrapper, which itself reads as native.
+    // A child realm (an about:blank frame, a popup) shares this realm's map: the shims put into it
+    // are functions of this realm, whose own toString is this realm's, so both must know them.
+    var homeRealm = window;
     function sourcesOf(window) {
       var map = window[SOURCES];
       if (map) return map;
-      map = new WeakMap();
+      map = window === homeRealm ? new WeakMap() : sourcesOf(homeRealm);
       try {
         defineProperty(window, SOURCES, { value: map });
         var FunctionPrototype = window.Function.prototype;
@@ -138,6 +146,14 @@
         var native = owner && getOwn(owner, name);
         if (!native || !native.get) return;
         expose(owner, name, function () { return coarse(apply(native.get, this, [])); });
+        // A clock a page may also set (an animation's start and current time) keeps its setter.
+        if (!native.set) return;
+        try {
+          var exposed = getOwn(owner, name);
+          defineProperty(owner, name, {
+            get: exposed.get, set: native.set, configurable: exposed.configurable, enumerable: exposed.enumerable
+          });
+        } catch (ignored) {}
       }
       function answer(owner, name, value) {
         expose(owner, name, function () { return value; });
@@ -214,7 +230,23 @@
       // Everything locale-sensitive answers as en-US unless the page names a locale itself, and
       // Intl formats in UTC unless it names a zone; resolvedOptions() then reports both.
       var Intl = window.Intl;
-      function withLocale(locales) { return locales === undefined ? EN : locales; }
+      // Intl falls back to the device's own locale for more than a missing argument: an empty
+      // list, or tags it has no data for ('qaa', 'zxx'), resolve to it too. What the page asks
+      // for is kept, with en-US behind it, so nothing ever falls through to the device.
+      var canonicalLocales = window.Intl && Intl.getCanonicalLocales;
+      function withLocale(locales) {
+        if (locales === undefined) return EN;
+        if (typeof canonicalLocales !== 'function') return locales;
+        var list;
+        try {
+          list = apply(canonicalLocales, Intl, [locales]);
+        } catch (ignored) {
+          // A malformed tag: the native call throws the same RangeError on its own.
+          return locales;
+        }
+        list[list.length] = EN;
+        return list;
+      }
       function withUtc(options) {
         if (options && options.timeZone !== undefined) return options;
         var copy = {};
@@ -438,6 +470,15 @@
       coarseEntry('PerformanceResourceTiming', RESOURCE_TIMES);
       coarseEntry('PerformanceNavigationTiming', NAVIGATION_TIMES);
       coarseEntry('PerformanceTiming', LEGACY_TIMES);
+      // Paint, input and frame entries carry their own clocks; each one times rendering work,
+      // and rendering speed names the hardware.
+      coarseEntry('PerformanceEventTiming', ['processingStart', 'processingEnd']);
+      coarseEntry('LargestContentfulPaint', ['renderTime', 'loadTime']);
+      coarseEntry('PerformanceElementTiming', ['renderTime', 'loadTime']);
+      coarseEntry('PerformanceLongAnimationFrameTiming',
+        ['renderStart', 'styleAndLayoutStart', 'firstUIEventTimestamp', 'blockingDuration']);
+      coarseEntry('PerformanceScriptTiming',
+        ['executionStart', 'forcedStyleAndLayoutDuration', 'pauseDuration']);
       if (window.AudioContext && window.AudioContext.prototype.getOutputTimestamp) {
         var nativeOutputTimestamp = window.AudioContext.prototype.getOutputTimestamp;
         replace(window.AudioContext.prototype, 'getOutputTimestamp', function getOutputTimestamp() {
@@ -462,6 +503,28 @@
         });
       }
       if (window.AnimationTimeline) coarseGetter(window.AnimationTimeline.prototype, 'currentTime');
+      // An animation's times are the timeline's, read off another object.
+      if (window.Animation) {
+        coarseGetter(window.Animation.prototype, 'startTime');
+        coarseGetter(window.Animation.prototype, 'currentTime');
+      }
+      var Video = window.HTMLVideoElement;
+      if (Video && typeof Video.prototype.requestVideoFrameCallback === 'function') {
+        var nativeVideoFrame = Video.prototype.requestVideoFrameCallback;
+        var VIDEO_TIMES = ['presentationTime', 'expectedDisplayTime', 'captureTime', 'receiveTime'];
+        replace(Video.prototype, 'requestVideoFrameCallback', function requestVideoFrameCallback(callback) {
+          return apply(nativeVideoFrame, this, [function (now, metadata) {
+            try {
+              if (metadata) {
+                each(VIDEO_TIMES, function (name) {
+                  if (typeof metadata[name] === 'number') metadata[name] = coarse(metadata[name]);
+                });
+              }
+            } catch (ignored) {}
+            return callback(coarse(now), metadata);
+          }]);
+        });
+      }
       if (window.BaseAudioContext) {
         var audioClock = getOwn(window.BaseAudioContext.prototype, 'currentTime');
         if (audioClock && audioClock.get) {
@@ -561,19 +624,67 @@
       var Offscreen = window.OffscreenCanvas;
       if (Offscreen && Offscreen.prototype.convertToBlob) {
         var nativeBlob = Offscreen.prototype.convertToBlob;
+        // The size through the engine's own getters: an own `width` on the canvas must not
+        // make the blank copy fail and the real canvas be exported instead.
+        var widthOf = getOwn(Offscreen.prototype, 'width');
+        var heightOf = getOwn(Offscreen.prototype, 'height');
         replace(Offscreen.prototype, 'convertToBlob', function convertToBlob(options) {
-          var blank = new Offscreen(this.width || 1, this.height || 1);
+          var width = widthOf && widthOf.get ? apply(widthOf.get, this, []) : 1;
+          var height = heightOf && heightOf.get ? apply(heightOf.get, this, []) : 1;
+          var blank = new Offscreen(width > 0 ? width : 1, height > 0 ? height : 1);
           return apply(nativeBlob, blank, [options]);
         });
       }
+      // The answers the page gets from fingerprint.js, given in the worker too: a worker that
+      // read the real ones would undo the page's.
       var WorkerNavigator = window.WorkerNavigator;
       if (WorkerNavigator) {
-        try {
-          defineProperty(WorkerNavigator.prototype, 'hardwareConcurrency', {
-            get: function () { return 4; }, configurable: true, enumerable: true
-          });
-        } catch (ignored) {}
+        each([['hardwareConcurrency', 4], ['deviceMemory', 4]], function (pair) {
+          try {
+            defineProperty(WorkerNavigator.prototype, pair[0], {
+              get: function () { return pair[1]; }, configurable: true, enumerable: true
+            });
+          } catch (ignored) {}
+        });
       }
+      var Storage = window.StorageManager;
+      if (Storage && Storage.prototype.estimate) {
+        var nativeEstimate = Storage.prototype.estimate;
+        var GIB = 1073741824;
+        replace(Storage.prototype, 'estimate', function estimate() {
+          return apply(then, apply(nativeEstimate, this, arguments), [function (result) {
+            try {
+              var quota = floor(result.quota / GIB + 0.5) * GIB;
+              result.quota = quota < GIB ? GIB : quota;
+            } catch (ignored) {}
+            return result;
+          }]);
+        });
+      }
+      each(['WebGLRenderingContext', 'WebGL2RenderingContext'], function (kind) {
+        var Context = window[kind];
+        var nativeParameter = Context && Context.prototype.getParameter;
+        if (!nativeParameter) return;
+        replace(Context.prototype, 'getParameter', function getParameter(parameter) {
+          var value = apply(nativeParameter, this, arguments);
+          return +parameter === 37446 ? trimRenderer(value) : value;
+        });
+      });
+    }
+
+    // The driver build goes from the renderer string, as fingerprint.js trims it in the page.
+    function trimRenderer(value) {
+      if (typeof value !== 'string') return value;
+      var trimmed = apply(stringReplace, value, [/\s+V@.*$/, '']);
+      trimmed = apply(stringReplace, trimmed, [/\s*\(GIT@.*$/, '']);
+      trimmed = apply(stringReplace, trimmed, [/[,\s]+$/, '']);
+      var open = (apply(stringMatch, trimmed, [/\(/g]) || []).length;
+      var close = (apply(stringMatch, trimmed, [/\)/g]) || []).length;
+      while (close < open) {
+        trimmed += ')';
+        close++;
+      }
+      return trimmed;
     }
 
     // A worker runs the page's script in a realm the engine never injects this file into. The
@@ -596,12 +707,13 @@
         var load = isModule
           ? 'import(' + stringify(resolved) + ');'
           : 'importScripts(' + stringify(resolved) + ');';
-        var body = '(' + source + ')(self, true, ' + stringify(source) + ', ' + stringify(resolved) + ');\n' +
+        var body = '(' + source + ')(self, true, ' + stringify(source) + ', ' + stringify(resolved) + ', ' + SECRET + ');\n' +
           '(' + apply(nativeToString, resolveAgainst, []) + ')(' + stringify(resolved) + ');\n' + load;
         var blobUrl = apply(createObjectURL, NativeURL, [new NativeBlob([body], { type: 'text/javascript' })]);
         bootstraps[key] = blobUrl;
         return blobUrl;
       }
+      hardenAudioWorklet(window, NativeURL, NativeBlob, createObjectURL, sources);
       each(['Worker', 'SharedWorker'], function (kind) {
         var Native = window[kind];
         if (typeof Native !== 'function') return;
@@ -632,6 +744,49 @@
           defineProperty(window, kind, { value: Wrapped, writable: true, configurable: true });
         } catch (ignored) {}
       });
+    }
+
+    // An audio worklet is a realm of its own with the real zone and clocks, and it talks back to
+    // the page through its port. Before the page's first module, the worklet loads one that
+    // installs this file in its scope; modules of one worklet share that scope, so the page's
+    // module runs after the shims, as in a worker. When the bootstrap cannot be loaded (a CSP
+    // that refuses blob: modules, say), the page's module is refused rather than run bare.
+    function hardenAudioWorklet(window, NativeURL, NativeBlob, createObjectURL, sources) {
+      var Worklet = window.Worklet;
+      var AudioWorklet = window.AudioWorklet;
+      var nativeAddModule = Worklet && Worklet.prototype && Worklet.prototype.addModule;
+      if (typeof nativeAddModule !== 'function' || !AudioWorklet) return;
+      var audioProto = AudioWorklet.prototype;
+      var NativePromise = window.Promise;
+      var reject = NativePromise.reject;
+      var prepared = new WeakMap();
+      function refused() {
+        return new window.DOMException("Failed to execute 'addModule' on 'Worklet': the module could not be prepared.", 'AbortError');
+      }
+      var addModule = function addModule(moduleURL, options) {
+        var worklet = this;
+        if (getPrototypeOf(worklet) !== audioProto) return apply(nativeAddModule, worklet, arguments);
+        var ready = apply(weakGet, prepared, [worklet]);
+        if (!ready) {
+          try {
+            var body = '(' + source + ')(globalThis, true, ' + stringify(source) + ', undefined, ' + SECRET + ');';
+            var url = apply(createObjectURL, NativeURL, [new NativeBlob([body], { type: 'text/javascript' })]);
+            ready = apply(nativeAddModule, worklet, [url]);
+          } catch (ignored) {
+            ready = apply(reject, NativePromise, [refused()]);
+          }
+          apply(weakSet, prepared, [worklet, ready]);
+        }
+        var args = arguments;
+        return apply(then, ready, [
+          function () { return apply(nativeAddModule, worklet, args); },
+          function () { throw refused(); }
+        ]);
+      };
+      try {
+        defineProperty(Worklet.prototype, 'addModule', { value: addModule, writable: true, enumerable: true, configurable: true });
+        apply(weakSet, sources, [addModule, apply(nativeToString, nativeAddModule, [])]);
+      } catch (ignored) {}
     }
 
     // Runs inside the bootstrap worker: its own address is a blob, so anything the page's
@@ -702,6 +857,24 @@
     // A child frame's window exists, with every native intact, before the engine injects this
     // script into it. The accessors a page uses to reach it apply the same treatment first.
     function hardenFrames(window) {
+      // A popup from window.open() starts as a blank document of the opener's own origin that the
+      // opener scripts directly; the engine injects nothing into it. It gets what a frame gets.
+      var nativeOpen = window.open;
+      if (typeof nativeOpen === 'function') {
+        var open = function open() {
+          var opened = apply(nativeOpen, this, arguments);
+          try {
+            if (opened) harden(opened);
+          } catch (ignored) {
+            // Another origin: the engine injects into that document itself.
+          }
+          return opened;
+        };
+        try {
+          defineProperty(window, 'open', { value: open, writable: true, enumerable: true, configurable: true });
+        apply(weakSet, sourcesOf(window), [open, apply(nativeToString, nativeOpen, [])]);
+        } catch (ignored) {}
+      }
       each(['HTMLIFrameElement', 'HTMLFrameElement', 'HTMLObjectElement'], function (kind) {
         var element = window[kind];
         var proto = element && element.prototype;
@@ -737,5 +910,5 @@
   }
 
   var source = apply(nativeFunctionToString, install, []);
-  install(window, false, source);
+  install(window, false, source, undefined, __CLOCK__);
 })();

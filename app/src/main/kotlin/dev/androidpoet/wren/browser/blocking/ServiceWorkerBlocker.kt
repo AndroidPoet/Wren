@@ -38,8 +38,24 @@ class ServiceWorkerBlocker @Inject constructor(
       if (!allowed()) return contentBlocker.blocked()
       val headers = request.requestHeaders.orEmpty()
       val pageUrl = headers["Referer"] ?: headers["Origin"].orEmpty()
+      // The local-network fence covers workers too, or an internet page's worker could scan
+      // the router and the phone's ports where the page itself is refused. A request that
+      // names no page of its own is treated as an internet page's.
+      val target = request.url?.toString().orEmpty()
+      if (LocalNetwork.isCrossing(
+          pageUrl.ifEmpty { NO_PAGE },
+          target,
+        )
+      ) {
+        return LocalNetwork.refusal()
+      }
       return contentBlocker.intercept(request, pageUrl)
     }
+  }
+
+  private companion object {
+    /** Stands in for a worker request with no Referer or Origin: never on the local network. */
+    const val NO_PAGE = "https://worker.invalid/"
   }
 
   /** Covers the default profile's workers. */

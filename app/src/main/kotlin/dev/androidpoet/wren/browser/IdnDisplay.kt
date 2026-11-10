@@ -59,6 +59,7 @@ object IdnDisplay {
         Character.MODIFIER_LETTER, Character.OTHER_LETTER,
         -> {
           val script = UnicodeScript.of(codePoint)
+          if (script == UnicodeScript.LATIN && !isWordLatin(codePoint)) return false
           if (script != UnicodeScript.COMMON && script != UnicodeScript.INHERITED) scripts += script
           letters.appendCodePoint(codePoint)
           previousWasLetter = true
@@ -84,6 +85,22 @@ object IdnDisplay {
     if (topLevelScript == script) return true
     return !letters.all { it in lookalikes }
   }
+
+  /**
+   * Latin letters that spell words in some language: ASCII, Latin-1, Latin Extended-A and -B,
+   * and the Vietnamese and other precomposed letters of Latin Extended Additional. The rest of
+   * the Latin script is phonetic and technical notation: small capitals (`ᴏ` in `gᴏᴏgle`), the
+   * click letters (`ǀ` in `appǀe`), IPA (`ɩ`). UTS #39 marks those Technical or Obsolete, and
+   * Chromium shows a label that uses them as punycode; so does this.
+   */
+  private fun isWordLatin(codePoint: Int): Boolean = codePoint < 0x80 ||
+    (codePoint in 0x00C0..0x024F && codePoint !in CLICKS && codePoint !in SIGNS) ||
+    codePoint in 0x1E00..0x1EFF
+
+  /** The multiplication and division signs sit among the Latin-1 letters but are not letters. */
+  private val SIGNS = setOf(0x00D7, 0x00F7)
+
+  private val CLICKS = 0x01C0..0x01C3
 
   private fun singleScriptOf(label: String): UnicodeScript? {
     var found: UnicodeScript? = null

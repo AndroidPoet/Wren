@@ -60,4 +60,21 @@ class IdnDisplayTest {
     assertThat(IdnDisplay.forDisplay("mail.xn--bcher-kva.de")).isEqualTo("mail.bücher.de")
     assertThat(IdnDisplay.forDisplay("xn--invalid-.com")).isEqualTo("xn--invalid-.com")
   }
+
+  @Test
+  fun `latin notation letters stay punycode`() {
+    // gᴏᴏgle (small capital o), appǀe (dental click), ɩ (latin iota): Technical in UTS #39.
+    for (label in listOf("gᴏᴏgle", "appǀe", "pɩng")) {
+      val ascii = java.net.IDN.toASCII(label, java.net.IDN.ALLOW_UNASSIGNED)
+      assertThat(IdnDisplay.forDisplay("$ascii.com")).isEqualTo("$ascii.com")
+    }
+  }
+
+  @Test
+  fun `vietnamese and extended latin words show`() {
+    val ascii = java.net.IDN.toASCII("tiếngviệt", java.net.IDN.ALLOW_UNASSIGNED)
+    assertThat(IdnDisplay.forDisplay("$ascii.vn")).isEqualTo("tiếngviệt.vn")
+    val polish = java.net.IDN.toASCII("łódź", java.net.IDN.ALLOW_UNASSIGNED)
+    assertThat(IdnDisplay.forDisplay("$polish.pl")).isEqualTo("łódź.pl")
+  }
 }

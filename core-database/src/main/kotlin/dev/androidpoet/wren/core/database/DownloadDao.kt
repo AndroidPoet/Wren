@@ -39,4 +39,7 @@ interface DownloadDao {
 
   @Query("DELETE FROM downloads WHERE isPrivate = 1")
   suspend fun clearPrivate()
+
+  @Query("DELETE FROM downloads WHERE viaTor = 1")
+  suspend fun clearTor()
 }

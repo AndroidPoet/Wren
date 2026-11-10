@@ -44,6 +44,8 @@ class WrenWebChromeClient(
   private val onFileChooserRequest: (ValueCallback<Array<Uri>>, FileChooserParams) -> Boolean,
   /** True for the one view whose page is on screen and not behind the app lock. */
   private val isOnScreen: (WebView) -> Boolean,
+  /** Puts the opener's document-start scripts on a popup's transport before it is handed over. */
+  private val prepareTransport: (WebView) -> Unit,
 ) : WebChromeClient() {
 
   override fun onProgressChanged(view: WebView, newProgress: Int) {
@@ -161,6 +163,8 @@ class WrenWebChromeClient(
     // load here, outside the opener's profile and cookie jar.
     transportView.settings.blockNetworkLoads = true
     transportView.settings.domStorageEnabled = false
+    // Whatever the opener writes into it runs with the opener's protections, not none.
+    prepareTransport(transportView)
     // A popup shares its opener's storage. On the default profile that would join a private
     // or Tor opener to the clear-net jar; the transport joins the opener's profile instead.
     if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {

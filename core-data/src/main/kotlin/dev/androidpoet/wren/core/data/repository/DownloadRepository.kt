@@ -26,4 +26,7 @@ interface DownloadRepository {
 
   /** Forgets every download a private tab started; the files themselves stay. */
   suspend fun clearPrivate()
+
+  /** Forgets every download made through Tor: its address names a site the identity visited. */
+  suspend fun clearTor()
 }

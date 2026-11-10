@@ -72,6 +72,9 @@
   <string name="no_app_for_link">No app on this device can open this link</string>
   <string name="download_failed">Could not download that file</string>
   <string name="download_needs_tor">This download ran through Tor. Turn Tor on to continue it.</string>
+  <string name="repeat_download_title">Allow another download?</string>
+  <string name="repeat_download_message">%1$s wants to download %2$s.</string>
+  <string name="repeat_download_allow">Download</string>
   <string name="apk_download_title">Download an Android app?</string>
   <string name="apk_download_message">This file installs an app on your phone. Only install apps from sources you trust.</string>
   <string name="apk_download_confirm">Download</string>
@@ -110,7 +113,7 @@
   <string name="cookie_popups">Answer cookie pop-ups</string>
   <string name="cookie_popups_summary">Picks the most private option on consent banners and hides them. Never accepts on your behalf.</string>
   <string name="block_fingerprinting">Resist fingerprinting</string>
-  <string name="block_fingerprinting_summary">Adds imperceptible noise to canvas, audio and WebGL readings, which are otherwise identical every time and identify your device.</string>
+  <string name="block_fingerprinting_summary">Adds imperceptible noise to canvas, audio and WebGL readings, which are otherwise identical every time and identify your device. Always on in Tor mode.</string>
   <string name="trim_referrers">Trim referrers</string>
   <string name="trim_referrers_summary">Tells sites which site you came from, but never which page.</string>
   <string name="burn">Clear everything</string>

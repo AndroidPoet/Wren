@@ -50,6 +50,13 @@ class PrivacyScripts @Inject constructor(
 
   private fun seedOf(mode: Mode): Long = seeds.getValue(mode)
 
+  /**
+   * Where the Tor clock's 100 ms buckets round, one value per identity. Drawn in each frame,
+   * as it was, every frame rounded one instant its own way, and a page reading the clock in a
+   * few hundred frames could average the rounding back to the true time.
+   */
+  private var torClockSecret: Int = SecureRandom().nextInt()
+
   private val fingerprintSource: String by lazy { read("fingerprint.js") }
 
   private val fingerprintCache = EnumMap<Mode, Pair<Long, String>>(Mode::class.java)
@@ -73,6 +80,7 @@ class PrivacyScripts @Inject constructor(
   /** Ends one identity: the Tor one when Tor comes on, the private one when its last tab closes. */
   fun rotateSeed(mode: Mode) {
     seeds[mode] = SecureRandom().nextLong()
+    if (mode == Mode.TOR) torClockSecret = SecureRandom().nextInt()
   }
 
   private val autoconsentScript: String by lazy { read("autoconsent.js") }
@@ -93,7 +101,17 @@ class PrivacyScripts @Inject constructor(
   }
 
   /** The clock moved to UTC and coarsened, the screen reported as the viewport; see the asset. */
-  private val torScript: String by lazy { read("tor.js") }
+  private val torSource: String by lazy { read("tor.js") }
+
+  private var torCache: Pair<Int, String>? = null
+
+  private fun torScript(): String {
+    val secret = torClockSecret
+    torCache?.let { if (it.first == secret) return it.second }
+    val script = torSource.replace("__CLOCK__", secret.toString())
+    torCache = secret to script
+    return script
+  }
 
   /** WebRTC, motion sensors and device lists removed, for private and Tor pages; see the asset. */
   private val privateScript: String by lazy { read("private.js") }
@@ -108,6 +126,7 @@ class PrivacyScripts @Inject constructor(
 
   private class Handlers {
     var tor: ScriptHandler? = null
+    var torClock: Int = 0
     var private: ScriptHandler? = null
     var fingerprint: ScriptHandler? = null
     var fingerprintSeed: Long = 0
@@ -142,7 +161,10 @@ class PrivacyScripts @Inject constructor(
       runCatching { installed.fingerprint?.remove() }
       installed.fingerprint = null
     }
-    installed.fingerprint = sync(webView, installed.fingerprint, settings.blockFingerprinting) {
+    // Under Tor this script is what blanks the canvas and WebGL and pins the hardware answers;
+    // a switch turned off for a normal site must not hand Tor pages the device's real ones.
+    val resistFingerprinting = settings.blockFingerprinting || settings.torMode
+    installed.fingerprint = sync(webView, installed.fingerprint, resistFingerprinting) {
       fingerprintScript(mode)
     }
     installed.fingerprintSeed = seedOf(mode)
@@ -166,7 +188,13 @@ class PrivacyScripts @Inject constructor(
     installed.pings = sync(webView, installed.pings, settings.stripTrackingParameters) {
       pingScript
     }
-    installed.tor = sync(webView, installed.tor, settings.torMode) { torScript }
+    if (installed.tor != null && installed.torClock != torClockSecret) {
+      // A new identity rounds its clock its own way; the old script comes off first.
+      runCatching { installed.tor?.remove() }
+      installed.tor = null
+    }
+    installed.tor = sync(webView, installed.tor, settings.torMode) { torScript() }
+    installed.torClock = torClockSecret
     installed.private = sync(webView, installed.private, isPrivate || settings.torMode) {
       privateScript
     }

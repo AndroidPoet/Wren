@@ -22,11 +22,14 @@ function makeWorld(seed, topOrigin, frameOrigin, tor = false) {
   function pixelsFor(canvas) {
     if (!canvas._pixels) {
       canvas._pixels = new Uint8ClampedArray(canvas.width * canvas.height * 4);
-      for (let i = 0; i < canvas._pixels.length; i++) canvas._pixels[i] = (i * 31) & 255;
+      // A canvas the page drew on has the device's rendering; a fresh one is empty.
+      if (!canvas._fresh) for (let i = 0; i < canvas._pixels.length; i++) canvas._pixels[i] = (i * 31) & 255;
     }
     return canvas._pixels;
   }
-  class ImageData { constructor(data, w, h) { this.data = data; this.width = w; this.height = h; } }
+  // Shaped like Blink: data, width and height are prototype accessors over internal state.
+  class ImageData { constructor(data, w, h) { this._d = data; this.width = w; this.height = h; } }
+  Object.defineProperty(ImageData.prototype, 'data', { get() { return this._d; }, configurable: true, enumerable: true });
   class CanvasRenderingContext2D {
     constructor(canvas) { this.canvas = canvas; }
     getImageData(x, y, w, h) { return new ImageData(Uint8ClampedArray.from(pixelsFor(this.canvas)), w, h); }
@@ -34,10 +37,25 @@ function makeWorld(seed, topOrigin, frameOrigin, tor = false) {
     drawImage(source) { pixelsFor(this.canvas).set(pixelsFor(source)); }
   }
   class HTMLCanvasElement {
-    constructor() { this.width = 0; this.height = 0; canvases.push(this); }
+    constructor() { this._w = 0; this._h = 0; canvases.push(this); }
     getContext(kind) { return kind === '2d' ? new CanvasRenderingContext2D(this) : null; }
     toDataURL() { return 'data:' + Buffer.from(pixelsFor(this)).toString('base64'); }
     toBlob(cb) { cb('data:' + Buffer.from(pixelsFor(this)).toString('base64')); }
+  }
+  for (const k of ['width', 'height']) {
+    Object.defineProperty(HTMLCanvasElement.prototype, k, {
+      get() { return k === 'width' ? this._w : this._h; },
+      set(v) { if (k === 'width') this._w = v; else this._h = v; this._pixels = null; },
+      configurable: true, enumerable: true,
+    });
+  }
+  class Document {
+    createElement(t) {
+      if (t !== 'canvas') return null;
+      const canvas = new HTMLCanvasElement();
+      canvas._fresh = true;
+      return canvas;
+    }
   }
   class WebGLRenderingContext {
     getParameter(p) {
@@ -45,13 +63,29 @@ function makeWorld(seed, topOrigin, frameOrigin, tor = false) {
       if (p === 37445) return 'Qualcomm';
       return null;
     }
-    readPixels(x, y, w, h, f, t, out) { for (let i = 0; i < out.length; i++) out[i] = (i * 7) & 255; }
+    // Writes the pixels it read from dstOffset on, and nothing else, as the engine does.
+    readPixels(x, y, w, h, f, t, out, off) {
+      if (typeof out === 'number') return;
+      off = off || 0;
+      const n = Math.min(w * h * 4, out.length - off);
+      for (let i = 0; i < n; i++) out[off + i] = (i * 7) & 255;
+    }
     // The pixel-pack binding point, as a real context reports it for a pixel readback.
     get PIXEL_PACK_BUFFER() { return 0x88EB; }
   }
   class WebGL2RenderingContext extends WebGLRenderingContext {
     getBufferSubData(target, offset, out) { for (let i = 0; i < out.length; i++) out[i] = (i * 11) & 255; }
+    bindBuffer() {}
+    bindBufferBase() {}
+    bindBufferRange() {}
+    copyBufferSubData() {}
   }
+  class AudioBuffer {
+    constructor() { this._ch = [Float32Array.from({ length: 4096 }, (_, i) => Math.sin(i / 7) * 0.3)]; }
+    getChannelData(c) { return this._ch[c]; }
+    copyFromChannel() {}
+  }
+  Object.defineProperty(AudioBuffer.prototype, 'numberOfChannels', { get() { return this._ch.length; }, configurable: true });
   class AnalyserNode {
     getByteFrequencyData(array) { for (let i = 0; i < array.length; i++) array[i] = i & 255; }
     getByteTimeDomainData(array) { array.fill(128); }
@@ -65,8 +99,9 @@ function makeWorld(seed, topOrigin, frameOrigin, tor = false) {
   Object.defineProperty(Screen.prototype, 'height', { get() { return 2400; }, configurable: true });
   const win = {
     location: { origin: frameOrigin, ancestorOrigins: frameOrigin === topOrigin ? [] : [topOrigin] },
-    document: { referrer: '', createElement: (t) => (t === 'canvas' ? new HTMLCanvasElement() : null) },
+    document: Object.assign(new Document(), { referrer: '' }),
     HTMLCanvasElement, CanvasRenderingContext2D, WebGLRenderingContext, WebGL2RenderingContext, AnalyserNode, Navigator, Screen,
+    AudioBuffer, ImageData, Document, Uint8Array, DataView, ArrayBuffer,
     // A stand-in for the realm's Function so the shared toString wrapper lands somewhere observable.
     Function: { prototype: { toString: Function.prototype.toString } },
     navigator: Object.create(Navigator.prototype), screen: Object.create(Screen.prototype),
@@ -176,9 +211,10 @@ function check(name, ok) { checks.push([name, ok]); }
   check('nonPixelBufferUntouched', vertices.every((v, i) => v === ((i * 11) & 255)));
   // Only the bytes a readback writes are perturbed: those before dstOffset keep what they held.
   const partial = new Uint8Array(4096);
+  partial.fill(5);
   gl.readPixels(0, 0, 32, 32, 0, 0, partial, 2048);
-  check('readbackHonoursDstOffset', partial.subarray(0, 2048).every((v, i) => v === ((i * 7) & 255)) &&
-    partial.subarray(2048).some((v, i) => v !== (((i + 2048) * 7) & 255)));
+  check('readbackHonoursDstOffset', partial.subarray(0, 2048).every((v) => v === 5) &&
+    partial.subarray(2048).some((v, i) => v !== ((i * 7) & 255)));
   // Float readbacks carry noise too, within what a float stores.
   const floats = new Float32Array(1024);
   gl.readPixels(0, 0, 16, 16, 0, 0, floats);
@@ -241,6 +277,104 @@ function check(name, ok) { checks.push([name, ok]); }
 }
 
 let failed = 0;
+// --- A page that tampers with what the shims read must not get native values back --------
+{
+  const native = (c) => Array.from(c._pixels || []);
+  for (const tor of [false, true]) {
+    const tag = tor ? 'tor' : 'normal';
+    const win = makeWorld(777, 'https://a.example', 'https://a.example', tor);
+    const c = canvasOf(win);
+    c.getContext('2d').getImageData(0, 0, 64, 64);
+    const raw = 'data:' + Buffer.from(native(c)).toString('base64');
+    // An own width of 0 shadows the accessor: the export must not fall back to the real canvas.
+    Object.defineProperty(c, 'width', { value: 0 });
+    let url = null;
+    try { url = c.toDataURL(); } catch (e) { url = e.name; }
+    check(tag + 'OwnWidthDoesNotExportRaw', url !== raw);
+    // A createElement that throws makes no difference: the shim kept the engine's.
+    const c2 = canvasOf(win);
+    c2.getContext('2d').getImageData(0, 0, 64, 64);
+    const raw2 = 'data:' + Buffer.from(native(c2)).toString('base64');
+    const ce = win.Document.prototype.createElement;
+    win.Document.prototype.createElement = () => { throw new Error('no'); };
+    try { url = c2.toDataURL(); } catch (e) { url = e.name; }
+    win.Document.prototype.createElement = ce;
+    check(tag + 'BrokenCreateElementDoesNotExportRaw', url !== raw2 && url !== 'Error');
+    // A swapped ImageData.prototype.data getter does not divert the noise to a decoy.
+    const real = Object.getOwnPropertyDescriptor(win.ImageData.prototype, 'data');
+    Object.defineProperty(win.ImageData.prototype, 'data', { get() { return new Uint8ClampedArray(4); }, configurable: true });
+    const image = canvasOf(win).getContext('2d').getImageData(0, 0, 64, 64);
+    Object.defineProperty(win.ImageData.prototype, 'data', real);
+    const got = real.get.call(image);
+    check(tag + 'SwappedImageDataGetterStillNoised', tor ? got.every((v) => v === 0) : got.some((v, i) => v !== ((i * 31) & 255)));
+    // An own BYTES_PER_ELEMENT or length on the destination changes nothing.
+    const gl = new win.WebGLRenderingContext();
+    const px = new Uint8Array(64 * 64 * 4);
+    Object.defineProperty(px, 'BYTES_PER_ELEMENT', { value: undefined });
+    Object.defineProperty(px, 'length', { value: 0 });
+    gl.readPixels(0, 0, 64, 64, 0x1908, 0x1401, px);
+    check(tag + 'LyingDestinationStillTreated', tor ? px.every((v) => v === 0) : px.some((v, i) => v !== ((i * 7) & 255)));
+  }
+}
+
+{
+  const win = makeWorld(777, 'https://a.example', 'https://a.example');
+  // A no-op putImageData leaves the copy unnoised no longer: the shim uses the engine's.
+  const c = canvasOf(win);
+  c.getContext('2d').getImageData(0, 0, 64, 64);
+  const raw = 'data:' + Buffer.from(Array.from(c._pixels)).toString('base64');
+  const put = win.CanvasRenderingContext2D.prototype.putImageData;
+  win.CanvasRenderingContext2D.prototype.putImageData = function () {};
+  const url = c.toDataURL();
+  win.CanvasRenderingContext2D.prototype.putImageData = put;
+  check('noOpPutImageDataStillNoised', url !== raw);
+  // %TypedArray%.prototype.length answering 0 does not empty the noise loops.
+  const TA = Object.getPrototypeOf(Uint8Array.prototype);
+  const len = Object.getOwnPropertyDescriptor(TA, 'length');
+  Object.defineProperty(TA, 'length', { get() { return 0; }, configurable: true });
+  let data;
+  try { data = canvasOf(win).getContext('2d').getImageData(0, 0, 64, 64); } finally { Object.defineProperty(TA, 'length', len); }
+  check('replacedLengthGetterStillNoised', win.ImageData.prototype.__lookupGetter__('data').call(data).some((v, i) => v !== ((i * 31) & 255)));
+  // A pooled destination: the written pixels are noised, the rest of the pool is untouched.
+  const gl = new win.WebGLRenderingContext();
+  const pool = new Uint8Array(1 << 20);
+  pool.fill(9);
+  gl.readPixels(0, 0, 4, 4, 0x1908, 0x1401, pool);
+  check('pooledReadNoisedOnWrittenPixels', pool.subarray(0, 64).some((v, i) => v !== ((i * 7) & 255)));
+  check('pooledReadLeavesRestAlone', pool.subarray(64).every((v) => v === 9));
+  // A zero channel count from a replaced getter does not skip the audio noise.
+  const buffer = new win.AudioBuffer();
+  const want = Float32Array.from(buffer._ch[0]);
+  const channels = Object.getOwnPropertyDescriptor(win.AudioBuffer.prototype, 'numberOfChannels');
+  Object.defineProperty(win.AudioBuffer.prototype, 'numberOfChannels', { get() { return 0; }, configurable: true });
+  const samples = buffer.getChannelData(0);
+  Object.defineProperty(win.AudioBuffer.prototype, 'numberOfChannels', channels);
+  check('replacedChannelCountStillNoised', samples.some((v, i) => v !== want[i]));
+  // An own length on an analyser destination does not skip the noise.
+  const analysed = new Float32Array(1024);
+  Object.defineProperty(analysed, 'length', { value: 0 });
+  new win.AnalyserNode().getFloatFrequencyData(analysed);
+  check('analyserOwnLengthStillNoised', analysed.some((v) => v !== -30));
+  // The engine reads the target as a number, and so does the shim.
+  const gl2 = new win.WebGL2RenderingContext();
+  const asText = new Uint8Array(4096);
+  gl2.getBufferSubData('35051', 0, asText);
+  check('stringTargetStillNoised', asText.some((v, i) => v !== ((i * 11) & 255)));
+  // A pixel buffer read back through another binding point is still pixels.
+  const pbo = {};
+  gl2.bindBuffer(0x88EB, pbo);
+  gl2.readPixels(0, 0, 8, 8, 0x1908, 0x1401, 0);
+  gl2.bindBuffer(0x8F36, pbo);
+  const rebound = new Uint8Array(4096);
+  gl2.getBufferSubData(0x8F36, 0, rebound);
+  check('reboundPixelBufferStillNoised', rebound.some((v, i) => v !== ((i * 11) & 255)));
+  const other = {};
+  gl2.bindBuffer(0x8F36, other);
+  const plain = new Uint8Array(4096);
+  gl2.getBufferSubData(0x8F36, 0, plain);
+  check('otherBufferUntouched', plain.every((v, i) => v === ((i * 11) & 255)));
+}
+
 for (const [name, ok] of checks) {
   console.log((ok ? 'ok   ' : 'FAIL ') + name);
   if (!ok) failed++;

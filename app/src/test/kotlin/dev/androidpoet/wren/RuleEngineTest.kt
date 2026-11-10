@@ -190,6 +190,43 @@ class FilterRuleTest {
   }
 
   @Test
+  fun `a long address repeating a rule's token is scanned once per rule`() {
+    val engine = RuleEngine.parse(
+      sequenceOf("/koko-analytics/assets/dist/js/*script.js", "/oo/*/l.js"),
+    )
+    val padding = "koko-analytics/assets/dist/js/oo/".repeat(7_000)
+    val miss = "https://evil.example/$padding"
+    val started = System.nanoTime()
+    assertThat(
+      engine.decide(RequestContext(miss), RequestType.SCRIPT, false, "evil.example", false),
+    ).isNull()
+    val hit = "https://evil.example/${padding}script.js"
+    assertThat(
+      engine.decide(RequestContext(hit), RequestType.SCRIPT, false, "evil.example", false),
+    ).isNotNull()
+    // Unbounded, the miss alone was about 10^9 character steps; bounded, it is milliseconds.
+    assertThat((System.nanoTime() - started) / 1_000_000).isLessThan(2_000L)
+  }
+
+  @Test
+  fun `a wildcard rule still matches at a later occurrence of its token`() {
+    val engine = RuleEngine.parse(sequenceOf("/ads/*^banner"))
+    val url = "https://site.example/ads/x/ads/y/banner?z"
+    assertThat(
+      engine.decide(RequestContext(url), RequestType.IMAGE, false, "site.example", false),
+    ).isNotNull()
+    assertThat(
+      engine.decide(
+        RequestContext("https://site.example/ads/x/ads/ybanner"),
+        RequestType.IMAGE,
+        false,
+        "site.example",
+        false,
+      ),
+    ).isNull()
+  }
+
+  @Test
   fun `document exceptions are recognised by host`() {
     assertThat(
       FilterRule.documentExceptionHost("@@||example.com^\$document"),

@@ -194,6 +194,11 @@ class RuleEngine private constructor(
     }
     val tokens = request.tokens
     val starts = request.tokenStarts
+    // A token that recurs puts the same rules in front of the address again. A rule tested
+    // anywhere in the address is tested once; a rule tied to the token's position keeps what
+    // its earlier attempts learned, so no rule scans a long address more than once.
+    var triedAnywhere: HashSet<FilterRule>? = null
+    var failedFrom: HashMap<FilterRule, IntArray>? = null
     for (i in 0 until request.tokenCount) {
       val bucket = index.get(tokens[i]) ?: continue
       val tokenStart = starts[i]
@@ -203,8 +208,17 @@ class RuleEngine private constructor(
         val hit = if (offset >= 0) {
           // The token was found here, so the pattern can only start this far before it.
           val at = tokenStart - offset
-          at >= 0 && rule.pattern.matchesAligned(url, at, request.hostStart, request.hostEnd)
+          if (at < 0) continue
+          val memo = if (rule.pattern.hasWildcard) {
+            val known = failedFrom ?: HashMap<FilterRule, IntArray>().also { failedFrom = it }
+            known.getOrPut(rule) { intArrayOf(Int.MAX_VALUE) }
+          } else {
+            null
+          }
+          rule.pattern.matchesAligned(url, at, request.hostStart, request.hostEnd, memo)
         } else {
+          val tried = triedAnywhere ?: HashSet<FilterRule>().also { triedAnywhere = it }
+          if (!tried.add(rule)) continue
           rule.pattern.matches(url, request.hostStart, request.hostEnd)
         }
         if (hit) return rule

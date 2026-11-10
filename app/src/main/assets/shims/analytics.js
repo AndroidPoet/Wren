@@ -31,11 +31,20 @@
 
   var tracker = { get: noop, set: noop, send: noop };
 
-  function answer(args) {
+  var tagOf = Object.prototype.toString;
+  var isArray = Array.isArray;
+
+  // The page's own gtag snippet, `function gtag(){dataLayer.push(arguments);}`, runs before this
+  // file and stays window.gtag: every call reaches the data layer as one Arguments object, with
+  // the event_callback inside its third element. Such an entry is looked into, one level deep.
+  function answer(args, nested) {
     for (var i = 0; i < args.length; i++) {
       var arg = args[i];
       if (typeof arg === 'function') {
         later(arg, tracker);
+      } else if (!nested && arg && typeof arg === 'object' &&
+        (isArray(arg) || tagOf.call(arg) === '[object Arguments]')) {
+        answer(arg, true);
       } else if (arg && typeof arg === 'object') {
         if (typeof arg.hitCallback === 'function') later(arg.hitCallback);
         if (typeof arg.event_callback === 'function') later(arg.event_callback);
@@ -68,6 +77,12 @@
   // read the data layer back, and their completion callbacks run.
   window.dataLayer = window.dataLayer || [];
   var layer = window.dataLayer;
+  // Calls made before this file loaded are already in the layer, waiting to be flushed.
+  if (layer && typeof layer.length === 'number') {
+    for (var j = 0; j < layer.length; j++) {
+      try { answer([layer[j]]); } catch (ignored) {}
+    }
+  }
   if (typeof layer.push !== 'function') {
     layer.push = noop;
   } else {

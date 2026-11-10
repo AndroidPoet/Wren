@@ -108,6 +108,83 @@ const rejected = async (ctx, code) => { try { await vm.runInContext(code, ctx); 
   third.childRealm = blank;
   vm.runInContext('new HTMLIFrameElement(childRealm).contentWindow', third);
   check('blankChildOfThirdPartyDenied', threw(blank, 'localStorage'));
+  // The child's shims are functions of the parent's realm; read from either realm they are native.
+  check('childRealmShimReadsNative', /\[native code\]/.test(vm.runInContext('Object.getOwnPropertyDescriptor(window, "localStorage").get.toString()', blank)) &&
+    /\[native code\]/.test(vm.runInContext('Function.prototype.toString.call(Object.getOwnPropertyDescriptor(window, "localStorage").get)', blank)));
+
+  // Storage buckets and the old file system API are the same per-site storage under other names.
+  const buckets = realm('https://tracker.example', ['https://site-a.example']);
+  vm.runInContext(`
+    StorageBucketManager = class StorageBucketManager { open() { return Promise.resolve({}); } keys() { return Promise.resolve([]); } };
+    webkitRequestFileSystem = function (type, size, ok) { ok({ root: 'fs' }); };
+    setTimeout = function (fn) { fn(); };`, buckets);
+  vm.runInContext(source, buckets);
+  check('thirdPartyStorageBucketsDenied', await rejected(buckets, 'new StorageBucketManager().open("id")') &&
+    await rejected(buckets, 'new StorageBucketManager().keys()'));
+  check('thirdPartyFileSystemDenied', vm.runInContext(`var got = 'none';
+    webkitRequestFileSystem(0, 1, function () { got = 'granted'; }, function (e) { got = e.name; }); got`, buckets) === 'SecurityError');
+
+  // A worker of a third-party frame starts from a bootstrap that denies the same storage in the
+  // worker's scope, then loads the frame's script by its absolute address.
+  function workerWorld(ctx) {
+    vm.runInContext(`
+      blobs = []; started = [];
+      URL = class URL { constructor(u, b) { this.href = /^[a-z]+:/.test(u) ? u : b.replace(/[^/]*$/, '') + u; }
+        static createObjectURL(blob) { blobs.push(blob.parts.join('')); return 'blob:https://tracker.example/' + blobs.length; } };
+      Blob = class Blob { constructor(parts) { this.parts = parts; } };
+      Worker = class Worker { constructor(url, options) { started.push(url); } };
+      location.href = 'https://tracker.example/frame/index.html';`, ctx);
+  }
+  const framed = realm('https://tracker.example', ['https://site-a.example']);
+  workerWorld(framed);
+  vm.runInContext(source, framed);
+  vm.runInContext('new Worker("job.js")', framed);
+  check('thirdPartyWorkerStartsFromBootstrap', vm.runInContext('started[0]', framed) === 'blob:https://tracker.example/1');
+  // The stub here is a class, so "native" means: reads as the constructor it replaced.
+  check('workerLooksNative', vm.runInContext('Worker.name === "Worker" && /^class Worker/.test(Worker.toString())', framed));
+  check('workerNeedsNew', (() => {
+    try { vm.runInContext('Worker("job.js")', framed); return false; } catch (e) { return e.name === 'TypeError'; }
+  })());
+  const bootstrap = vm.runInContext('blobs[0]', framed);
+  const scope = vm.createContext({});
+  vm.runInContext(`
+    self = this; WorkerGlobalScope = function () {};
+    Object = Object; Symbol = Symbol; Promise = Promise; Function = Function; Error = Error; WeakMap = WeakMap;
+    DOMException = class DOMException extends Error { constructor(m, n) { super(m); this.name = n; } };
+    // As in Blink: a worker's storage accessors sit on the prototype chain, not on the global.
+    Object.setPrototypeOf(self, Object.create(Object.getPrototypeOf(self), {
+      indexedDB: { get() { return { open() {} }; }, configurable: true, enumerable: true },
+      caches: { get() { return {}; }, configurable: true, enumerable: true },
+    }));
+    StorageManager = class StorageManager { getDirectory() { return Promise.resolve('dir'); } };
+    LockManager = class LockManager { request() { return Promise.resolve('lock'); } };
+    BroadcastChannel = class BroadcastChannel {};
+    imported = []; importScripts = function () { for (var i = 0; i < arguments.length; i++) imported.push(arguments[i]); };
+    location = { href: 'blob:https://tracker.example/1' };
+    blobs = []; started = [];
+    URL = class URL { constructor(u, b) { if (b && typeof b === 'object') b = b.href; this.href = /^[a-z]+:/.test(u) ? u : b.replace(/[^/]*$/, '') + u; }
+      static createObjectURL(blob) { blobs.push(blob.parts.join('')); return 'blob:https://tracker.example/w' + blobs.length; } };
+    Blob = class Blob { constructor(parts) { this.parts = parts; } };
+    Worker = class Worker { constructor(url) { started.push(url); } };`, scope);
+  vm.runInContext(bootstrap, scope);
+  check('workerIndexedDbDenied', threw(scope, 'indexedDB'));
+  check('workerCachesDenied', threw(scope, 'caches'));
+  check('workerOpfsDenied', await rejected(scope, 'new StorageManager().getDirectory()'));
+  check('workerLocksDenied', await rejected(scope, 'new LockManager().request("x")'));
+  check('workerBroadcastChannelDenied', threw(scope, 'new BroadcastChannel("x")'));
+  check('workerLoadsFrameScriptByAddress', vm.runInContext('imported[0]', scope) === 'https://tracker.example/frame/job.js');
+  vm.runInContext('importScripts("lib.js")', scope);
+  check('workerRelativeImportsResolveAgainstScript', vm.runInContext('imported[1]', scope) === 'https://tracker.example/frame/lib.js');
+  vm.runInContext('new Worker("nested.js")', scope);
+  check('nestedWorkerStartsFromBootstrap', vm.runInContext('started[0]', scope) === 'blob:https://tracker.example/w1' &&
+    /nested\.js/.test(vm.runInContext('blobs[0]', scope)));
+
+  // A first-party frame's worker is the page's own business.
+  const own = realm('https://cdn.site-a.example', ['https://www.site-a.example']);
+  workerWorld(own);
+  vm.runInContext(source, own);
+  vm.runInContext('new Worker("job.js")', own);
+  check('firstPartyWorkerUntouched', vm.runInContext('started[0]', own) === 'job.js');
 
   let failed = 0;
   for (const [name, ok] of checks) {

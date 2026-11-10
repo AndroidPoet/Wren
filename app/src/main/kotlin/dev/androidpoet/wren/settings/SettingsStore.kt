@@ -14,6 +14,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.onStart
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -302,10 +303,36 @@ class SettingsStore @Inject constructor(
     get() = preferences.getStringSet(KEY_JS_OFF_HOSTS, emptySet()).orEmpty()
     set(value) = preferences.edit { putStringSet(KEY_JS_OFF_HOSTS, value) }
 
-  fun isJsDisabledFor(host: String): Boolean = host in jsOffHosts
+  /**
+   * Per-site choices made in a private or Tor tab, by kind and then host. They are kept in
+   * memory and never written: a host name on disk would be a record of a site visited where
+   * nothing is recorded, past Forget, Burn and New identity. [forgetSessionSiteChoices] drops
+   * them when that session ends. A choice here is read before the stored one.
+   */
+  private val sessionSiteChoices = ConcurrentHashMap<String, ConcurrentHashMap<String, Boolean>>()
 
-  fun setJsDisabledFor(host: String, disabled: Boolean) {
+  fun forgetSessionSiteChoices() = sessionSiteChoices.clear()
+
+  private fun sessionChoice(kind: String, host: String): Boolean? = sessionSiteChoices[kind]?.get(
+    host,
+  )
+
+  /** True when the choice was for this session only, and so has been kept off the disk. */
+  private fun choose(kind: String, host: String, value: Boolean, sessionOnly: Boolean): Boolean {
+    if (sessionOnly) {
+      sessionSiteChoices.getOrPut(kind) { ConcurrentHashMap() }[host] = value
+      return true
+    }
+    sessionSiteChoices[kind]?.remove(host)
+    return false
+  }
+
+  fun isJsDisabledFor(host: String): Boolean =
+    sessionChoice(KEY_JS_OFF_HOSTS, host) ?: (host in jsOffHosts)
+
+  fun setJsDisabledFor(host: String, disabled: Boolean, sessionOnly: Boolean = false) {
     if (host.isBlank()) return
+    if (choose(KEY_JS_OFF_HOSTS, host, disabled, sessionOnly)) return
     val updated = jsOffHosts.toMutableSet()
     if (disabled) updated.add(host) else updated.remove(host)
     jsOffHosts = updated
@@ -315,10 +342,12 @@ class SettingsStore @Inject constructor(
     get() = preferences.getStringSet(KEY_DESKTOP_HOSTS, emptySet()).orEmpty()
     set(value) = preferences.edit { putStringSet(KEY_DESKTOP_HOSTS, value) }
 
-  fun isDesktopSite(host: String): Boolean = host in desktopHosts
+  fun isDesktopSite(host: String): Boolean =
+    sessionChoice(KEY_DESKTOP_HOSTS, host) ?: (host in desktopHosts)
 
-  fun setDesktopSite(host: String, desktop: Boolean) {
+  fun setDesktopSite(host: String, desktop: Boolean, sessionOnly: Boolean = false) {
     if (host.isBlank()) return
+    if (choose(KEY_DESKTOP_HOSTS, host, desktop, sessionOnly)) return
     val updated = desktopHosts.toMutableSet()
     if (desktop) updated.add(host) else updated.remove(host)
     desktopHosts = updated
@@ -331,9 +360,11 @@ class SettingsStore @Inject constructor(
       preferences.edit { putStringSet(KEY_ALLOWLIST, value) }
     }
 
-  fun isAllowlisted(host: String): Boolean = host in allowlistCached
+  fun isAllowlisted(host: String): Boolean =
+    sessionChoice(KEY_ALLOWLIST, host) ?: (host in allowlistCached)
 
-  fun setAllowlisted(host: String, allowlisted: Boolean) {
+  fun setAllowlisted(host: String, allowlisted: Boolean, sessionOnly: Boolean = false) {
+    if (choose(KEY_ALLOWLIST, host, allowlisted, sessionOnly)) return
     // getStringSet hands back a live set that must not be mutated in place.
     val updated = allowlistedHosts.toMutableSet()
     if (allowlisted) updated.add(host) else updated.remove(host)
@@ -344,14 +375,20 @@ class SettingsStore @Inject constructor(
    * Sites whose cookies and storage survive "clear browsing data". Clearing is for the sites
    * a person visited once; the handful they are signed in to every day stay signed in.
    */
-  fun keptSignedInHosts(): Set<String> =
-    preferences.getStringSet(KEY_KEEP_SIGNED_IN, emptySet()).orEmpty().toSet()
+  fun keptSignedInHosts(): Set<String> {
+    val stored = preferences.getStringSet(KEY_KEEP_SIGNED_IN, emptySet()).orEmpty().toMutableSet()
+    sessionSiteChoices[KEY_KEEP_SIGNED_IN]?.forEach { (host, kept) ->
+      if (kept) stored.add(host) else stored.remove(host)
+    }
+    return stored
+  }
 
   fun isKeptSignedIn(host: String): Boolean = host in keptSignedInHosts()
 
-  fun setKeptSignedIn(host: String, kept: Boolean) {
+  fun setKeptSignedIn(host: String, kept: Boolean, sessionOnly: Boolean = false) {
     if (host.isBlank()) return
-    val updated = keptSignedInHosts().toMutableSet()
+    if (choose(KEY_KEEP_SIGNED_IN, host, kept, sessionOnly)) return
+    val updated = preferences.getStringSet(KEY_KEEP_SIGNED_IN, emptySet()).orEmpty().toMutableSet()
     if (kept) updated.add(host) else updated.remove(host)
     preferences.edit { putStringSet(KEY_KEEP_SIGNED_IN, updated) }
   }

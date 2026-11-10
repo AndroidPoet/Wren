@@ -62,6 +62,17 @@ class SpeculativeLoader internal constructor(
     { host -> InetAddress.getAllByName(host) },
   )
 
+  /**
+   * An onion name only means something inside Tor; looked up anywhere else it goes to the
+   * network's resolver in full (RFC 7686 says it must never reach DNS). A typed or half-typed
+   * one is never warmed.
+   */
+  private fun isOnion(url: String): Boolean {
+    val host = url.substringAfter("://").substringBefore('/').substringBefore('?')
+      .substringBefore('#').substringBeforeLast(':').trimEnd('.')
+    return host.endsWith(".onion", ignoreCase = true)
+  }
+
   /** Speculation is off by setting, and always off under Tor. */
   private val allowed: Boolean get() = settings.preloadPages && !settings.torMode
   private var currentSignal: CancellationSignal? = null
@@ -101,7 +112,9 @@ class SpeculativeLoader internal constructor(
    */
   fun primeForSites(urls: List<String>) {
     val profile = profile ?: return
-    val origins = urls.map { originOf(it) }.filter { it.isNotBlank() }.distinct()
+    val origins = urls.filterNot(
+      ::isOnion,
+    ).map { originOf(it) }.filter { it.isNotBlank() }.distinct()
     if (allowed && origins.isNotEmpty()) {
       if (WebViewFeature.isFeatureSupported(WebViewFeature.ADD_QUIC_HINTS_V1)) {
         runCatching { profile.addQuicHints(origins.toSet()) }
@@ -147,7 +160,7 @@ class SpeculativeLoader internal constructor(
    * socket where preconnect exists. No prefetch - nothing about the page itself is fetched.
    */
   fun warmOrigin(url: String) {
-    if (!allowed || !url.startsWith("https://", ignoreCase = true)) return
+    if (!allowed || !url.startsWith("https://", ignoreCase = true) || isOnion(url)) return
     val origin = originOf(url)
     if (origin.isBlank() || origin == lastWarmedOrigin) return
     lastWarmedOrigin = origin
@@ -174,7 +187,7 @@ class SpeculativeLoader internal constructor(
    */
   fun speculate(url: String, isPrivate: Boolean) {
     // Prefetch and preconnect only speak https, and a private tab must leave no early footprints.
-    if (isPrivate || !allowed || !url.startsWith("https://", ignoreCase = true)) {
+    if (isPrivate || !allowed || !url.startsWith("https://", ignoreCase = true) || isOnion(url)) {
       return
     }
     if (url == lastUrl) return

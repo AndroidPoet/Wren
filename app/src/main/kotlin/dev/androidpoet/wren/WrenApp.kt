@@ -13,6 +13,7 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import androidx.webkit.WebViewStartUpConfig
 import dagger.hilt.android.HiltAndroidApp
+import dev.androidpoet.wren.browser.SpeculativeLoader
 import dev.androidpoet.wren.browser.blocking.FilterListManager
 import dev.androidpoet.wren.browser.privacy.PrivacyScripts
 import dev.androidpoet.wren.browser.tor.TorController
@@ -50,6 +51,9 @@ class WrenApp : Application() {
   @Inject
   lateinit var blobDownloader: BlobDownloader
 
+  @Inject
+  lateinit var speculativeLoader: SpeculativeLoader
+
   /**
    * True until the browser screen's first creation in this process. A screen recreated after
    * the process was killed arrives with saved state, like one recreated for a rotation, but
@@ -76,8 +80,15 @@ class WrenApp : Application() {
     // Transfers follow the route from here, not from a screen: Settings can flip Tor while the
     // browser screen is stopped behind it, and a download started direct must not run on.
     torController.addRouteListener { toTor ->
+      // Per-site choices made on one route are that session's, not the next one's.
+      settings.forgetSessionSiteChoices()
       downloadController.dropOffRoute(toTor)
-      if (toTor) blobDownloader.cancelAll()
+      if (toTor) {
+        blobDownloader.cancelAll()
+        // A startup prefetch still queued would otherwise leave through the Tor exit carrying
+        // the default profile's cookies, whichever screen turned Tor on.
+        speculativeLoader.cancel()
+      }
     }
     // Puts the proxy in front of WebView before any activity can load a page.
     torController.startIfEnabled()

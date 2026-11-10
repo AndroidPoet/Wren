@@ -40,17 +40,16 @@
   var max = Math.max;
   var round = Math.round;
   var fill = Uint8Array.prototype.fill;
-  var subarray = Uint8Array.prototype.subarray;
   var then = Promise.prototype.then;
   var weakGet = WeakMap.prototype.get;
   var weakSet = WeakMap.prototype.set;
   var weakHas = typeof WeakSet === 'function' ? WeakSet.prototype.has : null;
   var weakAdd = typeof WeakSet === 'function' ? WeakSet.prototype.add : null;
   var stringReplace = String.prototype.replace;
+  var charCodeAt = String.prototype.charCodeAt;
+  var construct = Reflect.construct;
   var stringMatch = String.prototype.match;
   var getPrototypeOf = Object.getPrototypeOf;
-  var Float32Proto = typeof Float32Array === 'function' ? Float32Array.prototype : null;
-  var Float64Proto = typeof Float64Array === 'function' ? Float64Array.prototype : null;
   var defineProperty = Object.defineProperty;
   var getOwn = Object.getOwnPropertyDescriptor;
   var MARK = Symbol.for('wren.fingerprint');
@@ -64,10 +63,13 @@
   // Every shim answers Function.prototype.toString with the source of what it replaced. The map
   // is shared with the other privacy scripts of this realm; whichever runs first installs the
   // toString wrapper, which itself reads as native.
+  // A child realm (an about:blank frame, a popup) shares this realm's map: the shims put into it
+  // are functions of this realm, whose own toString is this realm's, so both must know them.
+  var homeRealm = window;
   function sourcesOf(window) {
     var map = window[SOURCES];
     if (map) return map;
-    map = new WeakMap();
+    map = window === homeRealm ? new WeakMap() : sourcesOf(homeRealm);
     try {
       defineProperty(window, SOURCES, { value: map });
       var FunctionPrototype = window.Function.prototype;
@@ -100,6 +102,48 @@
     var Screen = window.Screen;
     var StorageManager = window.StorageManager;
     var URL = window.URL;
+
+    // What a read returned is measured with the engine's own getters, taken now. A page can
+    // shadow `length`, `width` or `data` with its own property, or replace the prototype's
+    // getter, and point the noise at a decoy or make the copy fail; it cannot reach these.
+    function getterOf(proto, name) {
+      var descriptor = proto && getOwn(proto, name);
+      return descriptor && descriptor.get;
+    }
+    var TypedArrayProto = window.Uint8Array && getPrototypeOf(window.Uint8Array.prototype);
+    var lengthGetter = getterOf(TypedArrayProto, 'length');
+    var kindGetter = getterOf(TypedArrayProto, Symbol.toStringTag);
+    var bufferGetter = getterOf(TypedArrayProto, 'buffer');
+    var byteOffsetGetter = getterOf(TypedArrayProto, 'byteOffset');
+    var dataViewBuffer = window.DataView && getterOf(window.DataView.prototype, 'buffer');
+    var dataViewOffset = window.DataView && getterOf(window.DataView.prototype, 'byteOffset');
+    var dataViewLength = window.DataView && getterOf(window.DataView.prototype, 'byteLength');
+    var arrayBufferLength = window.ArrayBuffer && getterOf(window.ArrayBuffer.prototype, 'byteLength');
+    var NativeBytes = window.Uint8Array;
+    var imageDataGetter = window.ImageData && getterOf(window.ImageData.prototype, 'data');
+    var channelCountGetter = AudioBuffer && getterOf(AudioBuffer.prototype, 'numberOfChannels');
+    var ELEMENT_SIZES = {
+      Int8Array: 1, Uint8Array: 1, Uint8ClampedArray: 1, Int16Array: 2, Uint16Array: 2,
+      Float16Array: 2, Int32Array: 4, Uint32Array: 4, Float32Array: 4, Float64Array: 8,
+      BigInt64Array: 8, BigUint64Array: 8
+    };
+
+    /** The typed array's kind, or undefined for anything that is not one. */
+    function kindOf(view) {
+      try { return apply(kindGetter, view, []); } catch (ignored) { return undefined; }
+    }
+    function lengthOf(view) {
+      return apply(lengthGetter, view, []);
+    }
+    function isFloatKind(kind) {
+      return kind === 'Float32Array' || kind === 'Float64Array' || kind === 'Float16Array';
+    }
+    /** The bytes of elements [start, end) of a typed array, as an array this script made. */
+    function bytesOf(view, kind, start, end) {
+      var size = ELEMENT_SIZES[kind];
+      var offset = apply(byteOffsetGetter, view, []) + start * size;
+      return construct(NativeBytes, [apply(bufferGetter, view, []), offset, (end - start) * size]);
+    }
 
     // The session key: two words no page sees. A site learns its own noise, which is a keyed
     // hash of the key and the site, and nothing in that answer leads back to the key or to
@@ -151,7 +195,7 @@
     function hash(value) {
       var h = 2166136261;
       for (var i = 0; i < value.length; i++) {
-        h ^= value.charCodeAt(i);
+        h ^= apply(charCodeAt, value, [i]);
         h = imul(h, 16777619) >>> 0;
       }
       return h >>> 0;
@@ -194,8 +238,11 @@
      * exactly that one stream.
      */
     function Noise(salt, content) {
-      var words = SITE_WORDS.slice();
-      words.push(salt | 0, content | 0);
+      var count = SITE_WORDS.length;
+      var words = new Array(count + 2);
+      for (var w = 0; w < count; w++) words[w] = SITE_WORDS[w];
+      words[count] = salt | 0;
+      words[count + 1] = content | 0;
       this.s = (siphash(KEY0, KEY1, words) || 1) >>> 0;
     }
     Noise.prototype.next = function () {
@@ -236,22 +283,17 @@
 
     // --- Canvas ------------------------------------------------------------------------
     // Every byte of the image folded into one word: cheap, and any flipped bit changes it.
-    function contentHash(data) {
+    function contentHash(data, start, end) {
       var h = 2166136261;
-      for (var i = 0; i < data.length; i++) h = imul(h ^ (data[i] | 0), 16777619);
+      for (var i = start; i < end; i++) h = imul(h ^ (data[i] | 0), 16777619);
       return h >>> 0;
     }
 
     // Float samples hashed by their scaled value: enough to tell two readings apart.
-    function floatHash(data) {
+    function floatHash(data, start, end) {
       var h = 2166136261;
-      for (var i = 0; i < data.length; i++) h = imul(h ^ ((data[i] * 1e6) | 0), 16777619);
+      for (var i = start; i < end; i++) h = imul(h ^ ((data[i] * 1e6) | 0), 16777619);
       return h >>> 0;
-    }
-
-    function isFloatView(view) {
-      var proto = getPrototypeOf(view);
-      return proto === Float32Proto || proto === Float64Proto;
     }
 
     // A handful of pixels per read get one low bit flipped: invisible, and enough to change any
@@ -261,9 +303,9 @@
     // at a time through a pixel buffer, say - is touched too, or the bytes would come back
     // exact one by one.
     function perturbPixels(data, salt) {
-      var length = data.length;
+      var length = lengthOf(data);
       if (length < 1) return;
-      var noise = new Noise(salt ^ length, contentHash(data));
+      var noise = new Noise(salt ^ length, contentHash(data, 0, length));
       var touches = length >> 11;
       if (touches < 1) touches = 1;
       else if (touches > 48) touches = 48;
@@ -277,15 +319,15 @@
 
     // Floating-point readbacks get a nudge in the last places instead of a flipped bit, which
     // on a float would be a different number altogether.
-    function perturbFloats(data, salt) {
-      var length = data.length;
+    function perturbFloats(data, salt, start, end) {
+      var length = end - start;
       if (length < 1) return;
-      var noise = new Noise(salt ^ length, floatHash(data));
+      var noise = new Noise(salt ^ length, floatHash(data, start, end));
       var touches = length >> 9;
       if (touches < 1) touches = 1;
       else if (touches > 48) touches = 48;
       for (var i = 0; i < touches; i++) {
-        var index = (noise.next() * length) | 0;
+        var index = start + ((noise.next() * length) | 0);
         var value = data[index];
         // Relative to the value: a fixed step smaller than a float's spacing at that size
         // would round away and leave the read exact.
@@ -295,45 +337,53 @@
       }
     }
 
-    function perturbView(view, salt) {
-      if (isFloatView(view)) perturbFloats(view, salt);
-      else perturbPixels(view, salt);
+    // The part of a destination a readback wrote: elements [start, end), from the element
+    // offset on, as many as the call wrote. What lies outside it is the page's, left alone.
+    function Range(view, kind, start, end) {
+      this.view = view;
+      this.kind = kind;
+      this.start = start;
+      this.end = end;
     }
-
-    function blank(view) {
-      apply(fill, view, [0]);
-    }
-
-    // The part of a destination the readback wrote: from the element offset on, as many
-    // elements as asked for. What lies outside it is the page's, and is left alone.
-    function written(view, offset, length) {
-      if (!view || typeof view.length !== 'number' || typeof view.BYTES_PER_ELEMENT !== 'number') {
-        return null;
-      }
-      var start = offset > 0 ? offset | 0 : 0;
-      var end = length > 0 ? start + (length | 0) : view.length;
-      if (end > view.length) end = view.length;
+    function written(view, offset, count) {
+      var kind = kindOf(view);
+      if (!kind || !ELEMENT_SIZES[kind]) return null;
+      var length = lengthOf(view);
+      var start = offset > 0 ? floor(offset) : 0;
+      var end = count > 0 ? start + floor(count) : length;
+      if (end > length) end = length;
       if (start >= end) return null;
-      if (start === 0 && end === view.length) return view;
-      return apply(subarray, view, [start, end]);
+      return new Range(view, kind, start, end);
+    }
+    function perturbRange(range, salt) {
+      if (isFloatKind(range.kind)) perturbFloats(range.view, salt, range.start, range.end);
+      else perturbPixels(bytesOf(range.view, range.kind, range.start, range.end), salt);
+    }
+    function blankRange(range) {
+      apply(fill, bytesOf(range.view, range.kind, range.start, range.end), [0]);
     }
 
     function readSalt(sx, sy, sw, sh) {
       return mix(sx | 0, mix(sy | 0, mix(sw | 0, sh | 0)));
     }
 
+    // Taken before the reads below are wrapped: the copies an export is made from are read
+    // with these, and noised once, by the export.
     var native2dGetImageData = window.CanvasRenderingContext2D &&
       CanvasRenderingContext2D.prototype.getImageData;
+    var nativeOffscreenGetImageData = window.OffscreenCanvasRenderingContext2D &&
+      OffscreenCanvasRenderingContext2D.prototype.getImageData;
 
     function wrapGetImageData(prototype) {
       wrap(prototype, 'getImageData', function (original) {
         return function (sx, sy, sw, sh) {
           var result = apply(original, this, arguments);
-          try {
-            if (TOR) blank(result.data);
-            else perturbPixels(result.data, readSalt(sx, sy, sw, sh));
-          } catch (ignored) {
-            // Detached or cross-origin canvas; leave as-is.
+          // Read through the engine's getter: an ImageData.prototype.data the page replaced
+          // would hand the blank to a decoy and the real pixels to the page.
+          var range = written(apply(imageDataGetter, result, []), 0, 0);
+          if (range) {
+            if (TOR) blankRange(range);
+            else perturbPixels(range.view, readSalt(sx, sy, sw, sh));
           }
           return result;
         };
@@ -348,69 +398,193 @@
     // Exports come from a copy carrying the same noise a full read would: the canvas the page
     // drew on is never written to. A tainted canvas cannot be copied; the original call then
     // throws exactly as it would have without us.
-    function noisyCopy(source, makeCanvas) {
-      var width = source.width;
-      var height = source.height;
-      if (!(width > 0 && height > 0) || !native2dGetImageData) return null;
-      var copy = makeCanvas(width, height);
-      // Under Tor the export is an empty canvas of the same size: nothing drawn, nothing read.
+    // Everything a copy is made with is the engine's own, taken now: a page that replaced
+    // createElement, getContext, drawImage or putImageData could otherwise make the copy fail
+    // or come out unnoised.
+    function canvasKit(Canvas, Context, getImageData, make) {
+      if (!Canvas || !Context || !getImageData) return null;
+      return {
+        width: getterOf(Canvas.prototype, 'width'),
+        height: getterOf(Canvas.prototype, 'height'),
+        getContext: Canvas.prototype.getContext,
+        drawImage: Context.prototype.drawImage,
+        getImageData: getImageData,
+        putImageData: Context.prototype.putImageData,
+        make: make
+      };
+    }
+    var createElement = document && window.Document && window.Document.prototype.createElement;
+    var widthSetter = HTMLCanvasElement && getOwn(HTMLCanvasElement.prototype, 'width');
+    var heightSetter = HTMLCanvasElement && getOwn(HTMLCanvasElement.prototype, 'height');
+    var elementKit = canvasKit(HTMLCanvasElement, CanvasRenderingContext2D, native2dGetImageData, function (width, height) {
+      var canvas = apply(createElement, document, ['canvas']);
+      apply(widthSetter.set, canvas, [width]);
+      apply(heightSetter.set, canvas, [height]);
+      return canvas;
+    });
+    var offscreenKit = canvasKit(OffscreenCanvas, OffscreenCanvasRenderingContext2D, nativeOffscreenGetImageData, function (width, height) {
+      return construct(OffscreenCanvas, [width, height]);
+    });
+
+    // Exports come from a copy carrying the same noise a full read would: the canvas the page
+    // drew on is never written to. Under Tor the copy is an empty canvas of the same size.
+    function noisyCopy(kit, source, width, height) {
+      var copy = kit.make(width, height);
       if (TOR) return copy;
-      var context = copy.getContext('2d');
-      if (!context) return null;
-      context.drawImage(source, 0, 0);
-      var image = apply(native2dGetImageData, context, [0, 0, width, height]);
-      perturbPixels(image.data, readSalt(0, 0, width, height));
-      context.putImageData(image, 0, 0);
+      var context = apply(kit.getContext, copy, ['2d']);
+      apply(kit.drawImage, context, [source, 0, 0]);
+      var image = apply(kit.getImageData, context, [0, 0, width, height]);
+      perturbPixels(apply(imageDataGetter, image, []), readSalt(0, 0, width, height));
+      apply(kit.putImageData, context, [image, 0, 0]);
       return copy;
     }
 
-    function elementCanvas(width, height) {
-      var canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      return canvas;
-    }
-
-    function exportFromCopy(original, makeCanvas) {
+    // A copy that cannot be made never means exporting the original: that would hand over
+    // exactly the pixels this exists to change. A canvas that cannot be copied because it is
+    // tainted throws what the engine throws for it; anything else throws the same.
+    function exportFromCopy(original, kit, method) {
       return function () {
+        var width;
+        var height;
+        try {
+          width = apply(kit.width, this, []);
+          height = apply(kit.height, this, []);
+        } catch (notACanvas) {
+          return apply(original, this, arguments);
+        }
+        if (!(width > 0 && height > 0)) return apply(original, this, arguments);
         var copy = null;
         try {
-          copy = noisyCopy(this, makeCanvas);
-        } catch (ignored) {
-          // Tainted or detached; the original call on the real canvas decides what happens.
+          copy = noisyCopy(kit, this, width, height);
+        } catch (ignored) {}
+        if (!copy) {
+          throw new window.DOMException("Failed to execute '" + method + "': Tainted canvases may not be exported.", 'SecurityError');
         }
-        return apply(original, copy || this, arguments);
+        return apply(original, copy, arguments);
       };
     }
 
-    if (window.HTMLCanvasElement) {
+    if (elementKit && imageDataGetter) {
       wrap(HTMLCanvasElement.prototype, 'toDataURL', function (original) {
-        return exportFromCopy(original, elementCanvas);
+        return exportFromCopy(original, elementKit, 'toDataURL');
       });
       wrap(HTMLCanvasElement.prototype, 'toBlob', function (original) {
-        return exportFromCopy(original, elementCanvas);
+        return exportFromCopy(original, elementKit, 'toBlob');
       });
     }
-    if (window.OffscreenCanvas) {
+    if (offscreenKit && imageDataGetter) {
       wrap(OffscreenCanvas.prototype, 'convertToBlob', function (original) {
-        return exportFromCopy(original, function (width, height) {
-          return new OffscreenCanvas(width, height);
-        });
+        return exportFromCopy(original, offscreenKit, 'convertToBlob');
       });
     }
 
     // --- WebGL -------------------------------------------------------------------------
     // The pixel readback is a canvas read by another name. Only the range the call wrote is
     // touched, so a pooled destination keeps what was in the rest of it.
-    function wrapReadPixels(prototype) {
+    // How many components a pixel of each readback format has, and which types pack a whole
+    // pixel into one element.
+    var COMPONENTS = {
+      0x1906: 1, 0x1909: 1, 0x1903: 1, 0x8D94: 1, 0x190A: 2, 0x8227: 2, 0x8228: 2,
+      0x1907: 3, 0x8D98: 3, 0x1908: 4, 0x8D99: 4
+    };
+    var PACKED_TYPES = { 0x8363: 1, 0x8033: 1, 0x8034: 1, 0x8368: 1, 0x8C3B: 1, 0x8C3E: 1 };
+    var PACK_ALIGNMENT = 0x0D05;
+    var PACK_ROW_LENGTH = 0x0D02;
+    var PACK_SKIP_ROWS = 0x0D03;
+    var PACK_SKIP_PIXELS = 0x0D04;
+
+    // Elements a readPixels call wrote from the destination's start, rows padded as the pack
+    // parameters say: the noise goes there and nowhere else, so a pooled destination keeps
+    // the rest of what it held, and an oversized one still gets noise on what was read.
+    // The row and skip parameters exist in WebGL 2 only; asked of WebGL 1 they would raise an
+    // error the page can read back with getError().
+    function pixelsWritten(context, getParameter, webgl2, width, height, format, type, kind) {
+      var size = ELEMENT_SIZES[kind];
+      var perPixel = PACKED_TYPES[type] ? size : (COMPONENTS[format] || 4) * size;
+      var align = apply(getParameter, context, [PACK_ALIGNMENT]) || 4;
+      var rowLength = webgl2 ? apply(getParameter, context, [PACK_ROW_LENGTH]) || 0 : 0;
+      var skipRows = webgl2 ? apply(getParameter, context, [PACK_SKIP_ROWS]) || 0 : 0;
+      var skipPixels = webgl2 ? apply(getParameter, context, [PACK_SKIP_PIXELS]) || 0 : 0;
+      var rowBytes = (rowLength > 0 ? rowLength : width) * perPixel;
+      var stride = floor((rowBytes + align - 1) / align) * align;
+      var bytes = (skipRows + height - 1) * stride + (skipPixels + width) * perPixel;
+      return floor((bytes + size - 1) / size);
+    }
+
+    // Buffers a readPixels has packed pixels into, and what each context has bound where: a
+    // pixel buffer read back through COPY_READ_BUFFER, or copied into another buffer first,
+    // is still pixels.
+    var packedBuffers = weakHas ? new WeakSet() : null;
+    var bindings = new WeakMap();
+    var PIXEL_PACK_BUFFER = 0x88EB;
+
+    function boundTo(context, target) {
+      var bound = apply(weakGet, bindings, [context]);
+      return bound ? bound['t' + target] : undefined;
+    }
+    function isPacked(buffer) {
+      return !!buffer && !!packedBuffers && apply(weakHas, packedBuffers, [buffer]);
+    }
+
+    function trackBindings(prototype) {
+      function remember(context, target, buffer) {
+        var bound = apply(weakGet, bindings, [context]);
+        if (!bound) {
+          bound = {};
+          apply(weakSet, bindings, [context, bound]);
+        }
+        bound['t' + (+target)] = buffer;
+      }
+      wrap(prototype, 'bindBuffer', function (original) {
+        return function (target, buffer) {
+          var result = apply(original, this, arguments);
+          try { remember(this, target, buffer); } catch (ignored) {}
+          return result;
+        };
+      });
+      each(['bindBufferBase', 'bindBufferRange'], function (name) {
+        wrap(prototype, name, function (original) {
+          return function (target, index, buffer) {
+            var result = apply(original, this, arguments);
+            // An indexed binding also sets the target's generic one.
+            try { remember(this, target, buffer); } catch (ignored) {}
+            return result;
+          };
+        });
+      });
+      wrap(prototype, 'copyBufferSubData', function (original) {
+        return function (readTarget, writeTarget) {
+          var result = apply(original, this, arguments);
+          try {
+            if (packedBuffers && isPacked(boundTo(this, +readTarget))) {
+              var target = boundTo(this, +writeTarget);
+              if (target) apply(weakAdd, packedBuffers, [target]);
+            }
+          } catch (ignored) {}
+          return result;
+        };
+      });
+    }
+
+    function wrapReadPixels(prototype, webgl2) {
+      var getParameter = prototype.getParameter;
       wrap(prototype, 'readPixels', function (original) {
         return function (x, y, width, height, format, type, pixels, dstOffset) {
           var result = apply(original, this, arguments);
           try {
-            var view = written(pixels, dstOffset, 0);
-            if (view) {
-              if (TOR) blank(view);
-              else perturbView(view, readSalt(x, y, width, height));
+            if (typeof pixels === 'number') {
+              // Into the bound pixel buffer, read later through getBufferSubData.
+              var packed = boundTo(this, PIXEL_PACK_BUFFER);
+              if (packed && packedBuffers) apply(weakAdd, packedBuffers, [packed]);
+              return result;
+            }
+            var kind = kindOf(pixels);
+            if (!kind || !ELEMENT_SIZES[kind] || !(width > 0 && height > 0)) return result;
+            var count = pixelsWritten(this, getParameter, webgl2, width, height, +format, +type, kind);
+            var range = written(pixels, dstOffset, count);
+            if (range) {
+              if (TOR) blankRange(range);
+              else perturbRange(range, readSalt(x, y, width, height));
             }
           } catch (ignored) {}
           return result;
@@ -453,20 +627,19 @@
 
     // A readback through a pixel buffer object lands in getBufferSubData instead. Under Tor
     // every buffer read answers blank, since pixels can be copied into any buffer first;
-    // elsewhere only the pixel-pack buffer is treated as pixels, so a computation's own
-    // buffers come back as computed.
-    var PIXEL_PACK_BUFFER = 0x88EB;
-
+    // elsewhere a buffer counts as pixels when it is bound as the pixel-pack buffer or a
+    // readPixels has packed into it, so a computation's own buffers come back as computed.
     function wrapBufferRead(prototype) {
       wrap(prototype, 'getBufferSubData', function (original) {
         return function (target, srcOffset, out, dstOffset, length) {
           var result = apply(original, this, arguments);
           try {
-            var view = written(out, dstOffset, length);
-            if (view) {
-              if (TOR) blank(view);
-              else if (target === PIXEL_PACK_BUFFER) {
-                perturbView(view, readSalt(srcOffset | 0, 0, view.length, target));
+            var range = written(out, dstOffset, length);
+            if (range) {
+              var asked = +target;
+              if (TOR) blankRange(range);
+              else if (asked === PIXEL_PACK_BUFFER || isPacked(boundTo(this, asked))) {
+                perturbRange(range, readSalt(srcOffset | 0, 0, range.end - range.start, asked));
               }
             }
           } catch (ignored) {}
@@ -477,28 +650,52 @@
 
     if (window.WebGLRenderingContext) {
       maskGetParameter(WebGLRenderingContext.prototype);
-      wrapReadPixels(WebGLRenderingContext.prototype);
+      wrapReadPixels(WebGLRenderingContext.prototype, false);
     }
     if (window.WebGL2RenderingContext) {
       maskGetParameter(WebGL2RenderingContext.prototype);
-      wrapReadPixels(WebGL2RenderingContext.prototype);
+      trackBindings(WebGL2RenderingContext.prototype);
+      wrapReadPixels(WebGL2RenderingContext.prototype, true);
       wrapBufferRead(WebGL2RenderingContext.prototype);
     }
 
     // A decoded video frame copied out is a canvas read of the decoder: the exact pixels a
     // device produces for a known stream name its hardware decoder.
+    // The destination's bytes are found with the engine's getters and viewed through this
+    // script's own Uint8Array: a page's global Uint8Array, or a destination with a lying
+    // byteLength, must not send the noise elsewhere.
+    function destinationBytes(destination) {
+      var kind = kindOf(destination);
+      if (kind && ELEMENT_SIZES[kind]) return bytesOf(destination, kind, 0, lengthOf(destination));
+      try {
+        var buffer = apply(dataViewBuffer, destination, []);
+        return construct(NativeBytes, [buffer, apply(dataViewOffset, destination, []), apply(dataViewLength, destination, [])]);
+      } catch (notADataView) {}
+      apply(arrayBufferLength, destination, []);
+      return construct(NativeBytes, [destination]);
+    }
+    var codedWidth = window.VideoFrame && getterOf(window.VideoFrame.prototype, 'codedWidth');
+    var codedHeight = window.VideoFrame && getterOf(window.VideoFrame.prototype, 'codedHeight');
+
     if (window.VideoFrame && window.VideoFrame.prototype.copyTo) {
       wrap(VideoFrame.prototype, 'copyTo', function (original) {
         return function (destination) {
           var frame = this;
+          var view = null;
+          var width = 0;
+          var height = 0;
+          try {
+            view = destinationBytes(destination);
+            width = apply(codedWidth, frame, []);
+            height = apply(codedHeight, frame, []);
+          } catch (ignored) {}
           var promise = apply(original, this, arguments);
           return apply(then, promise, [function (layout) {
             try {
-              var view = destination instanceof Uint8Array
-                ? destination
-                : new Uint8Array(destination.buffer || destination, destination.byteOffset || 0, destination.byteLength);
-              if (TOR) blank(view);
-              else perturbPixels(view, readSalt(0, 0, frame.codedWidth || view.length, frame.codedHeight || 0));
+              if (view) {
+                if (TOR) apply(fill, view, [0]);
+                else perturbPixels(view, readSalt(0, 0, width, height));
+              }
             } catch (ignored) {}
             return layout;
           }]);
@@ -515,8 +712,9 @@
     var noisedBuffers = weakHas ? new WeakSet() : null;
 
     function perturbSamples(data, salt) {
-      var noise = new Noise(salt ^ data.length, floatHash(data));
-      for (var i = 0; i < data.length; i++) {
+      var length = lengthOf(data);
+      var noise = new Noise(salt ^ length, floatHash(data, 0, length));
+      for (var i = 0; i < length; i++) {
         var value = data[i];
         var scale = value < 0 ? -value : value;
         if (scale < 1e-3) scale = 1e-3;
@@ -524,12 +722,15 @@
       }
     }
 
+    // The channel count through the engine's getter, and the buffer marked only once every
+    // channel is done: a count of zero from a replaced getter must not mark it noised.
     function perturbBuffer(buffer, nativeGetChannelData) {
       if (!noisedBuffers || apply(weakHas, noisedBuffers, [buffer])) return;
-      apply(weakAdd, noisedBuffers, [buffer]);
-      for (var channel = 0; channel < buffer.numberOfChannels; channel++) {
+      var channels = apply(channelCountGetter, buffer, []);
+      for (var channel = 0; channel < channels; channel++) {
         perturbSamples(apply(nativeGetChannelData, buffer, [channel]), channel);
       }
+      apply(weakAdd, noisedBuffers, [buffer]);
     }
 
     if (window.AudioBuffer) {
@@ -558,8 +759,9 @@
           return function (array) {
             apply(original, this, arguments);
             try {
-              var noise = new Noise(hash(name) ^ array.length, floatHash(array));
-              for (var i = 0; i < array.length; i++) {
+              var length = lengthOf(array);
+              var noise = new Noise(hash(name) ^ length, floatHash(array, 0, length));
+              for (var i = 0; i < length; i++) {
                 array[i] = array[i] + (noise.next() - 0.5) * scale;
               }
             } catch (ignored) {}
@@ -574,8 +776,9 @@
           return function (array) {
             apply(original, this, arguments);
             try {
-              var noise = new Noise(hash(name) ^ array.length, contentHash(array));
-              for (var i = 0; i < array.length; i++) {
+              var length = lengthOf(array);
+              var noise = new Noise(hash(name) ^ length, contentHash(array, 0, length));
+              for (var i = 0; i < length; i++) {
                 var value = array[i] + (noise.next() < 0.5 ? -1 : 1);
                 array[i] = value < 0 ? 1 : value > 255 ? 254 : value;
               }
@@ -640,6 +843,24 @@
   // A child frame's window exists, with every native intact, before the engine injects this
   // script into it; the accessors a page uses to reach it apply the same treatment first.
   function hardenFrames(window) {
+    // A popup from window.open() starts as a blank document of the opener's own origin that the
+    // opener scripts directly; the engine injects nothing into it. It gets what a frame gets.
+    var nativeOpen = window.open;
+    if (typeof nativeOpen === 'function') {
+      var open = function open() {
+        var opened = apply(nativeOpen, this, arguments);
+        try {
+          if (opened) harden(opened);
+        } catch (ignored) {
+          // Another origin: the engine injects into that document itself.
+        }
+        return opened;
+      };
+      try {
+        defineProperty(window, 'open', { value: open, writable: true, enumerable: true, configurable: true });
+      apply(weakSet, sourcesOf(window), [open, apply(nativeToString, nativeOpen, [])]);
+      } catch (ignored) {}
+    }
     each(['HTMLIFrameElement', 'HTMLFrameElement', 'HTMLObjectElement'], function (kind) {
       var element = window[kind];
       var proto = element && element.prototype;
