@@ -186,6 +186,38 @@ const rejected = async (ctx, code) => { try { await vm.runInContext(code, ctx); 
   vm.runInContext('new Worker("job.js")', own);
   check('firstPartyWorkerUntouched', vm.runInContext('started[0]', own) === 'job.js');
 
+  // A frame that requires Trusted Types runs every worker address through its own policy, which
+  // knows only the frame's own addresses (Cloudflare Turnstile): the bootstrap is refused, so
+  // the worker starts from the address the frame gave rather than not at all.
+  function trustedWorld(ctx, policy) {
+    workerWorld(ctx);
+    vm.runInContext(`
+      trustedTypes = { defaultPolicy: ${policy ? '{ name: "default" }' : 'null'}, isScriptURL(v) { return false; } };
+      Worker = class Worker { constructor(url) {
+        if (trustedTypes.defaultPolicy && /^blob:https:\\/\\/tracker\\.example\\/\\d/.test(url)) {
+          throw new DOMException("Failed to construct 'Worker': Access to the script is denied by the document's Content Security Policy.", 'SecurityError');
+        }
+        if (!trustedTypes.defaultPolicy && /^blob:https:\\/\\/tracker\\.example\\/\\d/.test(url)) {
+          throw new DOMException("Failed to construct 'Worker': refused by worker-src.", 'SecurityError');
+        }
+        started.push(url);
+      } };`, ctx);
+    vm.runInContext(source, ctx);
+  }
+  const guarded = realm('https://challenges.example', ['https://site-a.example']);
+  trustedWorld(guarded, true);
+  vm.runInContext('new Worker("blob:https://challenges.example/own-1")', guarded);
+  check('trustedTypesFrameWorkerStartsFromItsOwnAddress',
+    vm.runInContext('started[0]', guarded) === 'blob:https://challenges.example/own-1');
+  // Without a Trusted Types policy a refusal is not the frame's policy speaking: no fallback.
+  const refused = realm('https://tracker.example', ['https://site-a.example']);
+  trustedWorld(refused, false);
+  check('cspRefusedBootstrapStillThrows', (() => {
+    try { vm.runInContext('new Worker("job.js")', refused); return false; } catch (e) {
+      return e.name === 'SecurityError' && vm.runInContext('started.length', refused) === 0;
+    }
+  })());
+
   let failed = 0;
   for (const [name, ok] of checks) {
     console.log((ok ? 'ok   ' : 'FAIL ') + name);

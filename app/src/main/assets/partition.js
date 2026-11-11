@@ -259,6 +259,7 @@
     var NativeURL = scope.URL;
     var NativeBlob = scope.Blob;
     var createObjectURL = NativeURL && NativeURL.createObjectURL;
+    var trustedTypes = scope.trustedTypes;
     var sources = scope[SOURCES];
     if (!sources) {
       sources = new WeakMap();
@@ -308,7 +309,18 @@
         } catch (ignored) {
           throw new scope.DOMException("Failed to construct 'Worker': the script could not be prepared.", 'SecurityError');
         }
-        return construct(Native, [target, options], new.target);
+        try {
+          return construct(Native, [target, options], new.target);
+        } catch (error) {
+          // A frame that requires Trusted Types runs every worker address through its own
+          // policy, which knows only the frame's own addresses and refuses the bootstrap; the
+          // page's CSP names the policies it may create, so no other can vouch for it. Cloudflare's
+          // Turnstile frame is one, and without its worker it reports the browser unsupported.
+          // There the worker starts as the frame asked, without the denials: the frame's own
+          // storage stays denied. Any other refusal stands.
+          if (!trustedTypes || !trustedTypes.defaultPolicy) throw error;
+          return construct(Native, [url, options], new.target);
+        }
       };
       Wrapped.prototype = Native.prototype;
       try {
