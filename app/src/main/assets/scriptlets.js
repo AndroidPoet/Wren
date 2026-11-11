@@ -581,10 +581,14 @@ var runScriptlets = (function () {
     } catch (e) {}
   };
 
-  function storageSetter(storage) {
+  // The storage is looked up per call: in a frame that may not use storage (a third-party one
+  // under partition.js, or a sandboxed one) reading it throws, and at load time that would take
+  // every other scriptlet in the frame down with it.
+  function storageSetter(name) {
     return function (key, value) {
       if (!key) return;
       try {
+        var storage = window[name];
         var v = value === undefined ? '' : value;
         var parsed = v === '$remove$' ? null : parseValue(v);
         if (parsed === null && v === '$remove$') storage.removeItem(key);
@@ -592,8 +596,8 @@ var runScriptlets = (function () {
       } catch (e) {}
     };
   }
-  lib['set-local-storage-item'] = storageSetter(window.localStorage);
-  lib['set-session-storage-item'] = storageSetter(window.sessionStorage);
+  lib['set-local-storage-item'] = storageSetter('localStorage');
+  lib['set-session-storage-item'] = storageSetter('sessionStorage');
 
   lib['remove-cookie'] = function (needle) {
     var clear = function () {

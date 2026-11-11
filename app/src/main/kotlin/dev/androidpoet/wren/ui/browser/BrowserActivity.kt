@@ -928,6 +928,7 @@ class BrowserActivity :
   fun switchToTab(id: Long) {
     captureActiveThumbnail()
     if (id == viewModel.tabManager.activeTabId.value) return
+    dismissStuckCheckOffer()
     saveActiveTabState()
     val wasLive = id in liveWebViews
     // A page still in the pool is already painted, so the freeze-dried cover would only hide it.
@@ -973,6 +974,7 @@ class BrowserActivity :
       toast(R.string.private_tabs_unsupported)
       return
     }
+    dismissStuckCheckOffer()
     saveActiveTabState()
     viewModel.tabManager.openTab(url, isPrivate)
     val tab = viewModel.tabManager.activeTab() ?: return
@@ -994,7 +996,10 @@ class BrowserActivity :
     liveWebViews.remove(id)?.let(::destroyWebView)
     viewModel.tabManager.close(id)
     if (wasPrivate) endPrivateSessionIfOver()
-    if (wasActive) restoreActiveTab()
+    if (wasActive) {
+      dismissStuckCheckOffer()
+      restoreActiveTab()
+    }
     offerUndoClose()
   }
 
@@ -1283,6 +1288,8 @@ class BrowserActivity :
     viewModel.tabManager.update(tabId, url = url)
     failedMainFrameUrls.remove(url)
     if (!isActiveTab(tabId)) return
+    // An offer left from another site would turn protection off for that site, not this one.
+    if (HostMatcher.hostOf(url) != stuckCheckOfferHost) dismissStuckCheckOffer()
     stoppedByUser = false
     binding.progress.isVisible = true
     readerMode.onNavigated()
@@ -1806,6 +1813,7 @@ class BrowserActivity :
     if (onTor == pagesOnTor) return
     pagesOnTor = onTor
     dismissUndoClose()
+    dismissStuckCheckOffer()
     if (onTor) {
       // The pages opened over the open network close rather than reload over Tor: the same
       // address fetched on both routes joins the Tor session to the one the ISP watched. The
@@ -2036,9 +2044,21 @@ class BrowserActivity :
     }, STUCK_CHECK_MS)
   }
 
+  /** The offer on screen, and the site it is about: it must not outlive that site in the tab. */
+  private var stuckCheckOffer: Snackbar? = null
+  private var stuckCheckOfferHost: String? = null
+
+  private fun dismissStuckCheckOffer() {
+    stuckCheckOffer?.dismiss()
+    stuckCheckOffer = null
+    stuckCheckOfferHost = null
+  }
+
   private fun offerWayPastCheck(host: String) {
     val onTor = settings.torMode
-    Snackbar.make(
+    dismissStuckCheckOffer()
+    stuckCheckOfferHost = host
+    stuckCheckOffer = Snackbar.make(
       binding.root,
       if (onTor) R.string.check_stuck_tor else R.string.check_stuck,
       Snackbar.LENGTH_INDEFINITE,
@@ -2056,7 +2076,7 @@ class BrowserActivity :
         }
       }
       .setAnchorView(binding.menuButton)
-      .show()
+      .also { it.show() }
   }
 
   /**
