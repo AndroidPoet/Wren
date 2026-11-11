@@ -170,6 +170,9 @@ sheets open at full height, and in the tab switcher Up from a tab reaches its cl
 
 Get the APK for your phone from [Releases](https://github.com/AndroidPoet/Wren/releases/latest):
 `arm64-v8a` for most phones, or `universal` if you are not sure. Or build it from source (below).
+For a TV, take `wren-tv-armeabi-v7a.apk` (most TV boxes run 32-bit Android even on 64-bit chips),
+or `wren-tv-arm64-v8a.apk` if yours is 64-bit. They are the same signed builds as the phone APKs
+for those processors, so phone and TV update the same way.
 [Obtainium](https://github.com/ImranR98/Obtainium) can watch that page and install updates for you.
 
 **Check what you installed.** Every release ships a `SHA256SUMS` file, and every APK is signed
