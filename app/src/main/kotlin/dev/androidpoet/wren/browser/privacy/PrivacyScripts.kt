@@ -12,6 +12,7 @@ import androidx.webkit.ScriptHandler
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import dev.androidpoet.wren.settings.SettingsStore
+import org.json.JSONObject
 import timber.log.Timber
 import java.security.SecureRandom
 import java.util.EnumMap
@@ -124,6 +125,23 @@ class PrivacyScripts @Inject constructor(
   /** Link `ping` trackers removed as the link is tapped; see the asset. */
   private val pingScript: String by lazy { read("ping.js") }
 
+  /** Keeps the scripts out of bot-check frames and sites with protection off; see the asset. */
+  private val guardSource: String by lazy { read("guard.js") }
+
+  /**
+   * The condition the scripts below are wrapped in, or null to run them everywhere. Under Tor
+   * they are part of the identity a site must not see past, so nothing is exempt there.
+   */
+  private fun guardFor(mode: Mode): String? {
+    if (mode == Mode.TOR) return null
+    val off = settings.protectionOffHosts().sorted()
+      .joinToString(",", "[", "]") { JSONObject.quote(it) }
+    return guardSource.replace("__OFF__", off)
+  }
+
+  private fun guarded(script: String, guard: String?): String =
+    if (guard == null) script else "if (!(\n$guard\n)) {\n$script\n}"
+
   private class Handlers {
     var tor: ScriptHandler? = null
     var torClock: Int = 0
@@ -136,6 +154,7 @@ class PrivacyScripts @Inject constructor(
     var gpc: ScriptHandler? = null
     var partition: ScriptHandler? = null
     var pings: ScriptHandler? = null
+    var guard: String? = null
   }
 
   private val handlers = WeakHashMap<WebView, Handlers>()
@@ -155,6 +174,21 @@ class PrivacyScripts @Inject constructor(
       else -> Mode.NORMAL
     }
 
+    val guard = guardFor(mode)
+    if (installed.guard != guard) {
+      // The exempt sites changed: every guarded script carries the old list and comes off.
+      with(installed) {
+        listOf(fingerprint, autoconsent, referrer, gpc, partition, pings)
+          .forEach { runCatching { it?.remove() } }
+        fingerprint = null
+        autoconsent = null
+        referrer = null
+        gpc = null
+        partition = null
+        pings = null
+        this.guard = guard
+      }
+    }
     val stale = installed.fingerprintSeed != seedOf(mode) || installed.fingerprintMode != mode
     if (installed.fingerprint != null && stale) {
       // A rotated seed or another kind of page means a new script; the old one comes off first.
@@ -165,28 +199,28 @@ class PrivacyScripts @Inject constructor(
     // a switch turned off for a normal site must not hand Tor pages the device's real ones.
     val resistFingerprinting = settings.blockFingerprinting || settings.torMode
     installed.fingerprint = sync(webView, installed.fingerprint, resistFingerprinting) {
-      fingerprintScript(mode)
+      guarded(fingerprintScript(mode), guard)
     }
     installed.fingerprintSeed = seedOf(mode)
     installed.fingerprintMode = mode
     installed.autoconsent = sync(webView, installed.autoconsent, settings.answerCookiePopups) {
-      autoconsentScript
+      guarded(autoconsentScript, guard)
     }
     installed.referrer = sync(
       webView,
       installed.referrer,
       settings.trimReferrers,
-    ) { referrerScript }
+    ) { guarded(referrerScript, guard) }
     installed.gpc = sync(webView, installed.gpc, settings.sendDoNotTrack && !settings.torMode) {
-      gpcScript
+      guarded(gpcScript, guard)
     }
     installed.partition = sync(
       webView,
       installed.partition,
       settings.blockThirdPartyCookies || settings.torMode,
-    ) { partitionScript }
+    ) { guarded(partitionScript, guard) }
     installed.pings = sync(webView, installed.pings, settings.stripTrackingParameters) {
-      pingScript
+      guarded(pingScript, guard)
     }
     if (installed.tor != null && installed.torClock != torClockSecret) {
       // A new identity rounds its clock its own way; the old script comes off first.

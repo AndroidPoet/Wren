@@ -363,6 +363,18 @@ class SettingsStore @Inject constructor(
   fun isAllowlisted(host: String): Boolean =
     sessionChoice(KEY_ALLOWLIST, host) ?: (host in allowlistCached)
 
+  /**
+   * Sites with protection off, this session's choices included: no blocking, and outside Tor
+   * none of the page scripts either.
+   */
+  fun protectionOffHosts(): Set<String> {
+    val hosts = allowlistCached.toMutableSet()
+    sessionSiteChoices[KEY_ALLOWLIST]?.forEach { (host, off) ->
+      if (off) hosts.add(host) else hosts.remove(host)
+    }
+    return hosts
+  }
+
   fun setAllowlisted(host: String, allowlisted: Boolean, sessionOnly: Boolean = false) {
     if (choose(KEY_ALLOWLIST, host, allowlisted, sessionOnly)) return
     // getStringSet hands back a live set that must not be mutated in place.

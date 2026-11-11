@@ -33,6 +33,8 @@ data class SiteSecurityInfo(
   val isJsEnabledHere: Boolean,
   val isDesktopHere: Boolean,
   val isKeptSignedIn: Boolean,
+  /** Under Tor the site switch covers blocking only; the page scripts always stay. */
+  val isOnTor: Boolean = false,
 )
 
 /**
@@ -170,7 +172,12 @@ class SiteSecuritySheet : BottomSheetDialogFragment() {
         }
       }
     binding.securityBlockingAction.setText(
-      if (info.isBlockingEnabled) R.string.allow_ads_here else R.string.block_ads_here,
+      when {
+        info.isOnTor && info.isBlockingEnabled -> R.string.allow_ads_here
+        info.isOnTor -> R.string.block_ads_here
+        info.isBlockingEnabled -> R.string.protection_off_here
+        else -> R.string.protection_on_here
+      },
     )
   }
 

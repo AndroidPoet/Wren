@@ -1337,6 +1337,7 @@ class BrowserActivity :
       webView?.let { view -> dev.androidpoet.wren.browser.PagePerf.report(view, url) }
     }
     binding.root.postDelayed({ captureActiveThumbnail() }, THUMBNAIL_SETTLE_MS)
+    watchForStuckCheck(tabId, url)
     renderHome(url)
     if (!isOmniboxFocused) renderOmnibox(url)
     updateNavigationButtons()
@@ -1971,7 +1972,9 @@ class BrowserActivity :
     val host = HostMatcher.hostOf(viewModel.tabManager.activeTab()?.url.orEmpty())
     return when {
       !settings.blockAds -> getString(R.string.block_ads)
-      host != null && settings.isAllowlisted(host) -> getString(R.string.block_ads_here)
+      host != null && settings.isAllowlisted(host) -> getString(
+        if (settings.torMode) R.string.block_ads_here else R.string.protection_on_here,
+      )
       else -> getString(
         R.string.blocked_count,
         blockStats.countFor(viewModel.tabManager.activeTabId.value),
@@ -1992,12 +1995,68 @@ class BrowserActivity :
         sessionOnly = sessionOnlySiteChoice(),
       )
     }
+    refreshProtection()
     webView?.let { view ->
       // Cosmetic rules are fixed for the life of a document, so the change lands on reload.
       cosmeticFilter.updateFor(view, tab.url)
       blockStats.reset(tab.id)
       view.reload()
     }
+  }
+
+  /** The page scripts carry the list of sites with protection off; every open page gets it. */
+  private fun refreshProtection() {
+    liveWebViews.forEach { (id, view) ->
+      privacyScripts.updateFor(view, viewModel.tabManager.tab(id)?.isPrivate == true)
+    }
+  }
+
+  /** Hosts already offered a way past a stuck check, so the offer comes once per site. */
+  private val stuckCheckOffered = HashSet<String>()
+
+  /**
+   * A bot check that has not let the page through after a while is usually one that will not:
+   * the user is offered the way past it, never moved past it silently. Under Tor the exit's
+   * address is the usual cause, so a new identity is offered instead.
+   */
+  private fun watchForStuckCheck(tabId: Long, url: String) {
+    val host = HostMatcher.hostOf(url) ?: return
+    if (host in stuckCheckOffered) return
+    if (!settings.torMode && settings.isAllowlisted(host)) return
+    binding.root.postDelayed({
+      val view = webView ?: return@postDelayed
+      if (!isActiveTab(tabId) || committedUrl != url || host in stuckCheckOffered) {
+        return@postDelayed
+      }
+      view.evaluateJavascript(STUCK_CHECK_PROBE) { stuck ->
+        if (stuck != "true" || !isActiveTab(tabId) || committedUrl != url) return@evaluateJavascript
+        if (!stuckCheckOffered.add(host)) return@evaluateJavascript
+        offerWayPastCheck(host)
+      }
+    }, STUCK_CHECK_MS)
+  }
+
+  private fun offerWayPastCheck(host: String) {
+    val onTor = settings.torMode
+    Snackbar.make(
+      binding.root,
+      if (onTor) R.string.check_stuck_tor else R.string.check_stuck,
+      Snackbar.LENGTH_INDEFINITE,
+    )
+      .setAction(if (onTor) R.string.tor_new_identity else R.string.protection_off_here) {
+        if (onTor) {
+          onTorNewIdentity()
+          return@setAction
+        }
+        settings.setAllowlisted(host, true, sessionOnly = sessionOnlySiteChoice())
+        refreshProtection()
+        webView?.let { view ->
+          cosmeticFilter.updateFor(view, view.url)
+          view.reload()
+        }
+      }
+      .setAnchorView(binding.menuButton)
+      .show()
   }
 
   /**
@@ -2023,6 +2082,7 @@ class BrowserActivity :
       isJsEnabledHere = settings.javaScriptEnabled && !settings.isJsDisabledFor(host),
       isDesktopHere = settings.desktopMode || settings.isDesktopSite(host),
       isKeptSignedIn = settings.isKeptSignedIn(host),
+      isOnTor = settings.torMode,
     )
   }
 
@@ -3157,6 +3217,12 @@ class BrowserActivity :
     const val LOW_RAM_LIVE_WEB_VIEWS = 1
     const val QR_SIZE_DP = 260
     const val THUMBNAIL_SETTLE_MS = 350L
+
+    /** Long enough for a slow phone to pass a check that will pass; Turnstile takes ~10 s there. */
+    const val STUCK_CHECK_MS = 15_000L
+
+    /** Cloudflare's interstitial defines this until it lets the page through. */
+    const val STUCK_CHECK_PROBE = "!!window._cf_chl_opt"
     const val TOUCH_WARM_DELAY_MS = 50L
     const val SNAPSHOT_FALLBACK_MS = 1500L
     const val REFRESH_TRIGGER_DP = 120

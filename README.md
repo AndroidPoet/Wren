@@ -28,6 +28,12 @@
   reads the lists as uBlock Origin does; cosmetic filtering and scriptlets run in the page. Lists
   update from Settings, and you can add your own.
 - A per-site panel showing what was blocked, grouped by the company that owns it.
+- **Turn off protection on this site** in that panel when a site breaks: no blocking there, and
+  outside Tor none of Wren's page scripts either. Wren never injects those scripts into the
+  frames of bot checks (Cloudflare, hCaptcha, reCAPTCHA, Arkose, DataDome, GeeTest, AWS WAF),
+  which read any change to the page's APIs as a bot. If a Cloudflare check still has not let a
+  page through after 15 seconds, Wren offers the switch (or a new identity under Tor) rather
+  than flipping it for you.
 - Cookie banners declined and hidden on common consent platforms.
 
 **Privacy**

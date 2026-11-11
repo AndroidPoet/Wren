@@ -245,6 +245,10 @@
   <string name="blocking_on_site">Blocking on this site</string>
   <string name="allow_ads_here">Allow ads on this site</string>
   <string name="block_ads_here">Block ads on this site</string>
+  <string name="protection_off_here">Turn off protection on this site</string>
+  <string name="protection_on_here">Turn protection back on here</string>
+  <string name="check_stuck">This site\'s security check isn\'t letting the page through.</string>
+  <string name="check_stuck_tor">This site\'s security check isn\'t letting the page through. Sites often challenge Tor exits; a new identity uses another one.</string>
   <string name="darken_web_pages">Darken web pages</string>
   <string name="darken_web_pages_summary">Repaint sites that have no dark theme of their own. Off by default because it can wash out images and text. Sites with their own dark mode are unaffected.</string>
   <string name="block_third_party_cookies">Block third-party cookies</string>
