@@ -21,6 +21,7 @@ class CosmeticRules private constructor(
   private val genericById: HashMap<String, Array<String>>,
   private val genericByClass: HashMap<String, Array<String>>,
   private val specific: HashMap<String, Array<String>>,
+  private val procedural: HashMap<String, Array<String>>,
   private val exceptions: HashMap<String, Array<String>>,
   private val scriptlets: HashMap<String, Array<String>>,
   private val scriptletExceptions: HashMap<String, Array<String>>,
@@ -37,14 +38,19 @@ class CosmeticRules private constructor(
     val chain = HostMatcher.candidates(host)
     val own = ArrayList<String>()
     val excepted = ArrayList<String>()
+    val steps = ArrayList<String>()
     for (domain in chain) {
       specific[domain]?.let(own::addAll)
       exceptions[domain]?.let(excepted::addAll)
+      procedural[domain]?.let(steps::addAll)
     }
-    return buildString(genericLowJson.length + 64 + own.size * 40) {
+    // Procedural rules run in script, not in the sheet, so their exceptions are settled here.
+    if (steps.isNotEmpty() && excepted.isNotEmpty()) steps.removeAll(excepted.toHashSet())
+    return buildString(genericLowJson.length + 64 + own.size * 40 + steps.size * 60) {
       if (generic) append("{\"g\":").append(genericLowJson) else append("{\"n\":1,\"g\":[]")
       append(",\"s\":").append(JsonText.array(own))
       append(",\"x\":").append(JsonText.array(excepted))
+      if (steps.isNotEmpty()) append(",\"p\":").append(JsonText.array(steps.distinct()))
       append('}')
     }
   }
@@ -99,6 +105,7 @@ class CosmeticRules private constructor(
     private val generic = LinkedHashSet<String>()
     private val genericExceptions = HashSet<String>()
     private val specific = HashMap<String, LinkedHashSet<String>>()
+    private val procedural = HashMap<String, LinkedHashSet<String>>()
     private val exceptions = HashMap<String, LinkedHashSet<String>>()
     private val scriptlets = HashMap<String, LinkedHashSet<String>>()
     private val scriptletExceptions = HashMap<String, LinkedHashSet<String>>()
@@ -107,11 +114,10 @@ class CosmeticRules private constructor(
     /** Adds one list line if it is a hiding rule or scriptlet the engine can apply. */
     fun add(line: String): Boolean {
       val separator = separatorIn(line) ?: return false
-      // Procedural (`#?#`), style (`#$#`) and snippet (`#%#`) rules are cosmetic lines the
-      // engine cannot apply; they are recognised so they never fall through to the host or
-      // pattern parsers, and dropped here.
-      if (separator.second != "##" && separator.second != "#@#") return false
-      val isException = separator.second == "#@#"
+      // Style (`#$#`) and snippet (`#%#`) rules are AdGuard's and dropped; procedural rules
+      // come as `##` with an operator in them, or as Adblock Plus's `#?#`.
+      if (separator.second !in APPLIED_SEPARATORS) return false
+      val isException = separator.second == "#@#" || separator.second == "#@?#"
       val domains = line.substring(0, separator.first)
       val body = line.substring(separator.first + separator.second.length).trimSpaces()
       if (body.isEmpty() || domains.contains('*')) return false
@@ -124,7 +130,7 @@ class CosmeticRules private constructor(
           if (domain.startsWith("~")) excluded.add(domain.substring(1)) else included.add(domain)
         }
       }
-      return if (body.startsWith("+js(")) {
+      return if (body.startsWith("+js(") && !separator.second.contains('?')) {
         addScriptlet(body, included, excluded, isException)
       } else {
         addSelector(body, included, excluded, isException)
@@ -138,9 +144,23 @@ class CosmeticRules private constructor(
       isException: Boolean,
     ): Boolean {
       if (!isPlausibleSelector(selector)) return false
-      // `##^` is an HTML filter and `:has-text()` and friends are procedural: the style engine
-      // rejects both, and one rejected selector voids every rule grouped with it on the page.
-      if (selector[0] == '^' || isProcedural(selector)) return false
+      // `##^` is an HTML filter, which a page script cannot apply after parsing.
+      if (selector[0] == '^') return false
+      // `:has-text()` and friends go to the page script instead of the sheet, where one
+      // selector the style engine rejects would void every rule grouped with it. Only rules
+      // naming their sites are kept, as uBlock does: run on every page they would cost a DOM
+      // scan per mutation everywhere.
+      if (isProcedural(selector)) {
+        if (UNSUPPORTED_PROCEDURAL.any { selector.contains(it) }) return false
+        if (included.isEmpty() && !isException) return false
+        count++
+        val target = if (isException) exceptions else procedural
+        included.forEach { target.getOrPut(it) { LinkedHashSet() }.add(selector) }
+        if (!isException) {
+          excluded.forEach { exceptions.getOrPut(it) { LinkedHashSet() }.add(selector) }
+        }
+        return true
+      }
       count++
       when {
         isException && included.isEmpty() -> genericExceptions.add(selector)
@@ -198,6 +218,7 @@ class CosmeticRules private constructor(
         genericById = byId.toArrays(),
         genericByClass = byClass.toArrays(),
         specific = specific.toArrays(),
+        procedural = procedural.toArrays(),
         exceptions = exceptions.toArrays(),
         scriptlets = scriptlets.toArrays(),
         scriptletExceptions = scriptletExceptions.toArrays(),
@@ -245,6 +266,14 @@ class CosmeticRules private constructor(
     private val SEPARATORS = arrayOf(
       "#@$?#", "#$?#", "#@?#", "#@$#", "#@%#", "#@#", "#?#", "#$#", "#%#", "##",
     )
+
+    private val APPLIED_SEPARATORS = setOf("##", "#@#", "#?#", "#@?#")
+
+    /**
+     * Operators the page script does not implement. A rule using one is dropped whole: half a
+     * procedural chain would hide more than the rule meant.
+     */
+    private val UNSUPPORTED_PROCEDURAL = listOf(":matches-prop(", ":others(", ":shadow(")
 
     /** Procedural operators uBlock applies in script; a style sheet rejects them all. */
     private val PROCEDURAL_NAMES = hashSetOf(

@@ -136,6 +136,7 @@
     var x = payload.x || [];
     for (var i = 0; i < x.length; i++) excepted[x[i]] = true;
     if (before && (noGeneric || x.length)) rebuild();
+    if (payload.p && payload.p.length) procedural.add(payload.p);
     var list = fresh(payload.s || [], false).concat(fresh(payload.g || [], true));
     var applied = insert(list);
     if (DEBUG) console.log('[wren] cosmetic: ' + applied + ' of ' + list.length + ' page selectors applied');
@@ -146,6 +147,302 @@
     var applied = insert(list);
     if (DEBUG && list.length) console.log('[wren] cosmetic: ' + applied + ' of ' + list.length + ' surveyed selectors applied');
   }
+
+  // Procedural rules: uBlock's `:has-text()`, `:upward()`, `:style()` and kin, which no style
+  // sheet can express. Each rule is parsed once into a CSS prefix and a chain of steps, then
+  // run against the DOM after parsing and again as it changes. A rule using anything not
+  // understood here matches nothing: a half-applied chain would hide more than it meant.
+  var procedural = (function () {
+    var OPS = /^(has-text|-abp-contains|contains|min-text-length|matches-css|matches-css-before|matches-css-after|matches-attr|matches-path|matches-media|upward|xpath|has|-abp-has|if|not|if-not|watch-attr|style|remove|remove-attr|remove-class)$/;
+    var ACTIONS = { 'style': 1, 'remove': 1, 'remove-attr': 1, 'remove-class': 1 };
+    var token = 'a' + Math.random().toString(36).slice(2, 10);
+    var HIDE = 'data-' + token;
+    var procSheet = null;
+    var rules = [];
+    var scheduled = 0;
+    var running = false;
+    var added = false;
+
+    function needleTest(needle) {
+      if (needle.length > 2 && needle.charAt(0) === '/' && needle.lastIndexOf('/') > 0) {
+        var last = needle.lastIndexOf('/');
+        try {
+          var re = new RegExp(needle.slice(1, last), needle.slice(last + 1));
+          return function (text) { return re.test(text); };
+        } catch (e) { return null; }
+      }
+      return function (text) { return text.indexOf(needle) >= 0; };
+    }
+
+    // The index of the parenthesis closing the one at `open`, past quotes and escapes.
+    function closing(text, open) {
+      var depth = 0;
+      var quote = '';
+      for (var i = open; i < text.length; i++) {
+        var c = text.charAt(i);
+        if (c === '\\') { i++; continue; }
+        if (quote) { if (c === quote) quote = ''; continue; }
+        if (c === '"' || c === "'") { quote = c; continue; }
+        if (c === '(') depth++;
+        else if (c === ')' && --depth === 0) return i;
+      }
+      return -1;
+    }
+
+    // The next `:operator(` at the top level of `text` from `from`, or null.
+    function nextOp(text, from) {
+      var depth = 0;
+      var square = 0;
+      var quote = '';
+      for (var i = from; i < text.length; i++) {
+        var c = text.charAt(i);
+        if (c === '\\') { i++; continue; }
+        if (quote) { if (c === quote) quote = ''; continue; }
+        if (c === '"' || c === "'") { quote = c; continue; }
+        if (c === '[') square++;
+        else if (c === ']') square--;
+        else if (c === '(') depth++;
+        else if (c === ')') depth--;
+        else if (c === ':' && depth === 0 && square === 0) {
+          var m = /^:([-a-z]+)\(/.exec(text.slice(i));
+          if (!m || !OPS.test(m[1])) continue;
+          // A native :has()/:not() stays in the CSS unless something procedural is inside it.
+          var end = closing(text, i + m[0].length - 1);
+          if (end < 0) return null;
+          var arg = text.slice(i + m[0].length, end);
+          if ((m[1] === 'has' || m[1] === 'not') && !hasProcedural(arg)) continue;
+          return { at: i, end: end + 1, name: m[1], arg: arg };
+        }
+      }
+      return null;
+    }
+
+    function hasProcedural(text) {
+      return /:(has-text|-abp-contains|contains|min-text-length|matches-css|matches-attr|matches-path|matches-media|upward|xpath|-abp-has|if|if-not|style|remove)/.test(text);
+    }
+
+    function parse(text) {
+      text = text.trim();
+      var first = nextOp(text, 0);
+      var css = (first ? text.slice(0, first.at) : text).trim();
+      var steps = [];
+      var action = null;
+      var op = first;
+      var cursor = first ? first.at : text.length;
+      while (op) {
+        var between = text.slice(cursor, op.at).trim();
+        if (between) steps.push(['spath', between]);
+        if (ACTIONS[op.name]) {
+          if (text.slice(op.end).trim()) return null; // an action ends the rule
+          action = [op.name, op.arg];
+        } else {
+          var step = compile(op.name, op.arg);
+          if (!step) return null;
+          steps.push(step);
+        }
+        cursor = op.end;
+        op = nextOp(text, cursor);
+      }
+      var rest = text.slice(cursor).trim();
+      if (rest) steps.push(['spath', rest]);
+      if (action && action[0] === 'style' && !safeStyle(action[1])) return null;
+      return { css: css, steps: steps, action: action };
+    }
+
+    function safeStyle(declarations) {
+      return !/url\(|image-set|expression|\\|[{}@<>]|\/\*/i.test(declarations);
+    }
+
+    function compile(name, arg) {
+      switch (name) {
+        case 'has-text': case '-abp-contains': case 'contains': {
+          var test = needleTest(arg);
+          return test && ['filter', function (el) { return test(el.textContent || ''); }];
+        }
+        case 'min-text-length': {
+          var min = parseInt(arg, 10);
+          return isNaN(min) ? null : ['filter', function (el) { return (el.textContent || '').length >= min; }];
+        }
+        case 'matches-css': case 'matches-css-before': case 'matches-css-after': {
+          var colon = arg.indexOf(':');
+          if (colon < 1) return null;
+          var prop = arg.slice(0, colon).trim();
+          var value = arg.slice(colon + 1).trim();
+          var check = value.charAt(0) === '/' ? needleTest(value) : function (v) { return v === value; };
+          var pseudo = name === 'matches-css-before' ? '::before' : name === 'matches-css-after' ? '::after' : null;
+          return check && ['filter', function (el) {
+            return check(String(getComputedStyle(el, pseudo).getPropertyValue(prop)));
+          }];
+        }
+        case 'matches-attr': {
+          var eq = arg.indexOf('=');
+          var unquote = function (v) { v = v.trim(); return /^(["']).*\1$/.test(v) ? v.slice(1, -1) : v; };
+          var nameTest = needleTest(unquote(eq < 0 ? arg : arg.slice(0, eq)));
+          var valueTest = eq < 0 ? function () { return true; } : needleTest(unquote(arg.slice(eq + 1)));
+          return nameTest && valueTest && ['filter', function (el) {
+            for (var i = 0; i < el.attributes.length; i++) {
+              var a = el.attributes[i];
+              if (nameTest(a.name) && valueTest(a.value)) return true;
+            }
+            return false;
+          }];
+        }
+        case 'matches-path': {
+          var pathTest = needleTest(arg);
+          return pathTest && ['gate', function () { return pathTest(location.pathname + location.search); }];
+        }
+        case 'matches-media':
+          return ['gate', function () { try { return matchMedia(arg).matches; } catch (e) { return false; } }];
+        case 'upward': {
+          var n = /^\d+$/.test(arg.trim()) ? parseInt(arg, 10) : 0;
+          if (n) return ['map', function (el) { var up = el; for (var i = 0; up && i < n; i++) up = up.parentElement; return up; }];
+          return ['map', function (el) { return el.parentElement && el.parentElement.closest(arg); }];
+        }
+        case 'xpath':
+          return ['xpath', arg];
+        case 'has': case '-abp-has': case 'if': {
+          var inner = parse(arg);
+          return inner && !inner.action && ['filter', function (el) { return within(el, inner).length > 0; }];
+        }
+        case 'not': case 'if-not': {
+          var self = parse(arg);
+          return self && !self.action && ['filter', function (el) { return !matchesSelf(el, self); }];
+        }
+        case 'watch-attr':
+          return ['pass'];
+      }
+      return null;
+    }
+
+    function scoped(css) {
+      return /^[>+~]/.test(css) ? ':scope ' + css : css;
+    }
+
+    function within(root, rule) {
+      var start;
+      try { start = rule.css ? [].slice.call(root.querySelectorAll(scoped(rule.css))) : [root]; } catch (e) { return []; }
+      return run(start, rule.steps);
+    }
+
+    function matchesSelf(el, rule) {
+      try { if (rule.css && !el.matches(rule.css)) return false; } catch (e) { return false; }
+      return run([el], rule.steps).length > 0;
+    }
+
+    function run(nodes, steps) {
+      for (var s = 0; s < steps.length && nodes.length; s++) {
+        var step = steps[s];
+        var out = [];
+        if (step[0] === 'filter') {
+          for (var i = 0; i < nodes.length; i++) if (step[1](nodes[i])) out.push(nodes[i]);
+        } else if (step[0] === 'gate') {
+          out = step[1]() ? nodes : [];
+        } else if (step[0] === 'map') {
+          for (var j = 0; j < nodes.length; j++) {
+            var mapped = step[1](nodes[j]);
+            if (mapped && out.indexOf(mapped) < 0) out.push(mapped);
+          }
+        } else if (step[0] === 'spath') {
+          for (var k = 0; k < nodes.length; k++) {
+            try { out = out.concat([].slice.call(nodes[k].querySelectorAll(':scope ' + step[1]))); } catch (e) { return []; }
+          }
+        } else if (step[0] === 'xpath') {
+          for (var x = 0; x < nodes.length; x++) {
+            try {
+              var found = document.evaluate(step[1], nodes[x], null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+              for (var y = 0; y < found.snapshotLength; y++) {
+                var node = found.snapshotItem(y);
+                if (node.nodeType === 1 && out.indexOf(node) < 0) out.push(node);
+              }
+            } catch (e) { return []; }
+          }
+        } else if (step[0] !== 'pass') {
+          return [];
+        }
+        nodes = out;
+      }
+      return nodes;
+    }
+
+    function sheetFor() {
+      if (procSheet) return procSheet;
+      try {
+        procSheet = new CSSStyleSheet();
+        procSheet.insertRule('[' + HIDE + ']{display:none !important;}', 0);
+        document.adoptedStyleSheets = document.adoptedStyleSheets.concat([procSheet]);
+      } catch (e) { procSheet = null; }
+      return procSheet;
+    }
+
+    function apply(rule, index) {
+      var action = rule.action;
+      // A plain selector with only a style needs no script: the sheet keeps it applied.
+      if (action && action[0] === 'style' && !rule.steps.length) {
+        if (!rule.styled) {
+          rule.styled = true;
+          try { sheetFor().insertRule(rule.css + '{' + action[1] + '}', procSheet.cssRules.length); } catch (e) {}
+        }
+        return;
+      }
+      var nodes = rule.css ? within(document, rule) : run([document.documentElement], rule.steps);
+      for (var i = 0; i < nodes.length; i++) {
+        var el = nodes[i];
+        if (!action) {
+          if (sheetFor()) el.setAttribute(HIDE, '');
+        } else if (action[0] === 'remove') {
+          el.remove();
+        } else if (action[0] === 'remove-attr') {
+          action[1].split('|').forEach(function (n) { n = n.trim(); if (n) el.removeAttribute(n); });
+        } else if (action[0] === 'remove-class') {
+          action[1].split('|').forEach(function (n) { n = n.trim(); if (n) el.classList.remove(n); });
+        } else if (action[0] === 'style') {
+          var attr = HIDE + '-' + index;
+          if (!rule.styled) {
+            rule.styled = true;
+            try { sheetFor().insertRule('[' + attr + ']{' + action[1] + '}', procSheet.cssRules.length); } catch (e) {}
+          }
+          el.setAttribute(attr, '');
+        }
+      }
+    }
+
+    function runAll() {
+      scheduled = 0;
+      if (running || disabled) return;
+      running = true;
+      for (var i = 0; i < rules.length; i++) {
+        try { apply(rules[i], i); } catch (e) {}
+      }
+      running = false;
+    }
+
+    function schedule() {
+      if (!scheduled && rules.length) scheduled = setTimeout(runAll, 100);
+    }
+
+    return {
+      add: function (list) {
+        // The page's answer can come more than once (it is asked again until it replies).
+        if (added) return;
+        added = true;
+        for (var i = 0; i < list.length; i++) {
+          var rule = null;
+          try { rule = parse(list[i]); } catch (e) {}
+          if (rule && (rule.css || rule.steps.length)) rules.push(rule);
+        }
+        if (!rules.length) return;
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', runAll, { once: true });
+        } else {
+          runAll();
+        }
+        try {
+          new MutationObserver(function () { if (!running) schedule(); })
+            .observe(document, { childList: true, subtree: true, characterData: true });
+        } catch (e) {}
+      }
+    };
+  })();
 
   insert(fresh(FALLBACK, true));
 

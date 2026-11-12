@@ -264,7 +264,7 @@ Recorded and not changed:
 - A WebGL 2 `COPY_READ_BUFFER` that holds pixel data copied without a prior `readPixels` into a pixel-pack buffer is not noised.
 - A child realm's shims are still functions of the parent's realm, so `Object.getPrototypeOf(fn) === frame.Function.prototype` is false for them in a blank frame or popup.
 
-## 12. Round 12 (unreleased): Tor Browser parity and an experimental Tor VPN
+## 12. Round 12 (1.0.16): Tor Browser parity and an experimental Tor VPN
 
 | Item | Result | Where | Note |
 |---|---|---|---|
@@ -279,7 +279,7 @@ Recorded and not changed:
 - Turning Tor off and on again in one process can abort inside `libtor.so` (`hs_circuitmap_init` and `tor_cond_wait` assertions): tor-android does not restart Tor cleanly in the same process. Reproduced on the unchanged 1.0.15 release, so it is not from this round. Running Tor in its own process would fix it.
 - First-party circuit isolation is still missing; see section 3.
 
-## 13. Round 13 (unreleased): breakage and ad-leak pass
+## 13. Round 13 (1.0.16): breakage and ad-leak pass
 
 Measured on an API 36 emulator (WebView 133) with the arm64 debug build: 107 popular sites loaded with blocking on, every site that came back thin reloaded with blocking off, and the six that differed loaded on, off, on again. None stayed broken by the blocker: booking.com, eBay, Fox News, Indeed and Walmart differed run to run in both modes, and Twitch rendered in 31 s with blocking on against 46 to 51 s off. The rest were bot checks ("Just a moment...", "Too Many Requests") or network failures on the emulator in both modes. An ad-leak probe on 22 ad-heavy sites (news, Fandom, Speedtest, w3schools, Yahoo, Reddit) found no ad or tag script served from the network: every Google Publisher Tag and Tag Manager response was Wren's stand-in.
 
@@ -289,6 +289,7 @@ Measured on an API 36 emulator (WebView 133) with the arm64 debug build: 107 pop
 | `[-]` in json-prune paths | Fixed | `scriptlets.js` `removePath` | Was treated as `[]`, deleting one key from each entry; it now removes the matching array entry whole, so a feed's sponsored item goes (39 bundled rules) |
 | `#@#` exception against the fallback selectors | Fixed | `cosmetic_filter.js` | The built-in AdSense/GPT/Taboola selectors went in before the site's exceptions arrived and stayed; the sheet is now rebuilt without them |
 | `$generichide` and `$document` page exceptions | Fixed | `CosmeticFilter.respond`, `cosmetic_filter.js` | Parsed but never used for hiding. A `$generichide` page now gets its site rules only and no generic survey; a `$document` page gets nothing and the page script takes back what it applied |
+| Procedural cosmetic rules | Added | `CosmeticRules`, `cosmetic_filter.js` `procedural` | About 1,300 site-specific uBlock and Adblock Plus rules (`:has-text` 433, `:style` 170, `:upward` 50, `:xpath`, `:remove`, `:remove-attr`, `:remove-class`, `:matches-css`, `:matches-attr`, `:matches-path`, `:matches-media`, `:min-text-length`, `:-abp-has`, `:-abp-contains`, procedural `:has` and `:not`) were dropped at parse time. They now reach the page as their own list and run after parsing and on every DOM change, hiding through one random attribute and a sheet of their own. A rule with an operator not implemented (`:matches-prop`, `:others`, `:shadow`) is dropped whole, and `:style` declarations with `url(`, braces or escapes are refused. Generic procedural rules are not run, as in uBlock. Checked in WebView 133 against a synthetic page for every operator, content added later included; NDTV hides five sponsored blocks |
 | Plain-http downloads under Tor | Fixed | `InAppDownloader.clientFor` | Went to the CONNECT-only tunnel port and failed; they now use the SOCKS port pages use for http, which hands Tor the name |
 
 Recorded and not changed:
@@ -296,5 +297,4 @@ Recorded and not changed:
 - A request with no telling extension or Accept header is matched as script, fetch and font at once, so a `$script` rule on an API host also stops its fetches. WebView gives no `Sec-Fetch-Dest` to settle it.
 - The native adapter matches every request as GET and drops `$removeparam` and `$csp` actions; `$ping` and `$websocket` rules have no request path in WebView.
 - `partition.js` decides same-site with a short list of second-level labels, not the bundled public suffix list: `a.me.de` and `b.me.de` count as two sites, `x.github.io` and `y.github.io` as one.
-- Procedural cosmetic rules (`:has-text`, `#?#`) are not run.
 - The Kotlin fallback engine (used only when the native library cannot load) misses first-party `||host^` rules and `,badfilter` on host-set entries.

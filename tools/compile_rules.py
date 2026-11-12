@@ -57,6 +57,8 @@ PROCEDURAL = re.compile(
   r"style|remove-attr|remove-class|matches-media|shadow|contains|-abp-\w+)\b",
 )
 
+UNSUPPORTED_PROCEDURAL = re.compile(r":(matches-prop|others|shadow)\(")
+
 TYPES = {
   "script", "image", "stylesheet", "css", "xmlhttprequest", "xhr", "subdocument", "frame",
   "font", "media", "object", "ping", "beacon", "websocket", "other",
@@ -84,22 +86,29 @@ def cosmetic_line(raw: str):
   line = raw.strip()
   if not line or line[0] in "![":
     return None
-  for separator in ("#@#", "##"):
+  for separator in ("#@?#", "#@#", "#?#", "##"):
     i = line.find(separator)
     if i < 0:
       continue
     domains, body = line[:i], line[i + len(separator):]
     if not body or "*" in domains:
       return None
-    if body.startswith("+js("):
+    if body.startswith("+js(") and "?" not in separator:
       if not body.endswith(")"):
         return None
       name = body[4:-1].split(",", 1)[0].strip()
       if name.endswith(".js"):
         name = name[:-3]
       return line if (name in SCRIPTLETS or name == "") and domains else None
-    if body.startswith("^") or PROCEDURAL.search(body) or "\n" in body:
+    if body.startswith("^") or "\n" in body:
       return None
+    # Procedural rules run in the page script; like uBlock, only ones naming their sites.
+    if "?" in separator or PROCEDURAL.search(body):
+      if UNSUPPORTED_PROCEDURAL.search(body):
+        return None
+      named = any(d.strip() and not d.strip().startswith("~") for d in domains.split(","))
+      if not named and "@" not in separator:
+        return None
     return line
   return None
 

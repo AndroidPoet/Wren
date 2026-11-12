@@ -58,8 +58,9 @@ list when Tor is turned off or a new identity is requested, keeps a site setting
 Tor only until then too, removes
 WebRTC and the motion sensors, forces third-party cookies off, shows pages a UTC clock with
 100 ms precision and answers in English, letterboxes pages to 100 px steps so the viewport does
-not name the phone, asks the keyboard not to learn from what is typed, offers a Safest level
-with JavaScript off and web fonts blocked, and can reach Tor through obfs4,
+not name the phone, asks the keyboard not to learn from what is typed, offers Tor Browser's Safer level
+(no WebAssembly or WebGL, no JavaScript on pages without HTTPS) and Safest level (JavaScript off and
+web fonts blocked), and can reach Tor through obfs4,
 Snowflake or meek bridges where Tor is blocked (before Tor is reached, meek talks to a content
 delivery front over your normal connection, and Snowflake talks to its front, to a STUN server
 named in the bridge line and to a volunteer's WebRTC proxy, as Tor Browser does), but it does not make you

@@ -78,6 +78,32 @@ class CosmeticRulesTest {
   }
 
   @Test
+  fun test_hidingPayloadFor_proceduralRules_goToTheScriptNotTheSheet() {
+    val rules = CosmeticRules.Builder().apply {
+      add("news.com##article:has-text(Sponsored)")
+      add("news.com#?#div:-abp-has(.ad-label)")
+      add("news.com##.promo:style(height: 0 !important)")
+      add("m.news.com#@#article:has-text(Sponsored)")
+      add("##div:has-text(Advertisement)")
+      add("news.com##div:others()")
+    }.build()
+
+    val desktop = rules.hidingPayloadFor("news.com")
+    val mobile = rules.hidingPayloadFor("m.news.com")
+
+    val steps = "\"article:has-text(Sponsored)\",\"div:-abp-has(.ad-label)\"," +
+      "\".promo:style(height: 0 !important)\""
+    assertThat(desktop).contains("\"p\":[$steps]")
+    assertThat(desktop).contains("\"s\":[]")
+    assertThat(desktop).doesNotContain("Advertisement")
+    assertThat(desktop).doesNotContain("others")
+    assertThat(mobile).contains(
+      "\"p\":[\"div:-abp-has(.ad-label)\",\".promo:style(height: 0 !important)\"]",
+    )
+    assertThat(rules.hidingPayloadFor("other.com")).doesNotContain("\"p\"")
+  }
+
+  @Test
   fun test_hidingPayloadFor_genericHidePage_carriesNoGenericSelectors() {
     val rules = CosmeticRules.Builder().apply {
       add("##div.ad")
@@ -105,7 +131,9 @@ class CosmeticRulesTest {
   @Test
   fun `unsupported and malformed lines are dropped`() {
     assertThat(rules.hidingPayloadFor("news.com")).doesNotContain("broken")
-    assertThat(rules.hidingPayloadFor("news.com")).doesNotContain("procedural")
+    // Procedural rules are applied by the page script, never put in the sheet.
+    assertThat(rules.hidingPayloadFor("news.com")).contains("\"p\":[\".procedural:has-text(x)\"]")
+    assertThat(rules.hidingPayloadFor("news.com")).doesNotContain("\"s\":[\".procedural")
     assertThat(rules.scriptletsFor("news.com")).doesNotContain("trusted-unknown-thing, x")
   }
 
@@ -206,13 +234,15 @@ class EngineBuilderTest {
   @Test
   fun `procedural selectors and html filters stay out of the style sheet`() {
     val rules = CosmeticRules.Builder().apply {
-      assertThat(add("a.com##div:has-text(Sponsored)")).isFalse()
+      assertThat(add("a.com##div:has-text(Sponsored)")).isTrue()
       assertThat(add("a.com##^script:has-text(adblock)")).isFalse()
       assertThat(add("a.com##div:has(> .ad)")).isTrue()
-      assertThat(add("a.com##.x:upward(2)")).isFalse()
+      assertThat(add("a.com##.x:upward(2)")).isTrue()
     }.build()
-    assertThat(rules.hidingPayloadFor("a.com")).contains("div:has(> .ad)")
-    assertThat(rules.hidingPayloadFor("a.com")).doesNotContain("has-text")
+    val payload = rules.hidingPayloadFor("a.com")
+    assertThat(payload).contains("\"s\":[\"div:has(> .ad)\"]")
+    assertThat(payload).contains("\"p\":[\"div:has-text(Sponsored)\",\".x:upward(2)\"]")
+    assertThat(payload).doesNotContain("^script")
   }
 
   @Test

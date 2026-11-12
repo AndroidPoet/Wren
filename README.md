@@ -25,7 +25,8 @@
 **Blocking**
 - Tracker and ad blocking with EasyList, EasyPrivacy and uBlock Origin rules. Network requests
   are matched by Brave's [adblock-rust](https://github.com/brave/adblock-rust) (MPL-2.0), which
-  reads the lists as uBlock Origin does; cosmetic filtering and scriptlets run in the page. Lists
+  reads the lists as uBlock Origin does; cosmetic filtering, scriptlets and uBlock's procedural
+  rules (`:has-text`, `:upward`, `:style` and the rest of the common set) run in the page. Lists
   update from Settings, and you can add your own.
 - A per-site panel showing what was blocked, grouped by the company that owns it.
 - **Turn off protection on this site** in that panel when a site breaks: no blocking there, and
@@ -98,11 +99,16 @@ engine. Before relying on it for anything sensitive, know the limits:
 - **Tor mode is not Tor Browser.** It sends every tab and every request the app makes through
   Tor, keeps Tor pages in a storage profile of their own that is thrown away when Tor is turned
   off, writes nothing they visit to history, gives each destination host its own circuit,
-  refuses plain HTTP, runs downloads itself through Tor, removes WebRTC and the motion sensors
+  upgrades clear-web pages to HTTPS while onion sites may use plain HTTP, runs downloads itself through Tor, removes WebRTC and the motion sensors
   from pages, forces third-party cookies off, shows pages a UTC clock on a 100 ms grid and
   answers in English, letterboxes every page to 100 px steps and reports the screen as that
-  viewport, and asks the keyboard not to learn from what is typed. A Safest switch on the Tor
-  sheet turns JavaScript off and blocks web fonts on every Tor page. Under Tor the canvas reads
+  viewport, and asks the keyboard not to learn from what is typed. The Tor sheet has Tor
+  Browser's three security levels: Safer removes WebAssembly and WebGL and runs no JavaScript on
+  pages that arrived without HTTPS (onion sites count as secure); Safest runs no JavaScript and
+  blocks web fonts on every Tor page. The sheet also shows the current site's circuit, builds a
+  new one for that site, and offers a site's onion address when it advertises one. An
+  experimental Tor VPN sends other apps' TCP connections through Tor while Tor mode is on;
+  UDP other than DNS does not get through. Under Tor the canvas reads
   back blank, as in Tor Browser, so every Tor user gives the same answer; outside Tor
   fingerprint protection gives each site its own noise, the same for that site until you clear
   browsing data or restart Wren, with separate noise for normal, private and Tor pages. The
