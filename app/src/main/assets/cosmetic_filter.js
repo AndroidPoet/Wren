@@ -95,32 +95,59 @@
 
   var excepted = {};
   var seen = {};
-  function fresh(selectors) {
+  // What the sheet holds, and which of it is generic, so the page's answer can take back a
+  // fallback selector its lists except (`#@#`) or all generic hiding (`$generichide`).
+  var kept = [];
+  var generic = {};
+  var noGeneric = false;
+  var disabled = false;
+  function fresh(selectors, isGeneric) {
     var list = [];
+    if (disabled || (isGeneric && noGeneric)) return list;
     for (var i = 0; i < selectors.length; i++) {
       var selector = selectors[i];
       if (seen[selector] || excepted[selector]) continue;
       seen[selector] = true;
+      if (isGeneric) generic[selector] = true;
+      kept.push(selector);
       list.push(selector);
     }
     return list;
   }
 
+  function rebuild() {
+    kept = disabled ? [] : kept.filter(function (selector) {
+      return !excepted[selector] && !(noGeneric && generic[selector]);
+    });
+    if (!sheet) return;
+    try { sheet.replaceSync(''); } catch (e) { return; }
+    insert(kept);
+  }
+
   function applyPage(payload) {
+    if (payload.off) {
+      // A list exempts this page entirely (`$document`): nothing hidden, nothing surveyed.
+      disabled = true;
+      rebuild();
+      return;
+    }
+    var before = kept.length;
+    noGeneric = payload.n === 1;
     var x = payload.x || [];
     for (var i = 0; i < x.length; i++) excepted[x[i]] = true;
-    var list = fresh((payload.s || []).concat(payload.g || []));
+    if (before && (noGeneric || x.length)) rebuild();
+    var list = fresh(payload.s || [], false).concat(fresh(payload.g || [], true));
     var applied = insert(list);
     if (DEBUG) console.log('[wren] cosmetic: ' + applied + ' of ' + list.length + ' page selectors applied');
   }
 
   function applySurvey(payload) {
-    var list = fresh(payload.m || []);
+    var list = fresh(payload.m || [], true);
     var applied = insert(list);
     if (DEBUG && list.length) console.log('[wren] cosmetic: ' + applied + ' of ' + list.length + ' surveyed selectors applied');
   }
 
-  insert(fresh(FALLBACK));
+  insert(fresh(FALLBACK, true));
 
   var channel = typeof CHANNEL === 'object' ? CHANNEL : null;
   if (!channel) return;
@@ -164,7 +191,7 @@
 
   function flush() {
     flushTimer = 0;
-    if (!ready || (!pendingIds.length && !pendingClasses.length)) return;
+    if (!ready || disabled || noGeneric || (!pendingIds.length && !pendingClasses.length)) return;
     var message = {
       h: host,
       i: pendingIds.splice(0, MAX_BATCH),
@@ -212,7 +239,7 @@
         applySurvey(payload);
         return;
       }
-      if (payload.g || payload.s) {
+      if (payload.g || payload.s || payload.off) {
         applyPage(payload);
         if (!ready) {
           ready = true;

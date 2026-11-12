@@ -78,6 +78,20 @@ class CosmeticRulesTest {
   }
 
   @Test
+  fun test_hidingPayloadFor_genericHidePage_carriesNoGenericSelectors() {
+    val rules = CosmeticRules.Builder().apply {
+      add("##div.ad")
+      add("shop.com##.promo")
+    }.build()
+
+    val payload = rules.hidingPayloadFor("shop.com", generic = false)
+
+    assertThat(payload).startsWith("{\"n\":1,\"g\":[]")
+    assertThat(payload).contains("\"s\":[\".promo\"]")
+    assertThat(payload).doesNotContain("div.ad")
+  }
+
+  @Test
   fun `scriptlets resolve per host and honour exceptions`() {
     assertThat(rules.scriptletsFor("news.com"))
       .containsExactly("set, ads.enabled, false", "aopr, adBlockDetected")

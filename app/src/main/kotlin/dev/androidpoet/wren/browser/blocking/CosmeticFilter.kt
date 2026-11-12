@@ -99,14 +99,22 @@ class CosmeticFilter @Inject constructor(
     val host = origin.orEmpty().trim().lowercase()
     if (host.isEmpty() || host.length > 253) return
     if (!settings.blockAds || settings.isAllowlisted(host)) return
-    val cosmetics = blocklist.engineOrNull?.cosmetics ?: return
+    val engine = blocklist.engineOrNull ?: return
+    val cosmetics = engine.cosmetics
+    // A list's `$document` exception turns everything off on that page, `$generichide` the
+    // generic half; the page script takes back whatever it applied before asking.
+    val exempt = engine.rules.isPageExempt(host)
+    val genericAllowed = !exempt && !engine.rules.isGenericHideExempt(host)
     val payload = if (message != null && (message.has("i") || message.has("c"))) {
+      if (!genericAllowed) return
       cosmetics.surveyPayloadFor(
         ids = message.optJSONArray("i").tokens(),
         classes = message.optJSONArray("c").tokens(),
       )
+    } else if (exempt) {
+      PAGE_OFF
     } else {
-      cosmetics.hidingPayloadFor(host)
+      cosmetics.hidingPayloadFor(host, generic = genericAllowed)
     }
     runCatching { reply.postMessage(payload) }
       .onFailure { Timber.w(it, "could not send cosmetic rules") }
@@ -187,6 +195,8 @@ class CosmeticFilter @Inject constructor(
     application.assets.open(name).bufferedReader().use { it.readText() }
 
   private companion object {
+    /** The answer for a page a list exempts entirely: hide nothing, survey nothing. */
+    const val PAGE_OFF = "{\"off\":1}"
     const val LIBRARY_ASSET = "scriptlets.js"
     const val INJECTOR_ASSET = "cosmetic_filter.js"
 

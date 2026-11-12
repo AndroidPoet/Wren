@@ -158,7 +158,9 @@ var runScriptlets = (function () {
     });
   }
 
-  function propsMatch(url, method, props) {
+  // uBlock's propsToMatch: url and method always, any other key (mode, body, credentials...)
+  // against the fetch's own init or Request, skipped only when the call did not set it.
+  function propsMatch(url, method, props, extra) {
     if (!props) return true;
     var parts = props.split(/\s+/);
     for (var i = 0; i < parts.length; i++) {
@@ -171,6 +173,13 @@ var runScriptlets = (function () {
         if (!matchesNeedle(url, needle)) return false;
       } else if (key === 'method') {
         if (!matchesNeedle(method || 'GET', needle)) return false;
+      } else if (extra) {
+        var value = extra(key);
+        if (value === undefined || value === null) continue;
+        if (typeof value !== 'string') {
+          try { value = JSON.stringify(value); } catch (e) { continue; }
+        }
+        if (typeof value !== 'string' || !matchesNeedle(value, needle)) return false;
       }
     }
     return true;
@@ -210,6 +219,14 @@ var runScriptlets = (function () {
     if (obj === null || typeof obj !== 'object') return;
     var token = tokens[0];
     var rest = tokens.slice(1);
+    // `[-]` is uBlock's conditional removal: an array entry goes as a whole when the rest of
+    // the path is found inside it (a feed item carrying advertiserId), not just that key.
+    if (token === '[-]' && Array.isArray(obj)) {
+      for (var j = obj.length - 1; j >= 0; j--) {
+        if (rest.length === 0 || hasPath(obj[j], rest)) obj.splice(j, 1);
+      }
+      return;
+    }
     if (token === '[]' || token === '*' || token === '[-]') {
       var keys = Array.isArray(obj) ? obj.map(function (_, k) { return k; }) : Object.keys(obj);
       keys.forEach(function (k) {
@@ -444,7 +461,11 @@ var runScriptlets = (function () {
     window.fetch = function (input, init) {
       var url = typeof input === 'string' ? input : (input && input.url) || '';
       var method = (init && init.method) || (input && input.method) || 'GET';
-      if (!propsMatch(url, method, props)) return original.apply(this, arguments);
+      var extra = function (key) {
+        if (init && typeof init === 'object' && init[key] !== undefined) return init[key];
+        return input && typeof input === 'object' ? input[key] : undefined;
+      };
+      if (!propsMatch(url, method, props, extra)) return original.apply(this, arguments);
       var text = body === 'emptyObj' ? '{}' : body === 'emptyArr' ? '[]' : '';
       return Promise.resolve(new Response(text, { status: 200, statusText: 'OK' }));
     };

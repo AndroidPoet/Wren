@@ -29,8 +29,11 @@ class CosmeticRules private constructor(
 
   private val genericLowJson: String by lazy { JsonText.array(genericLow.asList()) }
 
-  /** The hiding payload for a page on [host]: `{"g":[...],"s":[...],"x":[...]}`. */
-  fun hidingPayloadFor(host: String): String {
+  /**
+   * The hiding payload for a page on [host]: `{"g":[...],"s":[...],"x":[...]}`. Without
+   * [generic] (a `$generichide` page) it carries `"n":1` and no generic selectors.
+   */
+  fun hidingPayloadFor(host: String, generic: Boolean = true): String {
     val chain = HostMatcher.candidates(host)
     val own = ArrayList<String>()
     val excepted = ArrayList<String>()
@@ -39,7 +42,7 @@ class CosmeticRules private constructor(
       exceptions[domain]?.let(excepted::addAll)
     }
     return buildString(genericLowJson.length + 64 + own.size * 40) {
-      append("{\"g\":").append(genericLowJson)
+      if (generic) append("{\"g\":").append(genericLowJson) else append("{\"n\":1,\"g\":[]")
       append(",\"s\":").append(JsonText.array(own))
       append(",\"x\":").append(JsonText.array(excepted))
       append('}')

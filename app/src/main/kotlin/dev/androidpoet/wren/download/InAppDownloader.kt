@@ -176,11 +176,15 @@ class InAppDownloader @Inject constructor(
    */
   private fun clientFor(request: Request): okhttp3.OkHttpClient {
     if (!request.viaTor) return http.client
-    val port = settings.torHttpPort
+    // Tor's HTTP port speaks CONNECT only, which plain http never sends; an http address goes
+    // to the SOCKS port pages use for it. OkHttp hands a SOCKS proxy the unresolved name, so
+    // the lookup happens at the exit either way.
+    val plainHttp = request.url.startsWith("http://", ignoreCase = true)
+    val port = if (plainHttp) settings.torPageSocksPort else settings.torHttpPort
     check(port > 0) { "route unavailable" }
     val tunnel = java.net.Proxy(
-      java.net.Proxy.Type.HTTP,
-      java.net.InetSocketAddress("127.0.0.1", port),
+      if (plainHttp) java.net.Proxy.Type.SOCKS else java.net.Proxy.Type.HTTP,
+      java.net.InetSocketAddress(TorProxySelector.LOOPBACK, port),
     )
     return http.client.newBuilder().proxy(tunnel).build()
   }
