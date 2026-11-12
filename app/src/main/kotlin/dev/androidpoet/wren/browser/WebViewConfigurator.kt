@@ -17,6 +17,7 @@ import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import androidx.webkit.WebViewMediaIntegrityApiStatusConfig
 import dev.androidpoet.wren.BuildConfig
+import dev.androidpoet.wren.browser.blocking.HostMatcher
 import dev.androidpoet.wren.browser.privacy.PrivacyHeaders
 import dev.androidpoet.wren.settings.SettingsStore
 import dev.androidpoet.wren.ui.tv.TvMode
@@ -280,10 +281,14 @@ class WebViewConfigurator @Inject constructor(
    * toggling.
    */
   @SuppressLint("SetJavaScriptEnabled")
-  fun applyForHost(webView: WebView, host: String) {
-    // Tor Browser's "Safest" level: no script runs, whatever the site or the global switch says.
+  fun applyForPage(webView: WebView, url: String) {
+    val host = HostMatcher.hostOf(url) ?: return
+    // Tor Browser's security levels: Safest runs no script anywhere, Safer none on a page that
+    // arrived without HTTPS, whatever the site or the global switch says.
     webView.settings.javaScriptEnabled =
-      settings.javaScriptEnabled && !settings.isJsDisabledFor(host) && !settings.torSafestActive
+      settings.javaScriptEnabled && !settings.isJsDisabledFor(
+        host,
+      ) && !settings.torLevelBlocksScript(url)
     val desktop = desktopWanted(webView) || settings.isDesktopSite(host)
     val wanted = userAgentFor(webView, desktop)
     if (webView.settings.userAgentString != wanted) {

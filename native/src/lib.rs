@@ -9,6 +9,8 @@
 //! subresource from WebView's request threads, so it is built without `single-thread` and every
 //! call takes `&Engine` only.
 
+mod tunnel;
+
 use adblock::lists::{FilterFormat, FilterSet, ParseOptions};
 use adblock::request::Request;
 use adblock::resources::{MimeType, Resource, ResourceType};

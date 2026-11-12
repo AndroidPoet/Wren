@@ -16,13 +16,18 @@ import dagger.hilt.android.HiltAndroidApp
 import dev.androidpoet.wren.browser.SpeculativeLoader
 import dev.androidpoet.wren.browser.blocking.FilterListManager
 import dev.androidpoet.wren.browser.privacy.PrivacyScripts
+import dev.androidpoet.wren.browser.tor.OnionLocation
 import dev.androidpoet.wren.browser.tor.TorController
+import dev.androidpoet.wren.browser.tor.TorStatus
+import dev.androidpoet.wren.browser.tor.TorVpn
 import dev.androidpoet.wren.download.BlobDownloader
 import dev.androidpoet.wren.download.DownloadController
 import dev.androidpoet.wren.settings.SettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.util.concurrent.Executors
@@ -47,6 +52,12 @@ class WrenApp : Application() {
 
   @Inject
   lateinit var downloadController: DownloadController
+
+  @Inject
+  lateinit var torVpn: TorVpn
+
+  @Inject
+  lateinit var onionLocation: OnionLocation
 
   @Inject
   lateinit var blobDownloader: BlobDownloader
@@ -82,6 +93,7 @@ class WrenApp : Application() {
     torController.addRouteListener { toTor ->
       // Per-site choices made on one route are that session's, not the next one's.
       settings.forgetSessionSiteChoices()
+      onionLocation.forget()
       downloadController.dropOffRoute(toTor)
       if (toTor) {
         blobDownloader.cancelAll()
@@ -89,9 +101,18 @@ class WrenApp : Application() {
         // the default profile's cookies, whichever screen turned Tor on.
         speculativeLoader.cancel()
       }
+      // The VPN rides on Tor mode: it goes down with it, and comes back with it if chosen.
+      torVpn.sync(torOn = toTor)
     }
     // Puts the proxy in front of WebView before any activity can load a page.
     torController.startIfEnabled()
+    // Tor settles its SOCKS port when it starts; the VPN follows it there once Tor is up.
+    appScope.launch(Dispatchers.Main) {
+      torController.state
+        .map { it.status == TorStatus.ON }
+        .distinctUntilChanged()
+        .collect { up -> if (up) torVpn.sync() }
+    }
   }
 
   /**

@@ -5,6 +5,7 @@
     SPDX-License-Identifier: GPL-3.0-or-later
 -->
 <androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:app="http://schemas.android.com/apk/res-auto"
   android:layout_width="match_parent"
   android:layout_height="wrap_content"
   android:background="@color/layer">
@@ -66,19 +67,52 @@
       android:textColor="@color/ink"
       android:textSize="15sp" />
 
-    <com.google.android.material.switchmaterial.SwitchMaterial
-      android:id="@+id/torSafestSwitch"
-      android:layout_width="match_parent"
-      android:layout_height="wrap_content"
-      android:minHeight="48dp"
-      android:text="@string/tor_safest"
-      android:textColor="@color/ink"
-      android:textSize="15sp" />
-
     <TextView
       android:layout_width="match_parent"
       android:layout_height="wrap_content"
-      android:text="@string/tor_safest_summary"
+      android:layout_marginTop="8dp"
+      android:text="@string/tor_security_level"
+      android:textColor="@color/ink"
+      android:textSize="15sp" />
+
+    <com.google.android.material.button.MaterialButtonToggleGroup
+      android:id="@+id/torLevelGroup"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="6dp"
+      app:selectionRequired="true"
+      app:singleSelection="true">
+
+      <com.google.android.material.button.MaterialButton
+        android:id="@+id/torLevelStandard"
+        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="@string/tor_level_standard" />
+
+      <com.google.android.material.button.MaterialButton
+        android:id="@+id/torLevelSafer"
+        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="@string/tor_level_safer" />
+
+      <com.google.android.material.button.MaterialButton
+        android:id="@+id/torLevelSafest"
+        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="@string/tor_safest" />
+    </com.google.android.material.button.MaterialButtonToggleGroup>
+
+    <TextView
+      android:id="@+id/torLevelSummary"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="4dp"
       android:textAppearance="@style/TextAppearance.Wren.Caption" />
 
     <LinearLayout
@@ -108,5 +142,53 @@
       android:layout_width="wrap_content"
       android:layout_height="wrap_content"
       android:text="@string/tor_bridge_status_none" />
+
+    <LinearLayout
+      android:id="@+id/torCircuitSection"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:orientation="vertical"
+      android:visibility="gone">
+
+      <TextView
+        android:id="@+id/torCircuitTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="@color/ink"
+        android:textSize="15sp" />
+
+      <TextView
+        android:id="@+id/torCircuitPath"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:lineSpacingMultiplier="1.2"
+        android:textAppearance="@style/TextAppearance.Wren.Caption" />
+
+      <com.google.android.material.button.MaterialButton
+        android:id="@+id/torNewCircuit"
+        style="@style/Widget.MaterialComponents.Button.TextButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/tor_new_circuit" />
+    </LinearLayout>
+
+    <com.google.android.material.switchmaterial.SwitchMaterial
+      android:id="@+id/torVpnSwitch"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="8dp"
+      android:minHeight="48dp"
+      android:text="@string/tor_vpn"
+      android:textColor="@color/ink"
+      android:textSize="15sp" />
+
+    <TextView
+      android:id="@+id/torVpnSummary"
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:text="@string/tor_vpn_summary"
+      android:textAppearance="@style/TextAppearance.Wren.Caption" />
   </LinearLayout>
 </androidx.core.widget.NestedScrollView>

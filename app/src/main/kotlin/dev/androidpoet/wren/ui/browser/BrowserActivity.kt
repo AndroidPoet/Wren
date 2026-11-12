@@ -99,9 +99,14 @@ import dev.androidpoet.wren.browser.privacy.LinkCleaner
 import dev.androidpoet.wren.browser.privacy.LinkUnwrapper
 import dev.androidpoet.wren.browser.privacy.PrivacyScripts
 import dev.androidpoet.wren.browser.tor.BridgeMode
+import dev.androidpoet.wren.browser.tor.OnionLocation
+import dev.androidpoet.wren.browser.tor.TorCircuit
 import dev.androidpoet.wren.browser.tor.TorController
 import dev.androidpoet.wren.browser.tor.TorState
 import dev.androidpoet.wren.browser.tor.TorStatus
+import dev.androidpoet.wren.browser.tor.TorTunnel
+import dev.androidpoet.wren.browser.tor.TorVpn
+import dev.androidpoet.wren.browser.tor.TorVpnStatus
 import dev.androidpoet.wren.core.model.Download
 import dev.androidpoet.wren.core.model.SearchEngine
 import dev.androidpoet.wren.databinding.ActivityBrowserBinding
@@ -111,6 +116,7 @@ import dev.androidpoet.wren.download.DownloadController
 import dev.androidpoet.wren.download.DownloadNames
 import dev.androidpoet.wren.download.InAppDownloader
 import dev.androidpoet.wren.settings.SettingsStore
+import dev.androidpoet.wren.settings.TorSecurityLevel
 import dev.androidpoet.wren.ui.home.MostVisitedAdapter
 import dev.androidpoet.wren.ui.home.ShortcutAdapter
 import dev.androidpoet.wren.ui.library.BookmarksActivity
@@ -197,6 +203,12 @@ class BrowserActivity :
 
   @Inject
   lateinit var torController: TorController
+
+  @Inject
+  lateinit var torVpn: TorVpn
+
+  @Inject
+  lateinit var onionLocation: OnionLocation
 
   @Inject
   lateinit var appLock: AppLock
@@ -343,6 +355,13 @@ class BrowserActivity :
 
   /** What the user asked to save, held while Android 9 and older ask them for storage access. */
   private var pendingSave: (() -> Unit)? = null
+
+  /** Android's VPN consent screen, asked for the first time the Tor VPN is turned on. */
+  private val vpnConsentLauncher = registerForActivityResult(
+    ActivityResultContracts.StartActivityForResult(),
+  ) { result ->
+    torVpn.setEnabled(result.resultCode == RESULT_OK)
+  }
 
   private val storagePermissionLauncher = registerForActivityResult(
     ActivityResultContracts.RequestPermission(),
@@ -538,7 +557,7 @@ class BrowserActivity :
   /** The global settings, then the ones this site overrides: both must survive a tab switch. */
   private fun applySiteSettings(view: WebView, tab: BrowserTab?) {
     configurator.configure(view, tab?.isPrivate == true)
-    tab?.url?.let(HostMatcher::hostOf)?.let { host -> configurator.applyForHost(view, host) }
+    tab?.url?.let { url -> configurator.applyForPage(view, url) }
   }
 
   private fun createWebView(tab: BrowserTab): WebView = WrenWebView(
@@ -1240,9 +1259,14 @@ class BrowserActivity :
     )
   }
 
-  /** Tor's tunnel port only carries CONNECT, so a plain-http page cannot travel through it. */
+  /**
+   * Tor Browser's HTTPS-Only default: under Tor a clear-web page goes over https, because a
+   * plain-http one is readable and rewritable by the exit relay. Onion addresses are exempt,
+   * as there: the onion service's own encryption covers them, and most serve only http.
+   */
   private fun routeForTor(url: String): String {
     if (!settings.torMode || !url.startsWith("http://", ignoreCase = true)) return url
+    if (HostMatcher.hostOf(url)?.let(OnionLocation::isOnion) == true) return url
     return ("https://" + url.substring("http://".length)).also { torForcedHttps += it }
   }
 
@@ -1283,7 +1307,7 @@ class BrowserActivity :
     // Blocked counts belong to the document that collected them.
     if (url != viewModel.tabManager.tab(tabId)?.url) blockStats.reset(tabId)
     liveWebViews[tabId]?.let { view ->
-      HostMatcher.hostOf(url)?.let { host -> configurator.applyForHost(view, host) }
+      configurator.applyForPage(view, url)
     }
     viewModel.tabManager.update(tabId, url = url)
     failedMainFrameUrls.remove(url)
@@ -1345,6 +1369,7 @@ class BrowserActivity :
     }
     binding.root.postDelayed({ captureActiveThumbnail() }, THUMBNAIL_SETTLE_MS)
     watchForStuckCheck(tabId, url)
+    offerOnionService(tabId, url)
     renderHome(url)
     if (!isOmniboxFocused) renderOmnibox(url)
     updateNavigationButtons()
@@ -1883,6 +1908,7 @@ class BrowserActivity :
           // workers are refused before the circuits change, and its transfers end with it.
           discardAllWebViews()
           torProfile.retireIdentity()
+          onionLocation.forget()
           settings.forgetSessionSiteChoices()
           downloadController.endTorIdentity()
           val rotated = torController.newIdentity()
@@ -1898,15 +1924,56 @@ class BrowserActivity :
 
   override fun onTorVerify() = openTab(TOR_CHECK_URL, isPrivate = false)
 
-  override fun isTorSafest(): Boolean = settings.torSafest
+  override fun torSecurityLevel(): TorSecurityLevel = settings.torSecurityLevel
 
-  /** Safest changes what runs on every open page, so each one is re-read and reloaded. */
-  override fun onTorSafestChanged(enabled: Boolean) {
-    if (settings.torSafest == enabled) return
-    settings.torSafest = enabled
+  /** A level changes what runs on every open page, so each one is re-read and reloaded. */
+  override fun onTorSecurityLevelChanged(level: TorSecurityLevel) {
+    if (settings.torSecurityLevel == level) return
+    settings.torSecurityLevel = level
     liveWebViews.forEach { (id, view) ->
-      applySiteSettings(view, viewModel.tabManager.tab(id))
+      val tab = viewModel.tabManager.tab(id)
+      applySiteSettings(view, tab)
+      privacyScripts.updateFor(view, tab?.isPrivate == true)
       view.reload()
+    }
+  }
+
+  override fun torSiteHost(): String? = viewModel.tabManager.activeTab()?.let(::shownUrlOf)
+    ?.takeIf { it.startsWith("https://", true) || it.startsWith("http://", true) }
+    ?.let(HostMatcher::hostOf)
+
+  override suspend fun torCircuitFor(host: String): TorCircuit? = torController.circuitFor(host)
+
+  override fun onTorNewCircuitForSite(host: String) {
+    lifecycleScope.launch {
+      val renewed = torController.newCircuitFor(host)
+      if (renewed) {
+        Toast.makeText(
+          this@BrowserActivity,
+          getString(R.string.tor_new_circuit_done, host),
+          Toast.LENGTH_SHORT,
+        ).show()
+        if (activeHost() == host) webView?.reload()
+      } else {
+        toast(R.string.tor_new_circuit_failed)
+      }
+    }
+  }
+
+  override fun torVpnStatus(): StateFlow<TorVpnStatus> = torVpn.status
+
+  override fun isTorVpnEnabled(): Boolean = torVpn.isEnabled
+
+  override fun onTorVpnChanged(enabled: Boolean) {
+    when {
+      !enabled -> torVpn.setEnabled(false)
+      !TorTunnel.isAvailable -> toast(R.string.tor_vpn_unavailable)
+      !torController.isEnabled -> toast(R.string.tor_vpn_needs_tor)
+      else -> torVpn.consentIntent()?.let {
+        vpnConsentLauncher.launch(
+          it,
+        )
+      } ?: torVpn.setEnabled(true)
     }
   }
 
@@ -2052,6 +2119,26 @@ class BrowserActivity :
     stuckCheckOffer?.dismiss()
     stuckCheckOffer = null
     stuckCheckOfferHost = null
+  }
+
+  /**
+   * Tor Browser's ".onion available": when a site names its onion service, the move is offered,
+   * never made unasked; once per site per identity, see [OnionLocation].
+   */
+  private fun offerOnionService(tabId: Long, url: String) {
+    if (!settings.torMode) return
+    val userAgent = webView?.settings?.userAgentString ?: return
+    lifecycleScope.launch {
+      val onion = onionLocation.offerFor(url, userAgent) ?: return@launch
+      // The user may have moved on while the answer was on its way.
+      if (!isActiveTab(tabId) || committedUrl != url) return@launch
+      Snackbar.make(binding.root, R.string.tor_onion_available, ONION_OFFER_MS)
+        .setAction(
+          R.string.tor_onion_open,
+        ) { webView?.loadUrl(onion, configurator.requestHeaders()) }
+        .setAnchorView(binding.menuButton)
+        .show()
+    }
   }
 
   private fun offerWayPastCheck(host: String) {
@@ -2217,7 +2304,7 @@ class BrowserActivity :
 
   private fun applySiteSettingsAndReload() {
     val view = webView ?: return
-    activeHost()?.let { configurator.applyForHost(view, it) }
+    viewModel.tabManager.activeTab()?.let(::shownUrlOf)?.let { configurator.applyForPage(view, it) }
     view.reload()
   }
 
@@ -3210,6 +3297,9 @@ class BrowserActivity :
   }
 
   private companion object {
+    /** Long enough to read and reach; Tor Browser keeps its ".onion available" button. */
+    const val ONION_OFFER_MS = 8000
+
     /** A page's second download inside this window is asked about first. */
     const val REPEAT_DOWNLOAD_WINDOW_MS = 10_000L
 

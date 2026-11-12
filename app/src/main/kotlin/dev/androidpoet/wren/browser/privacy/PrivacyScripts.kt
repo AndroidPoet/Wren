@@ -12,6 +12,7 @@ import androidx.webkit.ScriptHandler
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import dev.androidpoet.wren.settings.SettingsStore
+import dev.androidpoet.wren.settings.TorSecurityLevel
 import org.json.JSONObject
 import timber.log.Timber
 import java.security.SecureRandom
@@ -114,6 +115,9 @@ class PrivacyScripts @Inject constructor(
     return script
   }
 
+  /** Tor Browser's Safer level: WebAssembly and WebGL gone from Tor pages; see the asset. */
+  private val saferScript: String by lazy { read("safer.js") }
+
   /** WebRTC, motion sensors and device lists removed, for private and Tor pages; see the asset. */
   private val privateScript: String by lazy { read("private.js") }
 
@@ -154,6 +158,7 @@ class PrivacyScripts @Inject constructor(
     var gpc: ScriptHandler? = null
     var partition: ScriptHandler? = null
     var pings: ScriptHandler? = null
+    var safer: ScriptHandler? = null
     var guard: String? = null
   }
 
@@ -232,6 +237,11 @@ class PrivacyScripts @Inject constructor(
     installed.private = sync(webView, installed.private, isPrivate || settings.torMode) {
       privateScript
     }
+    installed.safer = sync(
+      webView,
+      installed.safer,
+      settings.torMode && settings.torSecurityLevel != TorSecurityLevel.STANDARD,
+    ) { saferScript }
   }
 
   private fun sync(

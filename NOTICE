@@ -31,3 +31,8 @@ Bundled host list (app/src/main/assets/hosts.bin)
 
 Tor (info.guardianproject:tor-android, jtorctl)
   The Tor Project and The Guardian Project. 3-clause BSD License.
+
+tun2proxy (https://github.com/tun2proxy/tun2proxy)
+  Copyright the tun2proxy authors. MIT License.
+  Linked into the native library (native/) as the experimental Tor VPN's
+  user-space network stack.

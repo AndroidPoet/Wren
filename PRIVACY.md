@@ -38,6 +38,8 @@ Wren only makes these connections:
 | Downloads | The site hosting the file; through Tor in Tor mode | When you download a file |
 | Translate page | Google Translate | Only when you choose Translate page from the menu |
 | Tor | The Tor network | Only if you turn Tor mode on |
+| Onion-Location check | The site you are on, through Tor: one HEAD request per site, asking whether it has an onion address | In Tor mode, on https pages |
+| Tor VPN (experimental) | The Tor network, carrying your other apps' connections; Wren keeps no record of them | Only if you turn it on in the Tor panel, and only while Tor mode is on |
 
 The sites you visit see your connection as with any browser, and their own privacy policies
 apply. Wren blocks known trackers and ads on them, declines cookie banners where it can, and by

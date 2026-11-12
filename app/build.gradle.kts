@@ -126,6 +126,13 @@ val cargoBuildAndroid = tasks.register<Exec>("cargoBuildAndroid") {
     "-o", rustJniLibs.get().asFile.path,
     "build", "--release", "--locked",
   )
+  // tun2proxy is also published as a shared library, and cargo-ndk copies every one it built;
+  // only Wren's own library is loaded, the tunnel is linked into it.
+  doLast {
+    rustJniLibs.get().asFile.walkTopDown()
+      .filter { it.name.startsWith("libtun2proxy") && it.name.endsWith(".so") }
+      .forEach { it.delete() }
+  }
 }
 
 val cargoBuildHost = tasks.register<Exec>("cargoBuildHost") {
@@ -133,6 +140,10 @@ val cargoBuildHost = tasks.register<Exec>("cargoBuildHost") {
   inputs.dir(nativeDir.resolve("src"))
   inputs.files(nativeDir.resolve("Cargo.toml"), nativeDir.resolve("Cargo.lock"))
   outputs.dir(nativeDir.resolve("target/release"))
+  // macOS's loader refuses a dylib stripped by the release profile ("mis-aligned LINKEDIT string
+  // pool"); the host build keeps its symbols, and the linker drops the local ones instead.
+  environment("CARGO_PROFILE_RELEASE_STRIP", "false")
+  environment("RUSTFLAGS", "-C link-arg=-Wl,-x,-S")
   commandLine(cargo, "build", "--release", "--locked")
 }
 

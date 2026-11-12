@@ -11,6 +11,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.google.common.truth.Truth.assertThat
 import dev.androidpoet.wren.core.model.SearchEngine
 import dev.androidpoet.wren.settings.SettingsStore
+import dev.androidpoet.wren.settings.TorSecurityLevel
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -69,5 +70,36 @@ class SettingsStoreTest {
     assertThat(settings.torSafestActive).isFalse()
     settings.torMode = true
     assertThat(settings.torSafestActive).isTrue()
+  }
+
+  @Test
+  fun `safer blocks script only on Tor pages that arrived without https`() {
+    val settings = store()
+    settings.torSecurityLevel = TorSecurityLevel.SAFER
+
+    assertThat(settings.torLevelBlocksScript("http://example.com/")).isFalse()
+    settings.torMode = true
+    assertThat(settings.torLevelBlocksScript("http://example.com/")).isTrue()
+    assertThat(settings.torLevelBlocksScript("https://example.com/")).isFalse()
+    assertThat(
+      settings.torLevelBlocksScript(
+        "http://duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion/",
+      ),
+    ).isFalse()
+    assertThat(settings.torLevelBlocksScript("about:blank")).isFalse()
+    assertThat(settings.torSafestActive).isFalse()
+  }
+
+  @Test
+  fun `the old safest switch carries over until a level is chosen`() {
+    val settings = store()
+    settings.torSafest = true
+
+    assertThat(settings.torSecurityLevel).isEqualTo(TorSecurityLevel.SAFEST)
+    settings.torMode = true
+    assertThat(settings.torLevelBlocksScript("https://example.com/")).isTrue()
+    settings.torSecurityLevel = TorSecurityLevel.STANDARD
+    assertThat(settings.torSafest).isFalse()
+    assertThat(settings.torLevelBlocksScript("http://example.com/")).isFalse()
   }
 }

@@ -13,6 +13,10 @@ crate-type = ["cdylib"]
 # about requests from several threads at once.
 adblock = { version = "=0.13.5", default-features = false, features = ["embedded-domain-resolver", "full-regex-handling", "resource-assembler"] }
 jni = { version = "0.21", default-features = false }
+# The Tor VPN's user-space network stack (MIT). Its default features are a UDP gateway and Linux
+# namespaces, neither of which Tor or Android can use.
+tun2proxy = { version = "=0.8.7", default-features = false }
+tokio = { version = "1", features = ["rt-multi-thread"] }
 
 
 [profile.release]

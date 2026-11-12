@@ -95,7 +95,7 @@ app on Android's system WebView).
 
 | Requirement | Score | Note |
 |---|---|---|
-| Security levels (safer / safest) | Partial **(1.0.7)** | Safest switch on the Tor sheet: JavaScript off on every Tor page from its first byte (1.0.8) and web fonts blocked by file extension (`ContentBlocker`; the engine does not pass `Sec-Fetch-Dest` to the interceptor, so a font served without an extension loads), media already click-to-play. No JIT switch exists in the engine |
+| Security levels (standard / safer / safest) | Partial **(round 12)** | Three levels on the Tor sheet. Safest (1.0.7): JavaScript off on every Tor page from its first byte (1.0.8) and web fonts blocked by file extension (`ContentBlocker`; the engine does not pass `Sec-Fetch-Dest` to the interceptor, so a font served without an extension loads), media already click-to-play. Safer (round 12, `assets/safer.js`): WebAssembly and WebGL removed from Tor pages and the frames they create, JavaScript off on pages without HTTPS (onion sites count as secure). Workers keep WebAssembly: the engine never injects into them. No JIT switch exists in the engine |
 | Update checks over Tor | Met | There are none: GitHub, F-Droid and Obtainium carry updates |
 | Outdated engine visible | Met | `warnIfWebViewStale` |
 | Censorship circumvention | Met | obfs4, Snowflake, meek bridges (1.0.6). All three built-in sets bootstrap to 100% and `check.torproject.org` answers `IsTor: true` through them (Snowflake in about four minutes, meek in under twenty seconds, on an API 36 emulator with public DNS, 2026-11-10). Packet capture under Snowflake: Lyrebird opens TLS to the CDN front, UDP to one listed STUN server and WebRTC to the volunteer proxy; the app and Tor open nothing outside loopback |
@@ -263,3 +263,18 @@ Recorded and not changed:
 - An AudioWorklet's `currentFrame` and `currentTime` count samples at the real rate; they are the audio clock, and coarsening them would break playback.
 - A WebGL 2 `COPY_READ_BUFFER` that holds pixel data copied without a prior `readPixels` into a pixel-pack buffer is not noised.
 - A child realm's shims are still functions of the parent's realm, so `Object.getPrototypeOf(fn) === frame.Function.prototype` is false for them in a blank frame or popup.
+
+## 12. Round 12 (unreleased): Tor Browser parity and an experimental Tor VPN
+
+| Item | Result | Where | Note |
+|---|---|---|---|
+| Plain-http pages under Tor | Fixed | `TorController.installProxy` | Tor's tunnel port speaks only CONNECT; WebView sends a plain-http request to an http proxy whole, and the port closed on it (`ERR_EMPTY_RESPONSE`). Wren had papered over it by forcing every http address to https under Tor, which made http onion sites, most of them, unreachable. http now goes to its own SOCKS5 port (`socks5` hands Tor the name), https stays on the tunnel port, and the forced https keeps Tor Browser's HTTPS-Only shape: clear-web pages only, onion sites exempt. Verified on the emulator: `http://example.com/` and the Tor Project's http onion load with 200 |
+| Onion-Location | Met | `OnionLocation` | WebView gives the app no response headers, so the header is read from one HEAD request per site and identity, sent through Tor with the page's user agent; https pages only, as in Tor Browser. The offer is a snackbar, never an automatic move. Verified: torproject.org offers its onion. The `<meta http-equiv>` form is not read |
+| Circuit display | Met | `TorController.circuitFor`, `TorCircuits` | The Tor sheet shows the site's circuit, relay names and addresses. Tor reports a connected stream by the address the exit resolved, so names come from STREAM events; the site's last circuit is remembered because WebView closes idle connections within seconds. No countries: tor-android ships no GeoIP table. Bridges show without an address |
+| New circuit for this site | Met | `TorController.newCircuitFor` | Closes the circuits the site's streams use and its last one, then reloads. Verified: middle and exit change, the guard stays, as in Tor Browser |
+| Tor VPN for other apps | Experimental | `TorVpnService`, `native/src/tunnel.rs` | `VpnService` plus tun2proxy (MIT) in the native library: TCP to a dedicated SOCKS port, DNS answered from a pool of stand-in addresses so the exit resolves names, IPv4 and IPv6 routed into the interface, Wren itself excluded. UDP other than DNS fails. Runs only while Tor mode is on and stops with it. Verified on the emulator: another browser with no proxy reaches check.torproject.org as a Tor exit |
+
+Recorded and not changed:
+
+- Turning Tor off and on again in one process can abort inside `libtor.so` (`hs_circuitmap_init` and `tor_cond_wait` assertions): tor-android does not restart Tor cleanly in the same process. Reproduced on the unchanged 1.0.15 release, so it is not from this round. Running Tor in its own process would fix it.
+- First-party circuit isolation is still missing; see section 3.

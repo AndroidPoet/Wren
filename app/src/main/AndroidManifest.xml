@@ -125,6 +125,16 @@
       android:exported="false"
       android:parentActivityName=".ui.browser.BrowserActivity" />
 
+    <!-- Experimental Tor VPN: other apps' traffic through the Tor client this app runs. -->
+    <service
+      android:name=".browser.tor.TorVpnService"
+      android:exported="true"
+      android:permission="android.permission.BIND_VPN_SERVICE">
+      <intent-filter>
+        <action android:name="android.net.VpnService" />
+      </intent-filter>
+    </service>
+
     <service
       android:name=".download.DownloadService"
       android:exported="false"

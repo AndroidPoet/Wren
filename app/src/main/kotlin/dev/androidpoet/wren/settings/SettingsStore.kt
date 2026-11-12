@@ -210,6 +210,11 @@ class SettingsStore @Inject constructor(
     get() = preferences.getInt(KEY_TOR_HTTP_PORT, 0)
     set(value) = preferences.edit { putInt(KEY_TOR_HTTP_PORT, value) }
 
+  /** The SOCKS port that carries pages' plain-http requests; see TorController.installProxy. */
+  var torPageSocksPort: Int
+    get() = preferences.getInt(KEY_TOR_PAGE_SOCKS_PORT, 0)
+    set(value) = preferences.edit { putInt(KEY_TOR_PAGE_SOCKS_PORT, value) }
+
   /** How Tor reaches its first relay where plain Tor is blocked; [BridgeMode.NONE] by default. */
   var torBridgeMode: BridgeMode
     get() = preferences.getString(KEY_TOR_BRIDGE_MODE, null)
@@ -218,15 +223,56 @@ class SettingsStore @Inject constructor(
     set(value) = preferences.edit { putString(KEY_TOR_BRIDGE_MODE, value.name) }
 
   /**
-   * Tor Browser's "Safest" security level for Tor pages: JavaScript off everywhere and web
-   * fonts blocked. Off by default, since most of the web stops working at this level.
+   * Tor Browser's security level for Tor pages. Safer turns JavaScript off on pages that are
+   * not served over HTTPS; Safest turns it off everywhere and blocks web fonts. Standard by
+   * default, since much of the web stops working at the stricter levels. Installs from before
+   * the three levels kept a single Safest switch, which still decides until a level is chosen.
    */
+  var torSecurityLevel: TorSecurityLevel
+    get() = preferences.getString(KEY_TOR_SECURITY_LEVEL, null)
+      ?.let { saved -> TorSecurityLevel.entries.firstOrNull { it.name == saved } }
+      ?: if (preferences.getBoolean(
+          KEY_TOR_SAFEST,
+          false,
+        )
+      ) {
+        TorSecurityLevel.SAFEST
+      } else {
+        TorSecurityLevel.STANDARD
+      }
+    set(value) = preferences.edit { putString(KEY_TOR_SECURITY_LEVEL, value.name) }
+
   var torSafest: Boolean
-    get() = preferences.getBoolean(KEY_TOR_SAFEST, false)
-    set(value) = preferences.edit { putBoolean(KEY_TOR_SAFEST, value) }
+    get() = torSecurityLevel == TorSecurityLevel.SAFEST
+    set(value) {
+      torSecurityLevel = if (value) TorSecurityLevel.SAFEST else TorSecurityLevel.STANDARD
+    }
 
   /** True while pages are on Tor and the user asked for the Safest level. */
   val torSafestActive: Boolean get() = torMode && torSafest
+
+  /**
+   * Whether JavaScript must stay off for [url] at the Tor security level in force. Onion
+   * addresses count as secure: the onion service's own encryption authenticates the site.
+   */
+  fun torLevelBlocksScript(url: String): Boolean {
+    if (!torMode) return false
+    return when (torSecurityLevel) {
+      TorSecurityLevel.STANDARD -> false
+      TorSecurityLevel.SAFEST -> true
+      TorSecurityLevel.SAFER -> {
+        val uri = runCatching { java.net.URI(url) }.getOrNull()
+        val secure = uri?.scheme.equals("https", ignoreCase = true) ||
+          uri?.host?.lowercase()?.let { it == "onion" || it.endsWith(".onion") } == true
+        !secure && uri?.scheme?.lowercase() in setOf("http", "https")
+      }
+    }
+  }
+
+  /** The user's choice of Tor VPN for other apps; it runs only while Tor mode is on. */
+  var torVpn: Boolean
+    get() = preferences.getBoolean(KEY_TOR_VPN, false)
+    set(value) = preferences.edit { putBoolean(KEY_TOR_VPN, value) }
 
   /** The user's own bridge lines, kept as pasted; validated again before they reach torrc. */
   var torCustomBridges: String
@@ -476,9 +522,12 @@ class SettingsStore @Inject constructor(
     private const val KEY_TOR_MODE = "tor_mode"
     private const val KEY_TOR_SOCKS_PORT = "tor_socks_port"
     private const val KEY_TOR_HTTP_PORT = "tor_http_port"
+    private const val KEY_TOR_PAGE_SOCKS_PORT = "tor_page_socks_port"
     private const val KEY_TOR_BRIDGE_MODE = "tor_bridge_mode"
     private const val KEY_TOR_CUSTOM_BRIDGES = "tor_custom_bridges"
     private const val KEY_TOR_SAFEST = "tor_safest"
+    private const val KEY_TOR_SECURITY_LEVEL = "tor_security_level"
+    private const val KEY_TOR_VPN = "tor_vpn"
     private const val KEY_COOKIE_POPUPS = "cookie_popups"
     private const val KEY_FINGERPRINTING = "block_fingerprinting"
     private const val KEY_TRIM_REFERRERS = "trim_referrers"
@@ -495,3 +544,6 @@ class SettingsStore @Inject constructor(
     private const val KEY_DESKTOP_MODE = "desktop_mode"
   }
 }
+
+/** Tor Browser's three security levels, as far as a WebView can apply them. */
+enum class TorSecurityLevel { STANDARD, SAFER, SAFEST }

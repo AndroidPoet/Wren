@@ -130,6 +130,32 @@ class TorController @Inject constructor(
   private var systemProxySelector: ProxySelector? = null
   private var sealing = false
 
+  /** Stream id to the host it was opened for, from Tor's STREAM events; see [watchStreams]. */
+  private val streamHosts = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+  /**
+   * Host to the circuit its latest stream went out on. WebView closes idle connections within
+   * seconds and the streams go with them, while Tor keeps using the circuit for that host for
+   * about ten minutes, so this is what the circuit display shows once the page has loaded.
+   */
+  private val hostCircuits = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+  private val streamListener = net.freehaven.tor.control.RawEventListener { keyword, data ->
+    if (keyword != "STREAM") return@RawEventListener
+    val event = TorCircuits.streamEvent(data) ?: return@RawEventListener
+    when (event.status) {
+      "NEW", "NEWRESOLVE" -> if (streamHosts.size < MAX_TRACKED_STREAMS) {
+        streamHosts[event.id] = event.host
+      }
+      "SUCCEEDED" -> {
+        val host = streamHosts[event.id] ?: event.host
+        if (hostCircuits.size >= MAX_TRACKED_STREAMS) hostCircuits.clear()
+        hostCircuits[host.lowercase()] = event.circuit
+      }
+      "CLOSED", "FAILED" -> streamHosts.remove(event.id)
+    }
+  }
+
   private val connection = object : ServiceConnection {
     override fun onServiceConnected(name: ComponentName, binder: IBinder) {
       service = (binder as TorService.LocalBinder).service
@@ -163,26 +189,82 @@ class TorController @Inject constructor(
 
   /**
    * Fresh circuits for everything that follows. NEWNYM alone leaves the tunnels already open
-   * on their old circuits, and WebView keeps idle connections for minutes, so the tunnel port
-   * is moved first: Tor closes the old listener with every tunnel on it, and the proxy
-   * override pointed at the new port starts with an empty connection pool. False when Tor did
-   * not take the change, in which case nothing may claim a new identity.
+   * on their old circuits, and WebView keeps idle connections for minutes, so the ports pages
+   * use are moved first: Tor closes the old listeners with every stream on them, and the proxy
+   * override pointed at the new ports starts with an empty connection pool. The VPN's port
+   * stays where it is. False when Tor did not take the change, in which case nothing may claim
+   * a new identity.
    */
   suspend fun newIdentity(): Boolean {
     val control = service?.torControlConnection ?: return false
-    val fresh = withContext(Dispatchers.IO) { freePort() }
+    val fresh = withContext(Dispatchers.IO) {
+      val tunnel = freePort()
+      Ports(socks = settings.torSocksPort, http = tunnel, pageSocks = freePort(tunnel))
+    }
     val moved = withContext(Dispatchers.IO) {
-      runCatching { control.setConf("HTTPTunnelPort", "127.0.0.1:$fresh IsolateDestAddr") }
+      runCatching { control.setConf(listenerLines(fresh)) }
         .onFailure { Timber.w(it, "new identity: port move failed") }.isSuccess
     }
     if (!moved) return false
-    // The daemon now listens on the new port whether or not the circuits are renewed below;
-    // the proxy must follow it or every page would lose its route.
-    settings.torHttpPort = fresh
-    installProxy(fresh)
+    // The daemon now listens on the new ports whether or not the circuits are renewed below;
+    // the proxy must follow them or every page would lose its route.
+    settings.torHttpPort = fresh.http
+    settings.torPageSocksPort = fresh.pageSocks
+    hostCircuits.clear()
+    installProxy(fresh.http, fresh.pageSocks)
     return withContext(Dispatchers.IO) {
       runCatching { control.signal(TorControlCommands.SIGNAL_NEWNYM) }
         .onFailure { Timber.w(it, "new identity: NEWNYM failed") }.isSuccess
+    }
+  }
+
+  /**
+   * The circuit that carries this site's newest stream, or the one its last stream used while
+   * Tor still has it, with each relay's address from the consensus (a bridge is not in it and
+   * stays without one). Null when Tor is not up or the site has no circuit in this session.
+   */
+  suspend fun circuitFor(host: String): TorCircuit? {
+    val control = service?.torControlConnection ?: return null
+    return withContext(Dispatchers.IO) {
+      runCatching {
+        val streams = control.getInfo("stream-status").orEmpty()
+        val circuits = control.getInfo("circuit-status").orEmpty()
+        val ids = TorCircuits.circuitIdsFor(host, streams, streamHosts) +
+          listOfNotNull(hostCircuits[host.lowercase()])
+        ids.distinct().firstNotNullOfOrNull { id ->
+          TorCircuits.pathOf(id, circuits)?.let { relays ->
+            TorCircuit(
+              id,
+              relays.map { relay ->
+                val status = runCatching {
+                  control.getInfo(
+                    "ns/id/${relay.fingerprint}",
+                  )
+                }.getOrNull()
+                relay.copy(address = status?.let(TorCircuits::addressOf))
+              },
+            )
+          }
+        }
+      }.onFailure { Timber.w(it, "circuit lookup failed") }.getOrNull()
+    }
+  }
+
+  /**
+   * Tor Browser's "New Tor circuit for this site": every circuit carrying a stream to [host],
+   * and the one it last used, is closed, which ends those streams and the connections WebView
+   * kept on them, so the reload that follows reaches the site over a circuit it has never used.
+   * Other sites keep theirs. False when Tor is not up or nothing was closed.
+   */
+  suspend fun newCircuitFor(host: String): Boolean {
+    val control = service?.torControlConnection ?: return false
+    return withContext(Dispatchers.IO) {
+      runCatching {
+        val ids =
+          TorCircuits.circuitIdsFor(host, control.getInfo("stream-status").orEmpty(), streamHosts) +
+            listOfNotNull(hostCircuits.remove(host.lowercase()))
+        ids.distinct().count { id -> runCatching { control.closeCircuit(id, false) }.isSuccess } > 0
+      }.onFailure { Timber.w(it, "new circuit for site failed") }.getOrDefault(false)
     }
   }
 
@@ -211,7 +293,7 @@ class TorController @Inject constructor(
       val ports =
         withContext(Dispatchers.IO) { ensurePorts().also { writeTorrc(it, bridges.torrc) } }
       if (_state.value.status != TorStatus.STARTING) return@launch
-      installProxy(ports.http)
+      installProxy(ports.http, ports.pageSocks)
       registerReceiver()
       // tor-android 0.4.9.14 dropped the setter; status goes to the app's own package by default.
       val intent = Intent(application, TorService::class.java)
@@ -280,7 +362,7 @@ class TorController @Inject constructor(
   private fun shutDown(sealed: Boolean) {
     pollJob?.cancel()
     _state.update { TorState(TorStatus.STOPPING, proxyInstalled = it.proxyInstalled) }
-    if (sealed) installProxy(DEAD_END_PORT) else clearProxy()
+    if (sealed) installProxy(DEAD_END_PORT, DEAD_END_PORT) else clearProxy()
     stopBroadcastsSeen = 0
     unbind()
     application.stopService(Intent(application, TorService::class.java))
@@ -293,6 +375,7 @@ class TorController @Inject constructor(
         pollJob?.cancel()
         _state.update { it.copy(status = TorStatus.ON, progress = 100, error = null) }
         Timber.i("tor connected")
+        watchStreams()
       }
 
       TorService.STATUS_STOPPING, TorService.STATUS_OFF -> when (_state.value.status) {
@@ -305,6 +388,25 @@ class TorController @Inject constructor(
         TorStatus.STARTING, TorStatus.ON -> fail("Tor stopped")
         else -> Unit
       }
+    }
+  }
+
+  /**
+   * Tor names a connected stream by the address the exit resolved, never by the host the page
+   * asked for, so the circuit display learns names from STREAM events as streams open. Asked
+   * for once Tor is up, after TorService has set its own STATUS_CLIENT subscription, which
+   * SETEVENTS would otherwise replace; it is kept in the list for the same reason.
+   */
+  private fun watchStreams() {
+    val control = service?.torControlConnection ?: return
+    streamHosts.clear()
+    hostCircuits.clear()
+    scope.launch(Dispatchers.IO) {
+      runCatching {
+        control.removeRawEventListener(streamListener)
+        control.addRawEventListener(streamListener)
+        control.setEvents(listOf("STATUS_CLIENT", "STREAM"))
+      }.onFailure { Timber.w(it, "stream events unavailable") }
     }
   }
 
@@ -335,7 +437,7 @@ class TorController @Inject constructor(
         _state.update { it.copy(error = "$message; pages stay blocked until Tor mode is off") }
       } else {
         sealing = true
-        installProxy(DEAD_END_PORT)
+        installProxy(DEAD_END_PORT, DEAD_END_PORT)
         sealing = false
       }
     }
@@ -357,10 +459,18 @@ class TorController @Inject constructor(
     }
   }
 
-  private fun installProxy(port: Int) {
-    // Without this WebView would still send loopback and link-local addresses direct.
+  /**
+   * Tor's tunnel port speaks only CONNECT, which is all an https page needs. A plain-http
+   * request goes to an http proxy whole, and the tunnel port closes on it without an answer, so
+   * every http page, onion sites among them, would fail; http goes to a SOCKS port instead.
+   * `socks5` hands Tor the name: nothing is resolved on the phone.
+   */
+  private fun installProxy(tunnelPort: Int, pageSocksPort: Int) {
+    // Without removeImplicitRules WebView would still send loopback and link-local addresses
+    // direct.
     val config = ProxyConfig.Builder()
-      .addProxyRule("http://127.0.0.1:$port")
+      .addProxyRule("socks5://127.0.0.1:$pageSocksPort", ProxyConfig.MATCH_HTTP)
+      .addProxyRule("http://127.0.0.1:$tunnelPort")
       .removeImplicitRules()
       .build()
     runCatching {
@@ -369,7 +479,7 @@ class TorController @Inject constructor(
       }
     }.onFailure { fail("proxy override failed: ${it.message}") }
     if (systemProxySelector == null) systemProxySelector = ProxySelector.getDefault()
-    ProxySelector.setDefault(TorProxySelector(port))
+    ProxySelector.setDefault(TorProxySelector(tunnelPort))
     DeferredProxySelector.routeChanged()
   }
 
@@ -403,20 +513,40 @@ class TorController @Inject constructor(
     runCatching { application.unbindService(connection) }
   }
 
-  private data class Ports(val socks: Int, val http: Int)
+  /** [socks] serves the VPN, [http] pages over https, [pageSocks] pages over plain http. */
+  private data class Ports(val socks: Int, val http: Int, val pageSocks: Int)
 
   /** Fixed ports, chosen once and reused, so the proxy can be installed before Tor is up. */
   private fun ensurePorts(): Ports {
     var socks = settings.torSocksPort
     var http = settings.torHttpPort
+    var pageSocks = settings.torPageSocksPort
     if (socks == 0 || !isFree(socks)) socks = freePort()
-    if (http == 0 || http == socks || !isFree(http)) http = freePort()
+    if (http == 0 || http == socks || !isFree(http)) http = freePort(socks)
+    if (pageSocks == 0 || pageSocks == socks || pageSocks == http || !isFree(pageSocks)) {
+      pageSocks = freePort(socks, http)
+    }
     settings.torSocksPort = socks
     settings.torHttpPort = http
-    return Ports(socks, http)
+    settings.torPageSocksPort = pageSocks
+    return Ports(socks, http, pageSocks)
   }
 
   /**
+   * Tor's listeners as torrc lines, which SETCONF takes too. Every port isolates streams by
+   * destination, and each listener is its own session group, so the VPN's apps and the
+   * browser's pages never share a circuit.
+   */
+  private fun listenerLines(ports: Ports): List<String> = listOf(
+    "SOCKSPort 127.0.0.1:${ports.socks} IsolateDestAddr IPv6Traffic",
+    "SOCKSPort 127.0.0.1:${ports.pageSocks} IsolateDestAddr",
+    "HTTPTunnelPort 127.0.0.1:${ports.http} IsolateDestAddr",
+  )
+
+  /**
+   * The SOCKS port serves only the Tor VPN (other apps), so it may carry IPv6 destinations as
+   * well; the browser uses the tunnel port.
+   *
    * `IsolateDestAddr` gives every destination host its own circuit, so one exit never sees
    * the whole session. WebView's proxy override carries no per-request credentials, which
    * rules out Tor Browser's per-site (first-party) isolation; per-destination is the
@@ -424,13 +554,9 @@ class TorController @Inject constructor(
    * page's first load.
    */
   private fun writeTorrc(ports: Ports, bridgeOptions: String) {
+    val lines = listenerLines(ports) + listOf("ClientOnly 1", "AvoidDiskWrites 1")
     TorService.getTorrc(application).writeText(
-      """
-      SOCKSPort 127.0.0.1:${ports.socks} IsolateDestAddr
-      HTTPTunnelPort 127.0.0.1:${ports.http} IsolateDestAddr
-      ClientOnly 1
-      AvoidDiskWrites 1
-      """.trimIndent() + "\n" + bridgeOptions + debugLog(),
+      lines.joinToString("\n", postfix = "\n") + bridgeOptions + debugLog(),
     )
   }
 
@@ -469,7 +595,13 @@ class TorController @Inject constructor(
     return BridgePlan(Bridges.torrcOptions(lines), plugin)
   }
 
-  private fun freePort(): Int = ServerSocket(0, 1, TorProxySelector.LOOPBACK).use { it.localPort }
+  /** A free loopback port other than [avoid]: ports picked back to back can repeat. */
+  private fun freePort(vararg avoid: Int): Int {
+    while (true) {
+      val port = ServerSocket(0, 1, TorProxySelector.LOOPBACK).use { it.localPort }
+      if (port !in avoid) return port
+    }
+  }
 
   private fun isFree(port: Int): Boolean = runCatching {
     ServerSocket(port, 1, TorProxySelector.LOOPBACK).close()
@@ -486,5 +618,8 @@ class TorController @Inject constructor(
     const val POLL_INTERVAL_MS = 500L
     const val CONTROL_WAIT_MS = 20_000L
     const val STOP_TIMEOUT_MS = 4000L
+
+    /** A page opens dozens of streams; ended ones are dropped, this only bounds a leak. */
+    const val MAX_TRACKED_STREAMS = 4096
   }
 }
