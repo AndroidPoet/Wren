@@ -246,9 +246,13 @@ class FilterListManager @Inject constructor(
         Timber.i("no cached filter lists; bundled snapshot stays active")
         return@withContext false
       }
+      val snapshotCovered = FilterListCatalog.bundledIds.all { !isEnabled(it) || it in cached }
       // The native engine decides network requests when it loads; the Kotlin builder then keeps
-      // only cosmetic rules and page-wide exceptions.
-      val nativeText = if (NativeEngine.isAvailable) NativeEngine.ListText() else null
+      // only cosmetic rules and page-wide exceptions. Not while a bundled list is still waiting
+      // for its download: its hosts exist only in the compiled set, which has no text the
+      // native engine could read, and an engine built without them would stop blocking them.
+      val nativeText =
+        if (NativeEngine.isAvailable && snapshotCovered) NativeEngine.ListText() else null
       val builder = EngineBuilder(networkRules = nativeText == null)
       fun read(lines: Sequence<String>) {
         if (nativeText == null) {
@@ -261,11 +265,8 @@ class FilterListManager @Inject constructor(
           nativeText.endList()
         }
       }
-      val snapshotCovered = FilterListCatalog.bundledIds.all { !isEnabled(it) || it in cached }
       if (!snapshotCovered) {
-        // The compiled host set has no text the native engine could read; with a native engine
-        // the bundled lists' hosts come from their text form in blocklist.txt and rules.txt.
-        if (nativeText == null) builder.addHostSet(blocklist.bundledHosts())
+        builder.addHostSet(blocklist.bundledHosts())
         for (asset in SNAPSHOT_TEXT_ASSETS) {
           runCatching {
             application.assets.open(asset).bufferedReader().useLines { read(it) }

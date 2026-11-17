@@ -25,6 +25,9 @@ class NativeEngine private constructor(private val handle: Long) {
   private val users = AtomicInteger(1)
   private val closed = AtomicBoolean(false)
 
+  /** True once a newer engine has taken this one's place; [check] may then answer null. */
+  val isClosed: Boolean get() = closed.get()
+
   /** The verdict for a subresource: null lets it through. */
   fun check(url: String, sourceUrl: String, typeMask: Int): Verdict? = use {
     val single = TYPE_NAMES[typeMask]

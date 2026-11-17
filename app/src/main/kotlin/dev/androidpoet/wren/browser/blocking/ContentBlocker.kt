@@ -58,8 +58,13 @@ class ContentBlocker @Inject constructor(
 
     val typeMask = RequestType.infer(context.url) { acceptHeaderOf(request) }
     blocklist.engine.native?.let { native ->
-      // A request with no page to name (a worker's, say) is judged as its own page's.
-      val verdict = native.check(url, pageUrl.ifEmpty { url }, typeMask) ?: return null
+      // A request with no page to name (a worker's, say) is third-party, as in the Kotlin
+      // engine. A refresh may retire this engine before the answer: null from a closed one is
+      // not a verdict, and the engine that replaced it is asked instead.
+      val verdict = native.check(url, pageUrl, typeMask)
+        ?: blocklist.engine.native?.takeIf { native.isClosed && it !== native }
+          ?.check(url, pageUrl, typeMask)
+        ?: return null
       if (verdict is NativeEngine.Verdict.Redirect) {
         dataUrlResponse(verdict.dataUrl)?.let { return it }
       }

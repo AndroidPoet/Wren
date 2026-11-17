@@ -298,3 +298,41 @@ Recorded and not changed:
 - The native adapter matches every request as GET and drops `$removeparam` and `$csp` actions; `$ping` and `$websocket` rules have no request path in WebView.
 - `partition.js` decides same-site with a short list of second-level labels, not the bundled public suffix list: `a.me.de` and `b.me.de` count as two sites, `x.github.io` and `y.github.io` as one.
 - The Kotlin fallback engine (used only when the native library cannot load) misses first-party `||host^` rules and `,badfilter` on host-set entries.
+
+## 14. Round 14 (after 1.0.16): audit of what rounds 12 and 13 added
+
+Two read-only audits of the code added since 1.0.15: Codex on the app side (the Tor VPN, circuits, Onion-Location, the native filter engine, downloads; 12 findings) and a second reviewer on the injected scripts (20 findings). Every finding was checked against the code before anything changed. Verified on an API 36 emulator (WebView 133) with the arm64 debug build unless the note says otherwise.
+
+| Item | Result | Where | Note |
+|---|---|---|---|
+| Tor VPN let other apps go direct while Tor started | Fixed | `TorVpnService`, `WrenApp` | The interface went up only once Tor had connected, came down with the packet engine, and was rebuilt on a port change; in each gap other apps reached the network directly. The service now owns the interface and puts it up as soon as both switches are on; packets are carried only while Tor is connected, and at every other time nothing reads the interface. Verified from a cold start: the interface was up about ten seconds before Tor connected, another app's connections failed until then, and afterwards left from an address on the Tor exit list |
+| Tor VPN kept sending to Tor's port after Tor failed | Fixed | `TorVpnService.reconcile` | The engine kept connecting to the SOCKS port Tor had held, which another app could then bind. The service follows Tor's state and stops the engine the moment Tor is not connected, keeping the interface. Not reproduced on the device; the path is the one the cold start exercises |
+| Tor VPN not a foreground service | Fixed | `TorVpnService.promote`, manifest | Runs in the foreground (type `systemExempted`, which Android grants a prepared VPN app) with a notification saying other apps are routed. Verified in `dumpsys` |
+| Tor VPN stop could miss a starting engine and blocked the main thread | Fixed | `TorVpnService.haltWorker` | Start, stop and restart run one at a time on their own thread; the stop is repeated until the engine's thread has ended. Verified: Tor off takes the interface, the service and the notification down with no crash |
+| Tunnel descriptor leaked on early returns | Fixed | `native/src/tunnel.rs` | Closed on every path that never hands it to tun2proxy. The engine now gets a copy of the descriptor and the service keeps its own |
+| Onion-Location request could leave direct | Fixed | `OnionLocation.throughTor` | The check for Tor mode ran before the request was queued; Tor switched off in between sent the page's address from the real one. The request is pinned to Tor's tunnel port, and an answer that arrives after the identity changed is dropped |
+| Form posted to plain http under Tor | Fixed | `BrowserActivity.refuseInsecureDocument` | Round 12 gave http a route through Tor for onion sites; a posted form skips the navigation callback that upgrades clear-web addresses, so it went out readable by the exit. Refused now whatever the HTTPS-only setting says, onion sites excepted. Verified: the post is answered by Wren's own page and nothing is sent |
+| Plain-http downloads under Tor refused by the route guard | Fixed | `TorRouteGuard.allows` | The fix recorded in section 13 chose the SOCKS port but the guard accepted only the HTTP port, so those downloads still failed. A SOCKS proxy on loopback with the destination left unresolved is now allowed. Unit tests only |
+| Half-downloaded lists dropped the bundled hosts | Fixed | `FilterListManager.rebuild` | With some bundled lists downloaded and others not, the native engine was built without the compiled host set (about 130,000 hosts with no text form) and became the one that decides. The Kotlin engine now stays until every enabled bundled list has its own copy |
+| Request with no page judged first-party | Fixed | `ContentBlocker.intercept` | The native path named the request as its own page, which let `$third-party` rules pass a worker's requests; it is third-party now, as in the Kotlin engine |
+| Verdict from an engine retired mid-request | Fixed | `ContentBlocker.intercept`, `NativeEngine.isClosed` | A refresh closing the engine between two lines read as "allow"; the engine that replaced it is asked |
+| Safer level undone by the page | Fixed | `safer.js` | The script resolved `Object.defineProperty`, `forEach`, `String` and `Reflect.apply` when it ran against a child frame, after the page could replace them; an object naming one context kind to the check and another to the engine got WebGL; popups and `getSVGDocument()` were not covered; a property on `window` named the browser. Rewritten: everything taken at document start, the kind converted once, popups and SVG documents treated, replacements print as native. Verified in a Tor page with the built-ins sabotaged first |
+| Any third-party frame could start an unpartitioned worker | Fixed | `partition.js` | The Trusted Types fallback from 1.0.16 ran for any frame that created a default policy. It now applies in Cloudflare's check frame only |
+| Reply channel readable when blocking is off | Fixed | `CosmeticFilter.updateFor` | The channel's name, the same on every site until the app restarts, stayed on `window` whenever the script that deletes it was not installed. The channel is added and removed with the script |
+| Selector written straight after an operator | Fixed | `cosmetic_filter.js` `continuation`, `relative` | `a:matches-attr(…):not(.x)` hid what was inside each link, the links the `:not()` spared included (19 bundled rules), and `:has-text(…) + ul` matched nothing (10). Verified in WebView for both forms |
+| Procedural rule kept hiding a reused element | Fixed | `cosmetic_filter.js` `apply` | The mark is taken back from what no longer matches, as uBlock does. Verified |
+| Exceptions and the built-in selectors | Fixed | `cosmetic_filter.js` `applyPage` | `#@#ins.adsbygoogle[data-ad-slot]` now also excepts the built-in selectors it contains (22 bundled exceptions had no effect) |
+| Other evaluator fixes | Fixed | `cosmetic_filter.js`, `scriptlets.js`, `CosmeticRules` | `/marketplace/item` is a path, not a regex; a key on `Object.prototype` no longer switches hiding off; passes slow down on pages where they cost much and stop on exempt pages; `:-abp-properties()` rules are dropped; `no-fetch-if` reads `https://…` and `host:8443` as addresses and sees `fetch(new URL(…))` |
+
+Checked and not a defect:
+
+- Codex: swallowing a refused `startForeground` in `DownloadService` would leave Android's start deadline armed. Android 15's `ActiveServices.setServiceForegroundInnerLocked` clears that deadline before the checks that throw, so carrying on unpromoted is safe. That change (and `onTimeout`, for Android 15's six-hour allowance) ships in this round.
+- Script reviewer: a navigated frame might keep built-ins the page replaced, exposing the exempt-site lists. WebView 133 gives the navigated frame a new global; the replaced `JSON.parse` and `indexOf` were never called.
+
+Recorded and not changed:
+
+- The procedural evaluator uses the page's own built-ins after page scripts have run, so a page can stop its own elements from being hidden or read the rules written for it (public lists). The privacy scripts are hardened against this; the evaluator is not.
+- A list rule's regex runs unbounded on the main thread, and `:remove-attr(sandbox)` or `:style(content: …)` can weaken or deface a page. uBlock has the same exposure to its lists.
+- Under Safer, a worker still has WebAssembly and can draw WebGL on an `OffscreenCanvas`.
+- A `$document` exception stops hiding, but scriptlets have already run; a procedural exception with no domain excepts nothing.
+- Not verified on a device: the VPN while Tor fails mid-session, and an http download from an onion site.

@@ -108,7 +108,8 @@ engine. Before relying on it for anything sensitive, know the limits:
   blocks web fonts on every Tor page. The sheet also shows the current site's circuit, builds a
   new one for that site, and offers a site's onion address when it advertises one. An
   experimental Tor VPN sends other apps' TCP connections through Tor while Tor mode is on;
-  UDP other than DNS does not get through. Under Tor the canvas reads
+  UDP other than DNS does not get through, and while Tor is starting or has lost its
+  connection the other apps are offline rather than direct. Under Tor the canvas reads
   back blank, as in Tor Browser, so every Tor user gives the same answer; outside Tor
   fingerprint protection gives each site its own noise, the same for that site until you clear
   browsing data or restart Wren, with separate noise for normal, private and Tor pages. The
