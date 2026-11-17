@@ -41,4 +41,26 @@ class TorRouteGuardTest {
       ),
     ).isFalse()
   }
+
+  @Test
+  fun test_allows_underTorLocalSocksWithUnresolvedTarget_isAllowed() {
+    val guard = TorRouteGuard { true }
+    val named = InetSocketAddress.createUnresolved("x.onion", 80)
+
+    val allowed = guard.allows(Proxy(Proxy.Type.SOCKS, tunnel), named)
+
+    assertThat(allowed).isTrue()
+  }
+
+  @Test
+  fun test_allows_underTorSocksElsewhereOrResolvedTarget_isRefused() {
+    val guard = TorRouteGuard { true }
+    val named = InetSocketAddress.createUnresolved("x.onion", 80)
+
+    val remoteProxy = guard.allows(Proxy(Proxy.Type.SOCKS, outside), named)
+    val resolvedTarget = guard.allows(Proxy(Proxy.Type.SOCKS, tunnel), outside)
+
+    assertThat(remoteProxy).isFalse()
+    assertThat(resolvedTarget).isFalse()
+  }
 }

@@ -185,6 +185,7 @@ class TorSheet : BottomSheetDialogFragment() {
     binding.torVpnSummary.setText(
       when {
         status == TorVpnStatus.ON -> R.string.tor_vpn_running
+        status == TorVpnStatus.HOLDING -> R.string.tor_vpn_holding
         status == TorVpnStatus.FAILED && enabled -> R.string.tor_vpn_failed
         else -> R.string.tor_vpn_summary
       },

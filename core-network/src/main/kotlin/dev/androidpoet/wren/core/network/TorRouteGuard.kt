@@ -49,11 +49,21 @@ class TorRouteGuard(private val torMode: () -> Boolean) : EventListener() {
     }
   }
 
-  /** True when the connection may be made: Tor mode is off, or it goes to the local tunnel. */
+  /**
+   * True when the connection may be made: Tor mode is off, or it goes to the local tunnel.
+   * Through the HTTP port the socket's target is the port itself. Through a SOCKS port, which
+   * plain http needs, OkHttp names the destination and leaves it unresolved for the proxy; a
+   * resolved one would mean the name had been looked up on the phone.
+   */
   fun allows(proxy: Proxy, target: InetSocketAddress): Boolean {
     if (!torMode()) return true
-    val address = target.address ?: return false
-    return proxy.type() == Proxy.Type.HTTP && address.isLoopbackAddress
+    return when (proxy.type()) {
+      Proxy.Type.HTTP -> target.address?.isLoopbackAddress == true
+      Proxy.Type.SOCKS ->
+        target.isUnresolved &&
+          (proxy.address() as? InetSocketAddress)?.address?.isLoopbackAddress == true
+      else -> false
+    }
   }
 
   private fun isLoopbackLiteral(host: String): Boolean =

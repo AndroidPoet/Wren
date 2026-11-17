@@ -106,12 +106,13 @@ class WrenApp : Application() {
     }
     // Puts the proxy in front of WebView before any activity can load a page.
     torController.startIfEnabled()
-    // Tor settles its SOCKS port when it starts; the VPN follows it there once Tor is up.
+    // The VPN's interface goes up before Tor has connected, so other apps wait for Tor instead
+    // of going direct meanwhile; asked again on every change in case the first start was refused.
     appScope.launch(Dispatchers.Main) {
       torController.state
         .map { it.status == TorStatus.ON }
         .distinctUntilChanged()
-        .collect { up -> if (up) torVpn.sync() }
+        .collect { torVpn.sync() }
     }
   }
 

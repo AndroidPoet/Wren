@@ -10,10 +10,14 @@ import dev.androidpoet.wren.network.SafeHttp
 import dev.androidpoet.wren.settings.SettingsStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import timber.log.Timber
+import java.net.InetSocketAddress
+import java.net.Proxy
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -41,6 +45,9 @@ class OnionLocation @Inject constructor(
   /** Sites whose onion address was already offered; each is offered once. */
   private val offered = ConcurrentHashMap.newKeySet<String>()
 
+  /** Counts the identities; an answer belongs to the one it was asked under. */
+  private val identity = AtomicInteger()
+
   /**
    * The onion address [pageUrl]'s site names, the first time one of its pages asks; null after
    * that, for sites that name none, and when the answer could not be had.
@@ -59,22 +66,37 @@ class OnionLocation @Inject constructor(
     if (!uri.scheme.equals("https", ignoreCase = true) || isOnion(host)) return null
     answers[host]?.let { return it.ifEmpty { null } }
     if (!asking.add(host)) return null
+    val asked = identity.get()
     val answer = withContext(Dispatchers.IO) {
       runCatching {
         val request = Request.Builder().url(pageUrl).head().header("User-Agent", userAgent).build()
-        http.client.newCall(request).execute().use { it.header(HEADER) }
+        throughTor().newCall(request).execute().use { it.header(HEADER) }
       }.onFailure { Timber.d(it, "onion-location check failed") }
     }
     asking.remove(host)
-    // A failed request is not an answer: the site is asked again on a later visit.
-    if (answer.isFailure) return null
+    // A failed request is not an answer: the site is asked again on a later visit. Neither is
+    // one that came back after the identity it was asked under was dropped.
+    if (answer.isFailure || asked != identity.get()) return null
     val found = answer.getOrNull()?.let(::validOnion)
     answers[host] = found.orEmpty()
     return found
   }
 
+  /**
+   * A client pinned to the tunnel port Tor listens on now. The request carries the page's
+   * address, and Tor may be switched off between the check above and the connect: pinned, it
+   * is then refused at the closed port, where the shared client would send it direct.
+   */
+  private fun throughTor(): OkHttpClient {
+    val port = settings.torHttpPort
+    check(settings.torMode && port > 0) { "route unavailable" }
+    val tunnel = Proxy(Proxy.Type.HTTP, InetSocketAddress(TorProxySelector.LOOPBACK, port))
+    return http.client.newBuilder().proxy(tunnel).build()
+  }
+
   /** Forgotten with the identity, so a new one does not reveal the old one's sites. */
   fun forget() {
+    identity.incrementAndGet()
     answers.clear()
     offered.clear()
   }

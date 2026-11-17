@@ -17,6 +17,7 @@
 use jni::objects::JClass;
 use jni::sys::jint;
 use jni::JNIEnv;
+use std::os::fd::{FromRawFd, OwnedFd};
 use std::sync::Mutex;
 use std::time::Duration;
 use tun2proxy::{ArgDns, Args, CancellationToken, ProxyParameters};
@@ -34,12 +35,17 @@ pub extern "system" fn Java_dev_androidpoet_wren_browser_tor_TorTunnel_run(
 ) -> jint {
     let Ok(proxy) = ProxyParameters::try_from(format!("socks5://127.0.0.1:{socks_port}").as_str())
     else {
+        close(tun_fd);
         return -2;
     };
     let token = CancellationToken::new();
     {
-        let Ok(mut running) = RUNNING.lock() else { return -3 };
+        let Ok(mut running) = RUNNING.lock() else {
+            close(tun_fd);
+            return -3;
+        };
         if running.is_some() {
+            close(tun_fd);
             return -1;
         }
         *running = Some(token.clone());
@@ -55,12 +61,22 @@ pub extern "system" fn Java_dev_androidpoet_wren_browser_tor_TorTunnel_run(
             runtime.shutdown_timeout(Duration::from_secs(2));
             if result.is_ok() { 0 } else { -4 }
         }
-        Err(_) => -5,
+        Err(_) => {
+            close(tun_fd);
+            -5
+        }
     };
     if let Ok(mut running) = RUNNING.lock() {
         running.take();
     }
     code
+}
+
+/// The caller handed the descriptor over; on a path that never gives it to tun2proxy it is
+/// closed here, or it would stay open for the life of the process.
+fn close(tun_fd: jint) {
+    // SAFETY: the descriptor was detached for this call and nothing else holds it.
+    drop(unsafe { OwnedFd::from_raw_fd(tun_fd) });
 }
 
 #[no_mangle]

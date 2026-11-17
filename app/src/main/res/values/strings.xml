@@ -123,6 +123,7 @@
   <string name="https_only">HTTPS-only mode</string>
   <string name="https_only_summary">Refuses unencrypted pages and downloads outright instead of falling back. Sites you excuse on the error screen stay allowed until you close Wren.</string>
   <string name="https_only_blocked_page" translatable="false"><![CDATA[<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Blocked</title><style>body{font-family:sans-serif;margin:0;padding:48px 24px;background:#fbf7f1;color:#2b2320}h1{font-size:20px;margin:0 0 12px}p{line-height:1.5;color:#5a4e48}code{word-break:break-all}</style></head><body><h1>Insecure connection refused</h1><p>HTTPS-only mode is on, and <code>%1$s</code> was asked for over plain HTTP. Nothing was sent.</p><p>To allow this site for the rest of the session, open it from the address bar and choose to continue on its error screen, or turn HTTPS-only mode off in Settings.</p></body></html>]]></string>
+  <string name="tor_plain_http_blocked_page" translatable="false"><![CDATA[<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Blocked</title><style>body{font-family:sans-serif;margin:0;padding:48px 24px;background:#fbf7f1;color:#2b2320}h1{font-size:20px;margin:0 0 12px}p{line-height:1.5;color:#5a4e48}code{word-break:break-all}</style></head><body><h1>Insecure connection refused</h1><p>Tor mode is on, and <code>%1$s</code> was asked for over plain HTTP, which the last relay on the way could read and change. Nothing was sent.</p><p>Tor mode opens sites over HTTPS only; onion sites are the exception.</p></body></html>]]></string>
   <string name="https_upgrade_summary">Try an encrypted connection first and fall back only if the site cannot serve one.</string>
   <string name="error_title">Can\'t reach this site</string>
   <string name="error_retry">Try again</string>
@@ -318,6 +319,8 @@
   <string name="tor_vpn">Tor VPN for other apps (experimental)</string>
   <string name="tor_vpn_summary">Sends your other apps through this Tor connection while Tor mode is on. Only TCP fits through Tor: calls, games and other UDP traffic stop working. When the VPN is off apps connect directly, unless you set Block connections without VPN in Android\'s VPN settings.</string>
   <string name="tor_vpn_running">Tor VPN on: other apps go through Tor</string>
+  <string name="tor_vpn_holding">Tor VPN waiting for Tor: other apps are offline until it connects</string>
+  <string name="tor_vpn_notification">Other apps go through Tor, and are offline while Tor is not connected</string>
   <string name="tor_vpn_failed">The Tor VPN stopped. Other apps are connecting directly.</string>
   <string name="tor_vpn_needs_tor">Turn on Tor mode first: the VPN uses its connection</string>
   <string name="tor_vpn_unavailable">The VPN engine is missing from this install</string>

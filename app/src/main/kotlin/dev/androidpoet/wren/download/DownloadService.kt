@@ -66,16 +66,20 @@ class DownloadService : Service() {
     }
     if (watch == null) {
       val summary = build(getString(R.string.downloads), null, 0, 0, indeterminate = true)
-      ServiceCompat.startForeground(
-        this,
-        FOREGROUND_ID,
-        summary,
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-          ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-        } else {
-          0
-        },
-      )
+      // Refused once the day's data-sync allowance is spent, or when started from the background:
+      // carry on unpromoted rather than crash, the transfers themselves do not depend on it.
+      runCatching {
+        ServiceCompat.startForeground(
+          this,
+          FOREGROUND_ID,
+          summary,
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+          } else {
+            0
+          },
+        )
+      }
       watch = scope.launch {
         downloader.states.collectLatest { states ->
           render(states)
@@ -87,6 +91,17 @@ class DownloadService : Service() {
       }
     }
     return START_NOT_STICKY
+  }
+
+  /**
+   * Android 15 caps a data-sync foreground service at six hours a day and kills the app if the
+   * service is still in the foreground a few seconds after this call. Pausing keeps what is already
+   * on disk; the transfers resume from the downloads screen.
+   */
+  override fun onTimeout(startId: Int, fgsType: Int) {
+    for (state in downloader.states.value) if (!state.paused) downloader.pause(state.id)
+    ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+    stopSelf()
   }
 
   override fun onDestroy() {

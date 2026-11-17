@@ -17,7 +17,8 @@ import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
-enum class TorVpnStatus { OFF, ON, FAILED }
+/** [HOLDING]: the interface is up and carries nothing, so other apps are offline, not direct. */
+enum class TorVpnStatus { OFF, HOLDING, ON, FAILED }
 
 /**
  * The experimental Tor VPN's switch. It rides on Tor mode: it can only run while Tor mode is on
@@ -61,6 +62,10 @@ class TorVpn @Inject constructor(
 
   internal fun onStarted() {
     _status.value = TorVpnStatus.ON
+  }
+
+  internal fun onHolding() {
+    _status.value = TorVpnStatus.HOLDING
   }
 
   internal fun onStopped(failed: Boolean) {

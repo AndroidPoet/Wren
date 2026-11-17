@@ -1243,12 +1243,18 @@ class BrowserActivity :
    * the user excused on the error screen is let through for the session.
    */
   private fun refuseInsecureDocument(request: WebResourceRequest): WebResourceResponse? {
-    if (!settings.httpsOnly) return null
     val url = request.url?.toString() ?: return null
     if (!url.startsWith("http://", ignoreCase = true)) return null
     val host = HostMatcher.hostOf(url) ?: return null
-    if (host in httpOnlyHosts || HttpsUpgrader.upgrade(url) == null) return null
-    val body = getString(R.string.https_only_blocked_page, UrlFormatter.prettyHost(url))
+    // Under Tor the exit relay reads plain http, and [routeForTor] never saw a posted form;
+    // no setting and no excused host lets a clear-web one through.
+    val body = if (settings.torMode && !OnionLocation.isOnion(host)) {
+      getString(R.string.tor_plain_http_blocked_page, UrlFormatter.prettyHost(url))
+    } else {
+      if (!settings.httpsOnly) return null
+      if (host in httpOnlyHosts || HttpsUpgrader.upgrade(url) == null) return null
+      getString(R.string.https_only_blocked_page, UrlFormatter.prettyHost(url))
+    }
     return WebResourceResponse(
       "text/html",
       "utf-8",
