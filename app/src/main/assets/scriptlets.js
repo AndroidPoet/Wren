@@ -169,6 +169,11 @@ var runScriptlets = (function () {
       var colon = part.indexOf(':');
       var key = colon > 0 ? part.slice(0, colon) : 'url';
       var needle = colon > 0 ? part.slice(colon + 1) : part;
+      // A colon inside an address or a pattern (`https://`, `host:8443`) names no property.
+      if (colon > 0 && /[^$\w -]/.test(key)) {
+        key = 'url';
+        needle = part;
+      }
       if (key === 'url' || key === 'propsToMatch') {
         if (!matchesNeedle(url, needle)) return false;
       } else if (key === 'method') {
@@ -242,7 +247,9 @@ var runScriptlets = (function () {
     var original = window.fetch;
     if (typeof original !== 'function') return;
     window.fetch = function (input, init) {
-      var url = typeof input === 'string' ? input : (input && input.url) || '';
+      // A Request carries its address in `url`; a URL object, like anything else, as its text.
+      var url = typeof input === 'string' ? input
+        : input && typeof input.url === 'string' ? input.url : String(input);
       var method = (init && init.method) || (input && input.method) || 'GET';
       var result = original.apply(this, arguments);
       if (!matcher(url, method)) return result;
@@ -459,7 +466,9 @@ var runScriptlets = (function () {
     var original = window.fetch;
     if (typeof original !== 'function') return;
     window.fetch = function (input, init) {
-      var url = typeof input === 'string' ? input : (input && input.url) || '';
+      // A Request carries its address in `url`; a URL object, like anything else, as its text.
+      var url = typeof input === 'string' ? input
+        : input && typeof input.url === 'string' ? input.url : String(input);
       var method = (init && init.method) || (input && input.method) || 'GET';
       var extra = function (key) {
         if (init && typeof init === 'object' && init[key] !== undefined) return init[key];

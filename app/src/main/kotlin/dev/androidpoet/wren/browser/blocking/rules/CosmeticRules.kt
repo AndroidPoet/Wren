@@ -273,7 +273,8 @@ class CosmeticRules private constructor(
      * Operators the page script does not implement. A rule using one is dropped whole: half a
      * procedural chain would hide more than the rule meant.
      */
-    private val UNSUPPORTED_PROCEDURAL = listOf(":matches-prop(", ":others(", ":shadow(")
+    private val UNSUPPORTED_PROCEDURAL =
+      listOf(":matches-prop(", ":others(", ":shadow(", ":-abp-properties(")
 
     /** Procedural operators uBlock applies in script; a style sheet rejects them all. */
     private val PROCEDURAL_NAMES = hashSetOf(

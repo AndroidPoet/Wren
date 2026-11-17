@@ -57,7 +57,7 @@ PROCEDURAL = re.compile(
   r"style|remove-attr|remove-class|matches-media|shadow|contains|-abp-\w+)\b",
 )
 
-UNSUPPORTED_PROCEDURAL = re.compile(r":(matches-prop|others|shadow)\(")
+UNSUPPORTED_PROCEDURAL = re.compile(r":(matches-prop|others|shadow|-abp-properties)\(")
 
 TYPES = {
   "script", "image", "stylesheet", "css", "xmlhttprequest", "xhr", "subdocument", "frame",

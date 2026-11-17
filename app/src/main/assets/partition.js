@@ -288,6 +288,8 @@
     var Native = scope.Worker;
     if (typeof Native === 'function' && NativeURL && NativeBlob && typeof createObjectURL === 'function') {
       var bootstraps = {};
+      var turnstileFrame = false;
+      try { turnstileFrame = scope.location.origin === 'https://challenges.cloudflare.com'; } catch (ignored) {}
       var Wrapped = function (url, options) {
         if (!new.target) {
           throw new TypeError("Failed to construct 'Worker': Please use the 'new' operator, this DOM object constructor cannot be called as a function.");
@@ -318,7 +320,9 @@
           // Turnstile frame is one, and without its worker it reports the browser unsupported.
           // There the worker starts as the frame asked, without the denials: the frame's own
           // storage stays denied. Any other refusal stands.
-          if (!trustedTypes || !trustedTypes.defaultPolicy) throw error;
+          // Only there: any frame can create a default policy, or make the first attempt
+          // throw, and would otherwise get a worker with its storage intact.
+          if (!turnstileFrame || !trustedTypes || !trustedTypes.defaultPolicy) throw error;
           return construct(Native, [url, options], new.target);
         }
       };

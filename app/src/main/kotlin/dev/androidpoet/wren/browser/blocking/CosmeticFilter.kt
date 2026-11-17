@@ -69,8 +69,13 @@ class CosmeticFilter @Inject constructor(
     }
   }
 
-  /** Installs the reply channel the page uses to ask for its selectors. Once per WebView. */
-  fun install(webView: WebView) {
+  /**
+   * Installs the reply channel the page uses to ask for its selectors. Only together with the
+   * document-start script: the script is what takes the channel's name off `window`, and
+   * without it every page would read a name that is the same on every site until the app
+   * restarts.
+   */
+  private fun install(webView: WebView) {
     if (listeners.containsKey(webView)) return
     if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) return
     runCatching {
@@ -133,7 +138,6 @@ class CosmeticFilter @Inject constructor(
   /** Adds, refreshes or removes the document-start script to match the current settings. */
   fun updateFor(webView: WebView, pageUrl: String?) {
     if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
-    install(webView)
     configured[webView] = pageUrl
 
     // Installed whenever blocking is on, whatever page the view shows right now: the script is
@@ -145,15 +149,19 @@ class CosmeticFilter @Inject constructor(
 
     val version = engine?.let { scriptVersion(it) } ?: 0
     if (wanted && engine != null && (installed == null || installed.version != version)) {
+      install(webView)
       installed?.let { runCatching { it.handler.remove() } }
       runCatching {
         WebViewCompat.addDocumentStartJavaScript(webView, scriptFor(engine), ALLOWED_ORIGINS)
       }.onFailure { Timber.w(it, "could not install cosmetic filtering") }
         .getOrNull()
         ?.let { handlers[webView] = Installed(it, version) }
-    } else if (!wanted && installed != null) {
-      runCatching { installed.handler.remove() }
+    } else if (!wanted) {
+      installed?.let { runCatching { it.handler.remove() } }
       handlers.remove(webView)
+      if (listeners.remove(webView) != null) {
+        runCatching { WebViewCompat.removeWebMessageListener(webView, CHANNEL) }
+      }
     }
   }
 

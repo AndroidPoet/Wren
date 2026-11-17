@@ -93,12 +93,13 @@
     return applied;
   }
 
-  var excepted = {};
-  var seen = {};
+  // No prototype: a page that adds a key to Object.prototype must not appear in these.
+  var excepted = Object.create(null);
+  var seen = Object.create(null);
   // What the sheet holds, and which of it is generic, so the page's answer can take back a
   // fallback selector its lists except (`#@#`) or all generic hiding (`$generichide`).
   var kept = [];
-  var generic = {};
+  var generic = Object.create(null);
   var noGeneric = false;
   var disabled = false;
   function fresh(selectors, isGeneric) {
@@ -134,7 +135,14 @@
     var before = kept.length;
     noGeneric = payload.n === 1;
     var x = payload.x || [];
-    for (var i = 0; i < x.length; i++) excepted[x[i]] = true;
+    for (var i = 0; i < x.length; i++) {
+      excepted[x[i]] = true;
+      // Lists except the element in a longer form than the built-in selector that hides it
+      // (`ins.adsbygoogle[data-ad-slot]`): every built-in one named inside goes with it.
+      for (var f = 0; f < FALLBACK.length; f++) {
+        if (x[i].indexOf(FALLBACK[f]) >= 0) excepted[FALLBACK[f]] = true;
+      }
+    }
     if (before && (noGeneric || x.length)) rebuild();
     if (payload.p && payload.p.length) procedural.add(payload.p);
     var list = fresh(payload.s || [], false).concat(fresh(payload.g || [], true));
@@ -154,7 +162,12 @@
   // understood here matches nothing: a half-applied chain would hide more than it meant.
   var procedural = (function () {
     var OPS = /^(has-text|-abp-contains|contains|min-text-length|matches-css|matches-css-before|matches-css-after|matches-attr|matches-path|matches-media|upward|xpath|has|-abp-has|if|not|if-not|watch-attr|style|remove|remove-attr|remove-class)$/;
-    var ACTIONS = { 'style': 1, 'remove': 1, 'remove-attr': 1, 'remove-class': 1 };
+    var ACTIONS = Object.create(null);
+    ACTIONS.style = ACTIONS.remove = ACTIONS['remove-attr'] = ACTIONS['remove-class'] = 1;
+    // `/pattern/flags`; a path such as `/marketplace/item` is not one.
+    var LITERAL = /^\/(.+)\/([imsu]*)$/;
+    var MIN_DELAY_MS = 100;
+    var MAX_DELAY_MS = 5000;
     var token = 'a' + Math.random().toString(36).slice(2, 10);
     var HIDE = 'data-' + token;
     var procSheet = null;
@@ -162,16 +175,27 @@
     var scheduled = 0;
     var running = false;
     var added = false;
+    var observer = null;
+    var delay = MIN_DELAY_MS;
 
     function needleTest(needle) {
-      if (needle.length > 2 && needle.charAt(0) === '/' && needle.lastIndexOf('/') > 0) {
-        var last = needle.lastIndexOf('/');
+      var literal = LITERAL.exec(needle);
+      if (literal) {
         try {
-          var re = new RegExp(needle.slice(1, last), needle.slice(last + 1));
+          var re = new RegExp(literal[1], literal[2]);
           return function (text) { return re.test(text); };
         } catch (e) { return null; }
       }
       return function (text) { return text.indexOf(needle) >= 0; };
+    }
+
+    function unique(nodes) {
+      var known = new Set();
+      var out = [];
+      for (var i = 0; i < nodes.length; i++) {
+        if (!known.has(nodes[i])) { known.add(nodes[i]); out.push(nodes[i]); }
+      }
+      return out;
     }
 
     // The index of the parenthesis closing the one at `open`, past quotes and escapes.
@@ -230,8 +254,8 @@
       var op = first;
       var cursor = first ? first.at : text.length;
       while (op) {
-        var between = text.slice(cursor, op.at).trim();
-        if (between) steps.push(['spath', between]);
+        var between = continuation(text.slice(cursor, op.at));
+        if (between) steps.push(between);
         if (ACTIONS[op.name]) {
           if (text.slice(op.end).trim()) return null; // an action ends the rule
           action = [op.name, op.arg];
@@ -243,10 +267,31 @@
         cursor = op.end;
         op = nextOp(text, cursor);
       }
-      var rest = text.slice(cursor).trim();
-      if (rest) steps.push(['spath', rest]);
+      var rest = continuation(text.slice(cursor));
+      if (rest) steps.push(rest);
       if (action && action[0] === 'style' && !safeStyle(action[1])) return null;
       return { css: css, steps: steps, action: action };
+    }
+
+    // Selector text after an operator, as uBlock reads it: set off by a space or a combinator
+    // it leads to other elements, and written straight on (`:not(.x)`, `[href]`) it is one
+    // more condition on the element the operator kept.
+    function continuation(raw) {
+      var css = raw.trim();
+      if (!css) return null;
+      if (/^\s/.test(raw) || /^[>+~]/.test(css)) return ['spath', css];
+      return ['filter', function (el) { try { return el.matches(css); } catch (e) { return false; } }];
+    }
+
+    // The elements `css` leads to from `el`. A sibling combinator is asked of the parent: a
+    // query on the element itself only ever returns what is inside it.
+    function relative(el, css) {
+      if (!/^[+~]/.test(css)) return el.querySelectorAll(':scope ' + css);
+      var parent = el.parentElement;
+      if (!parent) return [];
+      var nth = 1;
+      for (var p = el.previousElementSibling; p; p = p.previousElementSibling) nth++;
+      return parent.querySelectorAll(':scope > :nth-child(' + nth + ') ' + css);
     }
 
     function safeStyle(declarations) {
@@ -314,13 +359,12 @@
       return null;
     }
 
-    function scoped(css) {
-      return /^[>+~]/.test(css) ? ':scope ' + css : css;
-    }
-
     function within(root, rule) {
       var start;
-      try { start = rule.css ? [].slice.call(root.querySelectorAll(scoped(rule.css))) : [root]; } catch (e) { return []; }
+      try {
+        start = !rule.css ? [root]
+          : [].slice.call(/^[>+~]/.test(rule.css) ? relative(root, rule.css) : root.querySelectorAll(rule.css));
+      } catch (e) { return []; }
       return run(start, rule.steps);
     }
 
@@ -340,22 +384,28 @@
         } else if (step[0] === 'map') {
           for (var j = 0; j < nodes.length; j++) {
             var mapped = step[1](nodes[j]);
-            if (mapped && out.indexOf(mapped) < 0) out.push(mapped);
+            if (mapped) out.push(mapped);
           }
+          out = unique(out);
         } else if (step[0] === 'spath') {
           for (var k = 0; k < nodes.length; k++) {
-            try { out = out.concat([].slice.call(nodes[k].querySelectorAll(':scope ' + step[1]))); } catch (e) { return []; }
+            try {
+              var reached = relative(nodes[k], step[1]);
+              for (var r = 0; r < reached.length; r++) out.push(reached[r]);
+            } catch (e) { return []; }
           }
+          out = unique(out);
         } else if (step[0] === 'xpath') {
           for (var x = 0; x < nodes.length; x++) {
             try {
               var found = document.evaluate(step[1], nodes[x], null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
               for (var y = 0; y < found.snapshotLength; y++) {
                 var node = found.snapshotItem(y);
-                if (node.nodeType === 1 && out.indexOf(node) < 0) out.push(node);
+                if (node.nodeType === 1) out.push(node);
               }
             } catch (e) { return []; }
           }
+          out = unique(out);
         } else if (step[0] !== 'pass') {
           return [];
         }
@@ -385,6 +435,17 @@
         return;
       }
       var nodes = rule.css ? within(document, rule) : run([document.documentElement], rule.steps);
+      // A row a feed reuses, or a page that changed its address, may no longer match: what
+      // this rule marked last time and does not match now gets its mark taken back.
+      var mark = !action ? HIDE : action[0] === 'style' ? HIDE + '-' + index : null;
+      if (mark) {
+        var now = new Set(nodes);
+        var before = rule.marked || [];
+        for (var b = 0; b < before.length; b++) {
+          if (!now.has(before[b])) before[b].removeAttribute(mark);
+        }
+        rule.marked = nodes;
+      }
       for (var i = 0; i < nodes.length; i++) {
         var el = nodes[i];
         if (!action) {
@@ -408,16 +469,25 @@
 
     function runAll() {
       scheduled = 0;
-      if (running || disabled) return;
+      if (running) return;
+      if (disabled) {
+        // The page turned out to be exempt: nothing more to look for.
+        if (observer) observer.disconnect();
+        return;
+      }
       running = true;
+      var started = performance.now();
       for (var i = 0; i < rules.length; i++) {
         try { apply(rules[i], i); } catch (e) {}
       }
+      // A pass that took long on a large page comes round less often, so the rules never take
+      // more than about a tenth of the main thread.
+      delay = Math.min(MAX_DELAY_MS, Math.max(MIN_DELAY_MS, (performance.now() - started) * 10));
       running = false;
     }
 
     function schedule() {
-      if (!scheduled && rules.length) scheduled = setTimeout(runAll, 100);
+      if (!scheduled && rules.length) scheduled = setTimeout(runAll, delay);
     }
 
     return {
@@ -427,7 +497,11 @@
         added = true;
         for (var i = 0; i < list.length; i++) {
           var rule = null;
-          try { rule = parse(list[i]); } catch (e) {}
+          try {
+            rule = parse(list[i]);
+            // A prefix the engine cannot read would throw on every pass; such a rule is dropped.
+            if (rule && rule.css) document.querySelector(rule.css);
+          } catch (e) { rule = null; }
           if (rule && (rule.css || rule.steps.length)) rules.push(rule);
         }
         if (!rules.length) return;
@@ -437,8 +511,8 @@
           runAll();
         }
         try {
-          new MutationObserver(function () { if (!running) schedule(); })
-            .observe(document, { childList: true, subtree: true, characterData: true });
+          observer = new MutationObserver(function () { if (!running) schedule(); });
+          observer.observe(document, { childList: true, subtree: true, characterData: true });
         } catch (e) {}
       }
     };
@@ -530,8 +604,12 @@
 
   channel.onmessage = function (event) {
     try {
-      var payload = JSON.parse(event.data);
-      if (!payload) return;
+      var parsed = JSON.parse(event.data);
+      if (!parsed) return;
+      // Own keys only: a key a page put on Object.prototype is not part of the answer.
+      var payload = Object.create(null);
+      var keys = Object.keys(parsed);
+      for (var k = 0; k < keys.length; k++) payload[keys[k]] = parsed[keys[k]];
       if (payload.m) {
         applySurvey(payload);
         return;

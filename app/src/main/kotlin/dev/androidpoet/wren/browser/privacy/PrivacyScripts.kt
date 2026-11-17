@@ -228,6 +228,9 @@ class PrivacyScripts @Inject constructor(
       guarded(pingScript, guard)
     }
     if (installed.tor != null && installed.torClock != torClockSecret) {
+      // safer.js enters its replacements in tor.js's table, so it always goes on after it.
+      runCatching { installed.safer?.remove() }
+      installed.safer = null
       // A new identity rounds its clock its own way; the old script comes off first.
       runCatching { installed.tor?.remove() }
       installed.tor = null

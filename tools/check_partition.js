@@ -204,11 +204,20 @@ const rejected = async (ctx, code) => { try { await vm.runInContext(code, ctx); 
       } };`, ctx);
     vm.runInContext(source, ctx);
   }
-  const guarded = realm('https://challenges.example', ['https://site-a.example']);
+  const guarded = realm('https://challenges.cloudflare.com', ['https://site-a.example']);
   trustedWorld(guarded, true);
-  vm.runInContext('new Worker("blob:https://challenges.example/own-1")', guarded);
-  check('trustedTypesFrameWorkerStartsFromItsOwnAddress',
-    vm.runInContext('started[0]', guarded) === 'blob:https://challenges.example/own-1');
+  vm.runInContext('new Worker("blob:https://challenges.cloudflare.com/own-1")', guarded);
+  check('turnstileFrameWorkerStartsFromItsOwnAddress',
+    vm.runInContext('started[0]', guarded) === 'blob:https://challenges.cloudflare.com/own-1');
+  // Any frame can create a default policy: elsewhere the refusal stands, or a tracker's frame
+  // would get a worker with its storage intact by asking for one this way.
+  const posing = realm('https://tracker.example', ['https://site-a.example']);
+  trustedWorld(posing, true);
+  check('otherFrameWithDefaultPolicyStillThrows', (() => {
+    try { vm.runInContext('new Worker("job.js")', posing); return false; } catch (e) {
+      return e.name === 'SecurityError' && vm.runInContext('started.length', posing) === 0;
+    }
+  })());
   // Without a Trusted Types policy a refusal is not the frame's policy speaking: no fallback.
   const refused = realm('https://tracker.example', ['https://site-a.example']);
   trustedWorld(refused, false);
